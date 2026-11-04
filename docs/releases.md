@@ -21,7 +21,7 @@ macOS builds one signed and notarized universal DMG for Apple Silicon and Intel.
 
 Download the draft installers and verify clean installation, launch, provider discovery and normal application behavior on each claimed platform. Review release notes, then publish the draft as the latest stable release. Publishing is deliberately manual. The website reads GitHub's latest stable release metadata with five-minute revalidation and offers the exact `Freddai-macos-universal.dmg` asset. Drafts, prereleases, missing assets, invalid repository settings and API failures show the existing coming-soon state. Initial configuration requires a website deployment; subsequent published releases require no website rebuild. Run Next.js as a server, not a static export.
 
-Linux downloads are retained as release assets pending runtime verification and website UI support. Windows is validation-only: use the manual workflow's enabled-by-default checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Automatic in-app updates remain outside this workflow. Vercel handles web deployment independently on pushes to `main`. Changes to the packaging workflow also trigger installer validation. The separate Checks workflow runs typechecking, web/native frontend builds, web/relay tests and core Rust tests on pushes and pull requests.
+Linux downloads are recognized by the website; runtime verification is still required before publishing them. Windows is validation-only: use the manual workflow's enabled-by-default checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Automatic in-app updates remain outside this workflow. Vercel handles web deployment independently on pushes to `main`. Changes to the packaging workflow also trigger installer validation. The separate Checks workflow runs typechecking, web/native frontend builds, web/relay tests and core Rust tests on pushes and pull requests.
 
 ## Local checks
 
@@ -30,10 +30,14 @@ Linux downloads are retained as release assets pending runtime verification and 
 - `pnpm --filter @freddai/web build`
 - `pnpm native:install` for required local macOS delivery
 
-The first GitHub run is still required to verify hosted runners, certificate import, notarization, universal compilation and Linux packaging.
+The initial hosted runs exposed desktop compilation and CLI-dependent test failures. Those are corrected in `0d07bfc`; its Checks workflow passed. Installer validation run `41881098967` is verifying certificate import, notarization, universal compilation and Linux packaging.
 
 ## Website platform assets
 
 The download section recognizes these uploaded assets in the latest published stable release: `Freddai-macos-universal.dmg`, `Freddai-linux-x64.AppImage`, `Freddai-linux-x64.deb`, and `Freddai-windows-x64-setup.exe`. Windows validation artifacts are not published under that release filename while host support is missing. Set `TESTFLIGHT_PUBLIC_URL` only to an active Apple public invitation URL after external beta review; absent releases remain visibly unavailable.
 
 The current iOS build uses this developer Mac's compile-time endpoint and certificate. Do not distribute it as a general external beta. A generic secure pairing/enrollment flow must precede external testing. App Store Connect beta review and tester setup remain pending.
+
+## Apple setup status (2026-11-04)
+
+App Store Connect contains Freddai, Apple ID `6830788346`, bundle ID `com.freddai.companion`. The Internal Testing group exists with manual distribution and no testers or builds. External testing is not yet available on this empty build record. Apple Developer account shows the updated Program License Agreement accepted November 4, 2026; no acceptance action remains pending.
