@@ -31,3 +31,9 @@ Linux downloads are retained as release assets pending runtime verification and 
 - `pnpm native:install` for required local macOS delivery
 
 The first GitHub run is still required to verify hosted runners, certificate import, notarization, universal compilation and Linux packaging.
+
+## Website platform assets
+
+The download section recognizes these uploaded assets in the latest published stable release: `Freddai-macos-universal.dmg`, `Freddai-linux-x64.AppImage`, `Freddai-linux-x64.deb`, and `Freddai-windows-x64-setup.exe`. Windows validation artifacts are not published under that release filename while host support is missing. Set `TESTFLIGHT_PUBLIC_URL` only to an active Apple public invitation URL after external beta review; absent releases remain visibly unavailable.
+
+The current iOS build uses this developer Mac's compile-time endpoint and certificate. Do not distribute it as a general external beta. A generic secure pairing/enrollment flow must precede external testing. App Store Connect beta review and tester setup remain pending.

@@ -96,7 +96,7 @@ jobs:
           import shutil
           for extension in ('dmg', 'deb', 'AppImage'):
               for path in Path('target').glob(f'**/release/bundle/*/*.{extension}'):
-                  name = 'Freddai-macos-universal.dmg' if extension == 'dmg' else path.name
+                  name = {'dmg': 'Freddai-macos-universal.dmg', 'deb': 'Freddai-linux-x64.deb', 'AppImage': 'Freddai-linux-x64.AppImage'}[extension]
                   shutil.copy2(path, Path('release-assets') / name)
           if not list(Path('release-assets').iterdir()):
               raise SystemExit('No installers produced')

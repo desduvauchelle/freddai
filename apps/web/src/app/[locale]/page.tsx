@@ -1,6 +1,6 @@
 import { getDictionary } from "@/i18n";
 import { localizedPath } from "@/lib/i18n-utils";
-import { latestMacDownloadUrl } from "@/lib/download";
+import { latestDownloads } from "@/lib/download";
 import { ThemePicker } from "@/components/ThemePicker";
 
 export const revalidate = 300;
@@ -9,7 +9,7 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
   const { locale } = await params;
   const d = await getDictionary(locale);
   const home = localizedPath("/", locale);
-  const downloadUrl = await latestMacDownloadUrl();
+  const downloads = await latestDownloads();
   return <>
     <a className="skip-link btn btn-primary" href="#content">{d.skip}</a>
     <header className="shell flex flex-wrap items-center justify-between gap-5 py-6">
@@ -50,12 +50,24 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
         </dl>
       </section>
       <section id="download" className="bg-base-200 py-16 lg:py-20">
-        <div className="shell grid items-center gap-8 md:grid-cols-2 md:gap-16">
-          <div><p className="eyebrow">{d.macHeading}</p><h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">{d.downloadTitle}</h2></div>
-          <div><p className="leading-relaxed opacity-80">{downloadUrl ? d.downloadReady : d.downloadBody}</p>
-            <div className="mt-6">{downloadUrl ? <a className="btn btn-primary" href={downloadUrl}>{d.downloadMac}</a> : <p className="badge badge-outline h-auto px-4 py-3">{d.unavailable}</p>}</div>
-            <p className="mt-5 max-w-lg text-xs leading-relaxed opacity-70">{d.requirements}</p>
+        <div className="shell">
+          <p className="eyebrow">{d.downloadHeading}</p>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">{d.downloadTitle}</h2>
+          <p className="mt-5 max-w-2xl leading-relaxed opacity-80">{d.downloadBody}</p>
+          <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              {name: "Mac", url: downloads.mac, label: d.downloadMac, detail: d.macDetail, pending: d.unavailable},
+              {name: "Linux", url: downloads.linux || downloads.linuxDeb, label: d.downloadLinux, detail: d.linuxDetail, pending: d.unavailable},
+              {name: "Windows", url: downloads.windows, label: d.downloadWindows, detail: d.windowsDetail, pending: d.windowsPending},
+              {name: "iPhone", url: downloads.ios, label: d.downloadIos, detail: d.iosDetail, pending: d.iosPending},
+            ].map(platform => <article key={platform.name} className="flex flex-col items-start border-t border-base-content/20 pt-5">
+              <h3 className="text-xl font-semibold">{platform.name}</h3>
+              <p className="mt-3 mb-6 text-sm leading-relaxed opacity-75">{platform.detail}</p>
+              {platform.url ? <a className="btn btn-primary mt-auto" href={platform.url}>{platform.label}</a> : <div className="mt-auto"><button className="btn btn-outline" disabled>{platform.label}</button><p className="mt-3 min-h-10 text-xs leading-relaxed opacity-70">{platform.pending}</p></div>}
+              {platform.name === "Linux" && downloads.linux && downloads.linuxDeb && <a className="link mt-3 text-sm" href={downloads.linuxDeb}>{d.downloadDeb}</a>}
+            </article>)}
           </div>
+          <p className="mt-8 max-w-2xl text-xs leading-relaxed opacity-70">{d.requirements}</p>
         </div>
       </section>
     </main>

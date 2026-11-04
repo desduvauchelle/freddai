@@ -12,10 +12,15 @@ const en = {
   agentsTitle: "Choose your coding agent", agentsBody: "Work with Codex or Claude Code through their installed CLIs and your own subscriptions.",
   attentionTitle: "Find your next step", attentionBody: "Move between sessions, review output, and respond when a thread needs you.",
   downloadTitle: "A little more room to build.",
-  downloadBody: "Freddai is starting on macOS. Public downloads will appear here when a distribution build is ready.",
+  downloadBody: "Choose your platform. Downloads become available as verified releases are published.",
   unavailable: "Public download coming soon", downloadMac: "Download for macOS",
   downloadReady: "Get the macOS release and bring your coding threads together.",
-  requirements: "Requires the Codex or Claude Code CLI and your own provider account. Windows, Linux, and mobile releases are planned.",
+  requirements: "Desktop apps require an installed coding-agent CLI and your own provider account. The iPhone companion requires a paired Mac running Freddai.",
+  downloadHeading: "Get Freddai",
+  downloadLinux: "Download for Linux", downloadWindows: "Download for Windows", downloadIos: "Join TestFlight", downloadDeb: "Download Debian package",
+  macDetail: "Universal installer for Apple Silicon and Intel Macs.", linuxDetail: "64-bit Linux. AppImage and Debian packages.",
+  windowsDetail: "64-bit Windows installer.", iosDetail: "Keep up with your Mac’s coding threads from your iPhone.",
+  windowsPending: "Coming soon. Windows support is still in development.", iosPending: "TestFlight beta is not available yet.",
   footer: "A home for your coding threads.",
 };
 export type Dictionary = { [K in keyof typeof en]: string };
