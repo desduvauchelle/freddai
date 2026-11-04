@@ -1,0 +1,25 @@
+{
+  "name": "freddai",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @freddai/web dev",
+    "build": "pnpm --filter @freddai/web build && pnpm --filter @freddai/native build",
+    "typecheck": "pnpm -r typecheck",
+    "native:dev": "pnpm --filter @freddai/native tauri dev",
+    "native:build": "pnpm --filter @freddai/native tauri build",
+    "rust:check": "cargo check --workspace",
+    "check": "pnpm typecheck && pnpm build && cargo check --workspace",
+    "dev:app": "pnpm --filter @freddai/native dev",
+    "native:install": "bash scripts/install-macos.sh",
+    "ios:install": "bash scripts/install-ios.sh"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark;
+}
+@plugin "daisyui/theme" {
+  name: "light";
+  --color-base-100: #faf9f5;
+  --color-base-200: #eeefe6;
+  --color-base-300: #dadccf;
+  --color-base-content: #282d23;
+  --color-primary: #4d613d;
+  --color-primary-content: #ffffff;
+}
+@plugin "daisyui/theme" {
+  name: "dark";
+  --color-base-100: #1e241e;
+  --color-base-200: #282f26;
+  --color-base-300: #404a3b;
+  --color-base-content: #f0f1e7;
+  --color-primary: #b9c99a;
+  --color-primary-content: #20291b;
+}
+body { margin: 0; font-family: system-ui, sans-serif; }
+.shell { width: min(100% - 3rem, 1120px); margin-inline: auto; }
+.hero-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 2rem; align-items: center; padding-bottom: 4rem; }
+.eyebrow { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
+.mascot-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 48% 48% 3rem 3rem; padding: 2rem 1rem; background: var(--color-base-200); }
+.skip-link { position: fixed; left: 1rem; top: -6rem; z-index: 50; }
+.skip-link:focus { top: 1rem; }
+:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; }
+@media (max-width: 767px) { .hero-grid { grid-template-columns: 1fr; gap: 0; } .mascot-stage { max-width: 420px; width: 100%; margin-inline: auto; } }

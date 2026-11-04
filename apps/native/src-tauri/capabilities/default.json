@@ -1,0 +1,12 @@
+{
+  "identifier": "main",
+  "description": "Local workspace UI and native file selection",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-start-dragging"
+  ]
+}

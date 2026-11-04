@@ -1,0 +1,22 @@
+{
+  "identifier": "com.freddai.companion",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Freddai"
+      }
+    ]
+  },
+  "bundle": {
+    "iOS": {
+      "developmentTeam": "BSH2UEDLU5",
+      "minimumSystemVersion": "16.0",
+      "infoPlist": "Info.ios.plist"
+    }
+  },
+  "build": {
+    "beforeBuildCommand": "python3 ../../scripts/sync-ios-icons.py && pnpm build:ios",
+    "frontendDist": "../dist-ios"
+  }
+}

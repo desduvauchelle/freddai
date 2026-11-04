@@ -1,0 +1,4 @@
+name: freddai-dormouse
+logs:
+  file: build/rive.log
+  problems: build/problems.log

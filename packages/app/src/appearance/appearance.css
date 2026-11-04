@@ -1,0 +1,90 @@
+/* Device appearance applies to the app and all portalled controls. Palette choice
+   is independent of appearance; no preference is written to override the OS. */
+html[data-freddai-appearance] {
+  --app-background: #fafafa;
+  --app-foreground: #24242a;
+  --app-card: #ffffff;
+  --app-surface: #f0f0f3;
+  --app-muted-foreground: #62626d;
+  --app-primary: #393947;
+  --app-primary-foreground: #ffffff;
+  --app-accent: #e9e9ef;
+  --app-border: #d8d8e0;
+  --app-ring: #666b89;
+  --app-color-scheme: light;
+}
+html[data-freddai-appearance="dark"] {
+  --app-background: #18191c;
+  --app-foreground: #dedee3;
+  --app-card: #1d1e22;
+  --app-surface: #25262b;
+  --app-muted-foreground: #a0a1ac;
+  --app-primary: #e1e1e7;
+  --app-primary-foreground: #202126;
+  --app-accent: #2d2e35;
+  --app-border: #383940;
+  --app-ring: #858ba5;
+  --app-color-scheme: dark;
+}
+html[data-freddai-appearance],
+html[data-freddai-appearance] :is(.dev-app, .companion, .capture-panel, .dev-popup, .thread-context-menu, [data-slot="sheet-content"]) {
+  --background: var(--app-background);
+  --foreground: var(--app-foreground);
+  --card: var(--app-card);
+  --card-foreground: var(--app-foreground);
+  --popover: var(--app-card);
+  --popover-foreground: var(--app-foreground);
+  --primary: var(--app-primary);
+  --primary-foreground: var(--app-primary-foreground);
+  --secondary: var(--app-surface);
+  --secondary-foreground: var(--app-foreground);
+  --muted: var(--app-surface);
+  --muted-foreground: var(--app-muted-foreground);
+  --accent: var(--app-accent);
+  --accent-foreground: var(--app-foreground);
+  --border: var(--app-border);
+  --input: var(--app-border);
+  --ring: var(--app-ring);
+  --sidebar: var(--app-card);
+  --sidebar-foreground: var(--app-foreground);
+  --sidebar-primary: var(--app-primary);
+  --sidebar-primary-foreground: var(--app-primary-foreground);
+  --sidebar-accent: var(--app-accent);
+  --sidebar-accent-foreground: var(--app-foreground);
+  --sidebar-border: var(--app-border);
+  --sidebar-ring: var(--app-ring);
+  color-scheme: var(--app-color-scheme);
+}
+html[data-freddai-appearance] { background: var(--background); color: var(--foreground); }
+html[data-freddai-appearance="light"] {
+  /* Existing desktop declarations retain their original dark values as fallbacks. */
+  --adaptive-background: var(--app-background);
+  --adaptive-card: var(--app-card);
+  --adaptive-surface: var(--app-surface);
+  --adaptive-border: var(--app-border);
+  --adaptive-text: var(--app-foreground);
+  --adaptive-muted: var(--app-muted-foreground);
+  --adaptive-subtle: #6b6b77;
+}
+html[data-freddai-appearance="light"][data-freddai-theme="slate"] { --app-background: #f5f7fb; --app-surface: #eaf0f8; --app-accent: #dfe9f6; --app-primary: #1e40af; }
+html[data-freddai-appearance="light"][data-freddai-theme="violet"] { --app-background: #faf7fd; --app-surface: #f0eaf7; --app-accent: #e8def4; --app-primary: #6d28a0; }
+html[data-freddai-appearance="light"][data-freddai-theme="rose"] { --app-background: #fdf7f8; --app-surface: #f8eaf0; --app-accent: #f4dfe8; --app-primary: #a32150; }
+html[data-freddai-appearance="light"][data-freddai-theme="green"] { --app-background: #f5faf7; --app-surface: #e9f2ec; --app-accent: #dcece2; --app-primary: #166534; }
+html[data-freddai-appearance="light"] .native-workspace :is(.task-selected, .session-selected, .project-selected, .nav-row.active) { background: var(--accent) !important; box-shadow: inset 2px 0 var(--primary); }
+html[data-freddai-appearance="light"] .native-workspace .chat-composer-tools > .chat-send { background: var(--primary); color: var(--primary-foreground); }
+html[data-freddai-appearance="light"] :is(.native-workspace, .native-dialog) .error { background: #fff1f2; color: #9f1239; border-color: #fecdd3; }
+html[data-freddai-appearance="light"] .native-workspace .skip-link { background: var(--primary); color: var(--primary-foreground); }
+html[data-freddai-appearance="light"] :is(.companion-connection > span[data-connected="true"], .companion-state[data-status="running"]) { background: #28724c; }
+html[data-freddai-appearance="light"] :is(.companion-state[data-status="waiting"], .companion-state[data-status="error"]) { background: #9a581e; }
+html[data-freddai-appearance="light"] .native-banner { background: #fffbeb; color: #78500d; border-color: #edd59b; }
+html[data-freddai-appearance="light"] :is(.native-error, .inline-error, .thread-menu-error) { background: #fff1f2; color: #9f1239; border-color: #fecdd3; }
+html[data-freddai-appearance="light"] .approval-card { background: #fffbeb; border-color: #d5ae58; }
+html[data-freddai-appearance="light"] .approval-card > strong { color: #78500d; }
+html[data-freddai-appearance="light"] .state-In-progress { background: #356cac; color: #356cac; }
+html[data-freddai-appearance="light"] .state-Needs-you { background: #985c17; color: #985c17; }
+html[data-freddai-appearance="light"] .state-Done { background: #28724c; color: #28724c; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-freddai-appearance]) { --background: #18191c; --foreground: #dedee3; background: #18191c; color-scheme: dark; }
+}
+
+html[data-freddai-appearance="light"] .state-Failed { background: #c12b36; color: #c12b36; }

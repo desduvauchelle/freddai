@@ -1,0 +1,112 @@
+/* Shared transcript styles (Mac and iPhone). Rules moved verbatim from desktop.css keep the Mac's output identical. */
+.native-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  margin-top: 0;
+}
+.native-message pre {
+  white-space: pre;
+  overflow: auto;
+  background: var(--adaptive-background, #141519);
+  padding: 12px;
+  border: 1px solid var(--adaptive-border, #333641);
+  border-radius: 5px;
+  margin: 12px 0;
+}
+.native-message code {
+  font:
+    11px/1.65 ui-monospace,
+    SFMono-Regular,
+    monospace;
+  background: var(--adaptive-surface, #252832);
+  padding: 1px 4px;
+}
+.native-message pre code {
+  background: transparent;
+  padding: 0;
+}
+.native-message p {
+  margin: 8px 0;
+}
+.native-message ul,
+.native-message ol {
+  padding-left: 22px;
+  margin: 10px 0;
+}
+.native-message table {
+  border-collapse: collapse;
+  display: block;
+  overflow: auto;
+}
+.native-message td,
+.native-message th {
+  border: 1px solid var(--adaptive-border, #383b44);
+  padding: 6px 10px;
+}
+.native-message h1,
+.native-message h2,
+.native-message h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 15px 0 8px;
+}
+.native-message {
+  white-space: normal;
+}
+.attachment-chip { display: inline-flex; gap: 5px; align-items: center; padding: 4px 8px; background: var(--adaptive-surface, #2a2d35); border-radius: 4px; font-size: 12px; }
+
+/* Comfortable (Mac): the wrapper adds no box, so the host's flex/gap layout applies to the articles directly. */
+.thread-transcript { display: contents; }
+
+/* Compact (iPhone): theme tokens stand in for the Mac's adaptive palette so light and dark both work. */
+.thread-transcript[data-density="compact"] {
+  --adaptive-background: var(--background);
+  --adaptive-surface: var(--muted);
+  --adaptive-border: var(--border);
+  --adaptive-text: var(--foreground);
+  --adaptive-muted: var(--muted-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px 16px 24px;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.55;
+}
+.thread-transcript[data-density="compact"] .chat-assistant { display: block; width: 100%; min-width: 0; }
+.thread-transcript[data-density="compact"] .chat-assistant > strong { display: block; margin-bottom: 2px; color: var(--adaptive-muted); font-size: 12px; }
+.thread-transcript[data-density="compact"] .chat-user {
+  align-self: flex-end;
+  max-width: 85%;
+  min-width: 0;
+  padding: 9px 14px;
+  border-radius: 18px 18px 5px 18px;
+  background: var(--adaptive-surface);
+  color: var(--foreground);
+}
+.thread-transcript[data-density="compact"] .chat-user > .native-message > :first-child { margin-top: 0; }
+.thread-transcript[data-density="compact"] .chat-user > .native-message > :last-child { margin-bottom: 0; }
+.thread-transcript[data-density="compact"] .native-message { font-size: 15px; line-height: 1.5; }
+.thread-transcript[data-density="compact"] .native-message code { font-size: 12.5px; }
+.thread-transcript[data-density="compact"] .native-message pre { margin: 10px 0; font-size: 12.5px; -webkit-overflow-scrolling: touch; }
+.thread-transcript[data-density="compact"] .native-message small { display: block; margin-top: 4px; color: var(--adaptive-muted); font-size: 12px; }
+.thread-transcript[data-density="compact"] .native-message h1,
+.thread-transcript[data-density="compact"] .native-message h2,
+.thread-transcript[data-density="compact"] .native-message h3 { font-size: 16px; }
+.thread-transcript[data-density="compact"] .attachment-chip { margin: 0 4px 4px 0; font-size: 13px; }
+/* Radix wraps scroll content in a table-layout div that would size to the widest code line; pin it to the column. */
+.thread-transcript[data-density="compact"] [data-slot="scroll-area"] { max-width: 100%; min-width: 0; }
+.thread-transcript[data-density="compact"] [data-slot="scroll-area-viewport"] > div { display: block !important; min-width: 0; }
+/* Tool activity: quiet rows with 44pt disclosure targets. */
+.thread-transcript[data-density="compact"] .tool-activity { min-width: 0; margin: 0; color: var(--adaptive-muted); font-size: 13px; opacity: 1; }
+.thread-transcript[data-density="compact"] .tool-activity summary { min-height: 44px; padding: 12px 0; font-size: 13px; cursor: pointer; }
+.thread-transcript[data-density="compact"] .tool-activity-calls { padding-left: 12px; }
+.thread-transcript[data-density="compact"] .tool-activity-call { min-width: 0; }
+.thread-transcript[data-density="compact"] .tool-activity pre { margin: 0; padding: 6px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.thread-transcript[data-density="compact"] .tool-activity summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.thread-transcript[data-density="compact"] > p { margin: 0; color: var(--adaptive-muted); font-size: 14px; }
+.thread-transcript[data-density="compact"] > p[role="alert"] { color: var(--destructive, #ef6868); }
+.thread-transcript[data-density="compact"] .native-message ul { list-style: disc; }
+.thread-transcript[data-density="compact"] .native-message ol { list-style: decimal; }

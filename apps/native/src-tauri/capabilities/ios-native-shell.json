@@ -1,0 +1,7 @@
+{
+  "identifier": "ios-native-shell",
+  "description": "Native iPhone shell (navigation bar and composer) controlled from the webview",
+  "windows": ["main"],
+  "platforms": ["iOS"],
+  "permissions": ["native-shell:default"]
+}

@@ -1,0 +1,1893 @@
+import { threadListTitle } from "./thread-list-title";
+import { AttachmentLabel } from "./AttachmentLabel";
+import { previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
+import { browserThreadRecencyTracker } from "../thread-recency";
+import { migrateLocalRead, readFromThreads } from "../read-sync";
+import { Permission } from "./AgentRequest";
+import { MessageQueue } from "./MessageQueue";
+import { projectDropTarget } from "./project-drop";
+import { OLDER_PAGE_SIZE, compareThreadRecency, groupThreadsByDay, threadInActiveList, threadListStatus, threadVisibility, threadCapabilities } from "./types";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuLabel } from "@freddai/ui/components/context-menu";
+import { ConversationUsage } from "./ConversationUsage";
+import { ThreadError } from "./ThreadError";
+import { ThreadList } from "./ThreadList";
+import { ThreadTitle } from "./ThreadTitle";
+import { PermissionSelect, effectivePermissionMode } from "./PermissionSelect";
+import { savedPermissionMode } from "./permission-mode";
+import type { PermissionMode } from "./types";
+import { AgentControls, defaultSelection, type AgentSelection } from "./AgentControls";
+import { providerName } from "./types";
+import { ApprovalMouse, ConversationActivity, MascotHero } from "./MascotScenes";
+import { ScheduleManager } from "./ScheduleManager";
+import { GitHistoryPanel } from "./GitHistoryPanel";
+import type { PaneSelection } from "./git-history";
+import { UsageFooter } from "./UsageFooter";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@freddai/ui/components/field";
+import { Switch } from "@freddai/ui/components/switch";
+import { ScrollArea } from "@freddai/ui/components/scroll-area";
+import { SettingsPanel } from "./SettingsPanel";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { useTheme } from "./use-theme";
+import { CompanionSettings } from "./CompanionSettings";
+import { BackgroundSettings } from "./BackgroundSettings";
+import { AccountOverview } from "./AccountOverview";
+import { AccountSetup } from "./AccountSetup";
+import { accountLabel } from "./types";
+import { ThreadTranscript } from "../conversation/ThreadTranscript";
+import { reconcileSnapshot } from "./reconcileSnapshot";
+import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
+import { getDraft, setDraft as setThreadDraft, updateDraft, pruneDrafts, useDraft, useHasDraftText } from "./drafts";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
+import { mergeAttachments, runScreenGrab, type ScreenGrabDestination } from "./screen-grab";
+import { Button } from "@freddai/ui/components/button";
+type PanelImperativeHandle = { collapse: () => void; expand: () => void; isCollapsed: () => boolean; getSize: () => { asPercentage: number; inPixels: number }; resize: (size: number | string) => void };
+import { Input } from "@freddai/ui/components/input";
+import { Textarea } from "@freddai/ui/components/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@freddai/ui/components/dialog";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@freddai/ui/components/select";
+import {
+  useDefaultLayout,
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@freddai/ui/components/resizable";
+import {
+  Code2,
+  FolderPlus,
+  GitFork,
+  GitBranch,
+  GripVertical,
+  Terminal,
+  Plus,
+  Search,
+  Settings2,
+  Paperclip,
+  ArrowUp,
+  ArrowDown,
+  Square,
+  Columns2,
+  X,
+  FolderGit2,
+  PanelLeft,
+  Ellipsis,
+} from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@freddai/ui/components/dropdown-menu";
+import {
+  empty,
+  busy,
+  resolveAccount,
+  type Database,
+  type Project,
+  type Session,
+  type Pending,
+  type Attachment,
+} from "./types";
+import { commandFor, shortcuts, navigation } from "./shortcuts";
+import { closePane, focusPane, focusedThread, openThreads, otherThread, restoreSplitView, selectThread, splitPreference, toggleSplit, type SplitPreference, type SplitSide, type SplitView } from "./split-view";
+import { hostUpdateNotice, shouldSurfacePollError } from "./host-update";
+import "../workspace.css";
+import "./desktop.css";
+import "./themes.css";
+const colors = [
+  "#b59ae9",
+  "#77b9df",
+  "#8ec6a2",
+  "#e7a17d",
+  "#e89cbd",
+  "#d9c079",
+];
+function Picker({
+  label,
+  value,
+  onChange,
+  options,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  disabled?: boolean;
+}) {
+  return (
+    <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger aria-label={label}>
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent className="dev-popup">
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+function labelStatus(s: string) {
+  return (
+    (
+      {
+        done: "Completed",
+        unread: "Unread reply",
+        waiting: "Needs you",
+        failed: "Failed",
+        interrupted: "Interrupted",
+        running: "Running",
+        starting: "Starting",
+      } as Record<string, string>
+    )[s] || s
+  );
+}
+function Dot({ status }: { status: string }) {
+  return (
+    <span
+      role="img"
+      aria-label={labelStatus(status)}
+      title={labelStatus(status)}
+      className={`state-dot state-${status === "failed" ? "Failed" : status === "done" ? "Done" : status === "running" || status === "starting" ? "In-progress" : status === "unread" || status === "waiting" || status === "interrupted" ? "Needs-you" : "Next"}`}
+    />
+  );
+}
+function readPreference<T>(key: string, initial: T): T {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null") ?? initial;
+  } catch {
+    return initial;
+  }
+}
+// Matches the stylesheet breakpoint where the selected thread takes over the main area.
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 720px)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 720px)");
+    const update = () => setNarrow(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
+function usePreference<T>(key: string, initial: T) {
+  const [v, set] = useState<T>(() => readPreference(key, initial));
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(v));
+  }, [key, v]);
+  return [v, set] as const;
+}
+function SplitToggle({ split, onToggle }: { split: boolean; onToggle: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={split ? "Close split view" : "Split view"}
+      aria-pressed={split}
+      title={`${split ? "Close split view" : "Split view"} (⌘ \\)`}
+      onClick={onToggle}
+    >
+      <Columns2 size={15} />
+    </Button>
+  );
+}
+// The composer textarea owns its subscription to the thread's draft, so typing re-renders only this component.
+function ReplyTextarea({ threadId, id, composerRef, placeholder, onSend }: {
+  threadId: string; id?: string; composerRef?: Ref<HTMLTextAreaElement>; placeholder: string;
+  onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
+}) {
+  const reply = useDraft(threadId);
+  return (
+    <Textarea
+      id={id}
+      ref={composerRef}
+      aria-label="Message agent"
+      placeholder={placeholder}
+      value={reply}
+      onChange={(e) => setThreadDraft(threadId, e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          void onSend(undefined, e.metaKey || e.ctrlKey);
+        }
+      }}
+    />
+  );
+}
+function SendButton({ threadId, label, blocked }: { threadId: string; label: string; blocked: boolean }) {
+  const hasText = useHasDraftText(threadId);
+  return (
+    <Button className="chat-send" size="icon" aria-label={label} disabled={blocked || !hasText}>
+      <ArrowUp size={16} />
+    </Button>
+  );
+}
+// One conversation (header, transcript, composer). Drafts, attachments and agent controls arrive as props keyed by thread in the parent.
+function ConversationPane({
+  task, db, read, native, working, staging, split, side, focused, canToggleSplit, composerRef,
+  attachments, onAttachments, permission, onPermission, selection, onSelection,
+  onFocus, onClose, onToggleSplit, onFork, onRename, onSend, onQueueAction, onAttach,
+  action, refresh, changeThread, openAccounts, fileChips,
+}: {
+  task: Session; db: Database; read: Record<string, number>; native: boolean; working: boolean; staging: number;
+  split: boolean; side: SplitSide; focused: boolean; canToggleSplit: boolean;
+  composerRef?: Ref<HTMLTextAreaElement>;
+  attachments: Attachment[]; onAttachments: (files: Attachment[]) => void;
+  permission: PermissionMode; onPermission: (value: PermissionMode) => void;
+  selection: AgentSelection; onSelection: (value: AgentSelection) => void;
+  onFocus: () => void; onClose: () => void; onToggleSplit: () => void; onFork: () => void;
+  onRename: (title: string) => Promise<void>;
+  onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
+  onQueueAction: (action: string, message?: string, prompt?: string) => Promise<boolean | undefined>;
+  onAttach: () => void;
+  action: <T>(fn: () => Promise<T>) => Promise<T | undefined>; refresh: () => Promise<void>;
+  changeThread: (id: string, operation: string) => Promise<void>;
+  openAccounts: () => void;
+  fileChips: (files: Attachment[], set: (v: Attachment[]) => void) => ReactNode;
+}) {
+  const project = db.projects.find((p) => p.id === task.project),
+    taskAccount = db.accounts.find((a) => a.id === task.account),
+    taskQueue = db.queues?.find(q => q.session === task.id);
+  const capabilities = threadCapabilities(task, !!taskAccount);
+  const [renameRequest, setRenameRequest] = useState(0);
+  const renameChosen = useRef(false);
+  const transcript = useRef<HTMLDivElement>(null);
+  const [showLatest, setShowLatest] = useState(false);
+  useEffect(() => {
+    const el = transcript.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 180)
+      el.scrollTop = el.scrollHeight;
+  }, [task.messages, task.status, task.pending]);
+  useEffect(() => {
+    const el = transcript.current;
+    if (!el) { setShowLatest(false); return; }
+    el.scrollTop = el.scrollHeight;
+    const measure = () => setShowLatest(el.scrollHeight - el.scrollTop - el.clientHeight > 24);
+    const resize = new ResizeObserver(measure);
+    const observe = () => {
+      resize.disconnect();
+      resize.observe(el);
+      for (const child of el.children) resize.observe(child);
+      measure();
+    };
+    const mutation = new MutationObserver(observe);
+    mutation.observe(el, { childList: true, subtree: true, characterData: true });
+    el.addEventListener("scroll", measure, { passive: true });
+    observe();
+    return () => { resize.disconnect(); mutation.disconnect(); el.removeEventListener("scroll", measure); };
+  }, [task.id]);
+  return (
+    <section
+      className={`thread-detail${split ? " split-pane" : ""}${split && focused ? " split-pane-focused" : ""}`}
+      aria-label={split ? `Conversation, ${side} pane` : "Conversation"}
+      onFocusCapture={onFocus}
+      onPointerDownCapture={onFocus}
+    >
+      <div className="pane-title" aria-current={split && focused ? "true" : undefined}>
+        <span className="pane-project" title={taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}>
+          <span className="pane-project-dot" style={{ background: project?.color }} aria-hidden="true" />
+          <span className="pane-project-name">{project?.name}</span>
+        </span>
+        <span className="pane-sep" aria-hidden="true">/</span>
+        <h1 className="pane-thread-title"><ThreadTitle key={task.id} title={task.title} onRename={onRename} editRequest={renameRequest} /></h1>
+        <div className="conversation-header-actions">
+          <span className="conversation-header-status" role="status"><Dot status={task.status}/><span className="status-label">{labelStatus(task.status)}</span></span>
+          {canToggleSplit && <SplitToggle split={split} onToggle={onToggleSplit} />}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Thread actions" title="Thread actions"><Ellipsis size={16} /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onCloseAutoFocus={e => { if (renameChosen.current) { e.preventDefault(); renameChosen.current = false; } }}>
+              <DropdownMenuLabel className="thread-menu-label">{taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { renameChosen.current = true; setRenameRequest(n => n + 1); }}>Rename<DropdownMenuShortcut>F2</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuItem onSelect={onFork}>Fork thread<DropdownMenuShortcut>⌘⇧F</DropdownMenuShortcut></DropdownMenuItem>
+              {!task.deleted_at && <DropdownMenuItem
+                disabled={working || !native || (task.archived ? !capabilities.change : !capabilities.archive || busy(task))}
+                onSelect={() => void changeThread(task.id, task.archived ? "unarchive" : "archive")}
+              >{task.archived ? "Unarchive" : "Archive"}</DropdownMenuItem>}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onClose}>{split ? `Close ${side} pane` : "Close conversation"}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      {(task.working_dir || task.deleted_at != null || task.archived) && <div className="detail-heading">
+        <div className="detail-meta">
+          {task.working_dir && <span title={task.working_dir}>Worktree</span>}
+          {task.working_dir && !busy(task) && task.status !== "archived" && <Button size="sm" variant="ghost" onClick={() => void action(async () => { await invoke("remove_worktree", { session: task.id }); await refresh(); })}>Remove clean worktree</Button>}
+          {task.deleted_at != null ? <Button size="sm" variant="outline" disabled={working || !native || !!db.host_update_pending} onClick={() => void changeThread(task.id, "restore")}>Restore thread</Button>
+            : task.archived && <Button size="sm" variant="outline" disabled={working || !native || !!db.host_update_pending} onClick={() => void changeThread(task.id, "unarchive")}>Unarchive</Button>}
+        </div>
+      </div>}
+      <div className="chat-surface">
+        <div className="chat-transcript-viewport">
+        <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
+          <ThreadTranscript messages={task.messages} renderAttachment={file => <AttachmentLabel file={file}/>}>
+          {task.error && (
+            <ThreadError error={task.error} onOpenAccounts={openAccounts} />
+          )}
+          {task.pending && (
+            <div className="approval-with-mouse"><ApprovalMouse />
+            <Permission
+              key={`${task.id}:${JSON.stringify(task.pending.request_id ?? task.pending.id)}`}
+              pending={task.pending}
+              provider={taskAccount?.provider || "codex"}
+              onReply={async (allow, answers) => {
+                await invoke("respond", { session: task.id, requestId: JSON.stringify(task.pending?.request_id ?? task.pending?.id), allow, answers });
+                await refresh().catch(() => {});
+              }}
+            />
+            </div>
+          )}
+          <ConversationActivity thread={task} />
+          </ThreadTranscript>
+        </ScrollArea>
+        {showLatest && <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="jump-to-latest"
+          aria-label="Scroll to latest message"
+          title="Scroll to latest message"
+          onClick={() => {
+            const el = transcript.current;
+            if (el) el.scrollTop = el.scrollHeight;
+            setShowLatest(false);
+            transcript.current?.focus({ preventScroll: true });
+          }}
+        ><ArrowDown size={18}/></Button>}
+        </div>
+        <ConversationUsage key={task.id} usage={task.usage}/>
+        {taskQueue && <MessageQueue queue={taskQueue} active={busy(task)} disabled={working} canSteer={taskAccount?.provider === "codex"} onAction={onQueueAction}/>}
+        <form className="chat-composer" onSubmit={e => void onSend(e)}>
+          {fileChips(attachments, onAttachments)}
+          <ReplyTextarea
+            threadId={task.id}
+            id={focused ? "thread-composer" : undefined}
+            composerRef={composerRef}
+            placeholder={
+              busy(task)
+                ? "Draft your next message…"
+                : "Message your agent…"
+            }
+            onSend={onSend}
+          />
+          <div className="chat-composer-tools">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="composer-attach"
+              aria-label="Attach files"
+              title="Attach files (⌘ ⇧ U)"
+              onClick={onAttach}
+              disabled={!native}
+            >
+              <Plus size={20} />
+            </Button>
+            <PermissionSelect provider={taskAccount?.provider} value={permission} onChange={onPermission} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            <span className="composer-spacer"/>
+            {(staging || attachments.length > 0) && <span className="attachment-status" role="status">
+              {staging ? "Copying attachments…" : `${attachments.length} file${attachments.length === 1 ? "" : "s"} ready`}
+            </span>}
+            <AgentControls key={task.id} account={taskAccount} native={native} value={selection} onChange={onSelection} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            {busy(task) && <Button type="button" size="icon" variant="outline" aria-label="Stop current turn and pause queue" disabled={working} onClick={() => void action(async () => { await invoke("stop", { session: task.id }); await refresh(); })}><Square size={14}/></Button>}
+            <SendButton
+              threadId={task.id}
+              label={busy(task) ? "Queue message" : "Send message"}
+              blocked={
+                !native || !taskAccount ||
+                !!staging || working ||
+                (!busy(task) && !task.provider_id) || (task.status === "archived" || !!task.archived || task.deleted_at != null)
+              }
+            />
+          </div>
+        </form>
+        <p className={taskAccount ? "chat-composer-hint sr-only" : "chat-composer-hint"}>
+          {taskAccount
+            ? "Enter to send or queue · ⌘ Enter to steer (Codex) · Shift Enter for new line"
+            : "This connection was removed. Fork thread to continue with a connection you choose."}
+        </p>
+      </div>
+    </section>
+  );
+}
+function EmptyPane({ side, focused, canToggleSplit, onFocus, onClose, onToggleSplit }: {
+  side: SplitSide; focused: boolean; canToggleSplit: boolean;
+  onFocus: () => void; onClose: () => void; onToggleSplit: () => void;
+}) {
+  return (
+    <section
+      className={`thread-detail split-pane${focused ? " split-pane-focused" : ""}`}
+      aria-label={`Conversation, ${side} pane`}
+      onFocusCapture={onFocus}
+      onPointerDownCapture={onFocus}
+    >
+      <div className="pane-title" aria-current={focused ? "true" : undefined}>
+        <span>No thread open</span>
+        <div className="conversation-header-actions">
+          {canToggleSplit && <SplitToggle split onToggle={onToggleSplit} />}
+          <Button variant="ghost" size="icon" aria-label={`Close ${side} pane`} onClick={onClose}><X size={14} /></Button>
+        </div>
+      </div>
+      <div className="native-empty">
+        <MascotHero line="Pick a thread and I'll keep you company." />
+        <Columns2 size={24} />
+        <h2>Select a thread from the list</h2>
+        <p>It opens in the highlighted pane.</p>
+      </div>
+    </section>
+  );
+}
+export function DesktopApp() {
+  const native = isTauri();
+  const { theme, setTheme, saved: themeSaved, appearance } = useTheme();
+  const [snapshot, setDb] = useState<Database>(empty),
+    [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [view, setView] = useState<SplitView>(() => restoreSplitView(readPreference<Partial<SplitPreference> | null>("freddai.split", null)));
+  // The focused pane's thread is "the selected thread"; selecting routes through the split-view state.
+  const selected = focusedThread(view), secondary = otherThread(view);
+  const setSelected = (id: string) => setView(current => selectThread(current, id));
+  const narrow = useNarrow();
+  const splitActive = view.split && !narrow;
+  useEffect(() => { localStorage.setItem("freddai.split", JSON.stringify(splitPreference(view))); }, [view.split, view.right]);
+  // Non-thread main pane (git history). Cleared whenever a thread or the new-thread pane is chosen.
+  const [pane, setPane] = useState<PaneSelection>(null);
+  useEffect(() => { if (selected) setPane(null); }, [selected]);
+  const [launching, setLaunching] = useState<Session | null>(null);
+  const [outgoing, setOutgoing] = useState<OutgoingReply[]>([]);
+  // Stable identities: these are rebuilt only when the snapshot, pending sends or launch actually change.
+  const visibleSnapshot = useMemo(() => ({ ...snapshot, sessions: previewReplies(snapshot.sessions, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)) }), [snapshot, outgoing]);
+  useEffect(() => {
+    setOutgoing(old => old.length ? unconfirmedReplies(old, snapshot.sessions, snapshot.queues) : old);
+  }, [snapshot]);
+  // Keep the launch visible even when an older in-flight snapshot arrives.
+  const db = useMemo(() => launching && launching.id !== "pending-launch" && !visibleSnapshot.sessions.some(t => t.id === launching.id)
+    ? { ...visibleSnapshot, sessions: [launching, ...visibleSnapshot.sessions] } : visibleSnapshot, [visibleSnapshot, launching]);
+  useEffect(() => {
+    if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
+  }, [snapshot, launching]);
+  const [dialog, setDialog] = useState<
+      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "background" | "companion" | "project" | "help" | "schedules" | null
+    >(null),
+    [query, setQuery] = useState(""),
+    [filter, setFilter] = useState("all"),
+    [projectFilter, setProjectFilter] = useState("all");
+  const [savedProjectOrder, setSavedProjectOrder] = usePreference<string[]>("freddai.projectOrder", []);
+  const [projectDrag, setProjectDrag] = useState<{ id: string; target: string; after: boolean } | null>(null);
+  const [grouped, setGrouped] = usePreference("freddai.grouped", true),
+    [hideRead, setHideRead] = usePreference("freddai.hideRead", true),
+    [readOverlay, setReadOverlay] = useState<Record<string, number>>({}),
+    [olderPages, setOlderPages] = useState<Record<string, number>>({});
+  const [projectId, setProjectId] = useState(""),
+    [accountId, setAccountId] = useState("default"),
+    [draft, setDraft] = useState(""),
+    [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
+  const [threadDialog, setThreadDialog] = useState<{ id: string; action: "move" | "delete" | "resume" | "review" } | null>(null);
+  // Read state lives on the host (`read_at` per session); the overlay only bridges the poll gap after a local mark.
+  const read = useMemo(() => readFromThreads(db.sessions, readOverlay), [db.sessions, readOverlay]);
+  const readSent = useRef(new Set<string>());
+  function markThreadRead(t: Pick<Session, "id" | "updated">) {
+    if ((read[t.id] ?? -1) >= t.updated) return;
+    setReadOverlay(r => (r[t.id] ?? -1) >= t.updated ? r : { ...r, [t.id]: t.updated });
+    const key = `${t.id}:${t.updated}`;
+    if (!native || readSent.current.has(key)) return;
+    readSent.current.add(key);
+    invoke("mark_read", { thread: t.id, at: t.updated }).catch(error => {
+      readSent.current.delete(key);
+      console.error("[read-sync] mark_read failed", { thread: t.id, at: t.updated, error: String(error) });
+    });
+  }
+  useEffect(() => {
+    if (!native) return;
+    void migrateLocalRead("freddai.read", localStorage, cursors => invoke("merge_read", { cursors }));
+  }, [native]);
+  const [moveProject, setMoveProject] = useState("");
+  const resumeRequest = useRef(crypto.randomUUID());
+  const [resumePrompt, setResumePrompt] = useState("Continue where you left off.");
+  const dialogThread = db.sessions.find(t => t.id === threadDialog?.id);
+  const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
+  const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
+  const [replySelections, setReplySelections] = useState<Record<string, AgentSelection>>({});
+  // Reply drafts and attachments belong to a thread, so each open pane keeps its own and they follow a thread between panes.
+  // Reply text lives in the external draft store (./drafts) so keystrokes do not re-render this component.
+  const [replyAttachments, setReplyAttachments] = useState<Record<string, Attachment[]>>({});
+  const draftRequest = useRef(crypto.randomUUID()), replyRequests = useRef<Record<string, string>>({});
+  const replyRequest = (id: string) => replyRequests.current[id] ??= crypto.randomUUID();
+  // Where files may land: the new-thread composer, or the composer of any thread still open in a pane.
+  const targetRef = useRef("");
+  targetRef.current = dialog === "new" ? "new" : selected;
+  const liveTargets = useRef<string[]>([]);
+  const [staging, setStaging] = useState(0);
+  const grabbing = useRef(false), [grabbingUi, setGrabbing] = useState(false);
+  const projectNavigation = useRef<HTMLElement>(null);
+  const importingProjects = useRef(false);
+  const [projectDropActive, setProjectDropActive] = useState(false);
+  const [projectImportBusy, setProjectImportBusy] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [accountReturn, setAccountReturn] = useState<
+    "project" | "new" | "settings" | "usage" | null
+  >(null);
+  const settingsVisible = dialog !== null && dialog !== "new";
+  const onboardingChecked = useRef(false);
+  function openAccounts() {
+    setAccountReturn(
+      dialog === "project" || dialog === "new" || dialog === "settings" || dialog === "usage"
+        ? dialog
+        : null,
+    );
+    setDialog("accounts");
+  }
+  function finishAccounts() {
+    setDialog(accountReturn);
+    setAccountReturn(null);
+  }
+  const [editing, setEditing] = useState<Project>({
+      id: "",
+      name: "",
+      path: "",
+      color: colors[0],
+      policy: "inherit",
+      account: null,
+      last: null,
+    }),
+    [helpQuery, setHelpQuery] = useState("");
+  const search = useRef<HTMLInputElement>(null),
+    composer = useRef<HTMLTextAreaElement>(null),
+    list = useRef<HTMLDivElement>(null),
+    newPrompt = useRef<HTMLTextAreaElement>(null);
+  const actionLock = useRef(false);
+  const accountSelectionSave = useRef<Promise<unknown>>(Promise.resolve());
+  const task = db.sessions.find((t) => t.id === selected),
+    taskAccount = db.accounts.find((a) => a.id === task?.account);
+  const openIds = openThreads(splitActive ? view : { ...view, split: false, left: selected });
+  const openTasks = openIds.flatMap(id => db.sessions.find(t => t.id === id) ?? []);
+  liveTargets.current = dialog === "new" ? ["new"] : openIds;
+  const toolbarProject = db.projects.find(p => p.id === task?.project);
+  const otherTask = db.sessions.find(t => t.id === secondary);
+  const threadPaneLayout = useDefaultLayout({
+    id: "freddai.thread-panes",
+    onlySaveAfterUserInteractions: true,
+  });
+  const listPanel = useRef<PanelImperativeHandle | null>(null);
+  const [listHidden, setListHidden] = useState(false);
+  function toggleList() {
+    const panel = listPanel.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) panel.expand(); else panel.collapse();
+  }
+  const destination = db.projects.find((p) => p.id === projectId);
+  const effective =
+    accountId === "default" ? resolveAccount(db, destination) : accountId;
+  const newAccount = db.accounts.find(a => a.id === effective);
+  const replySelectionFor = (t: Session) => replySelections[t.id] || { model: t.options?.model || "", effort: t.options?.effort || "default" };
+  useEffect(() => { setModel(""); setEffort("default"); }, [newAccount?.provider]);
+  const [trackThreadRecency] = useState(browserThreadRecencyTracker);
+  const rawSnapshot = useRef<Database>(empty);
+  function acceptSnapshot(next: Database) {
+    // Keep unchanged sessions/messages/projects reference-equal across polls so identical snapshots cause no re-render.
+    const raw = reconcileSnapshot(rawSnapshot.current, next);
+    rawSnapshot.current = raw;
+    const tracked = { ...raw, sessions: trackThreadRecency(raw.sessions) };
+    setDb(current => reconcileSnapshot(current, tracked));
+  }
+  // Revision/host the next `snapshot_since` is relative to, and a tail so overlapping polls and
+  // refreshes run one at a time (an older partial reply must never land after a newer one).
+  const syncCursor = useRef<{ revision: number; hostId: string | null; tail: Promise<unknown> }>({ revision: 0, hostId: null, tail: Promise.resolve() });
+  function fetchSnapshot(): Promise<Database> {
+    const cursor = syncCursor.current;
+    const run = async (): Promise<Database> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const reply = await invoke<SnapshotReply>("snapshot_since", { revision: cursor.revision, hostId: cursor.hostId });
+        const next = applySnapshotDelta(rawSnapshot.current, reply);
+        if (next) {
+          cursor.revision = reply.revision;
+          cursor.hostId = reply.hostId;
+          if (!reply.unchanged) acceptSnapshot(next);
+          return next;
+        }
+        cursor.revision = 0; cursor.hostId = null; // inconsistent delta: ask for a full snapshot
+      }
+      throw new Error("Snapshot out of sync with the host");
+    };
+    const result = cursor.tail.then(run, run);
+    cursor.tail = result.catch(() => {});
+    return result;
+  }
+  async function refresh() {
+    if (native) await fetchSnapshot();
+  }
+  async function action<T>(fn: () => Promise<T>): Promise<T | undefined> {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setWorking(true);
+    setError("");
+    try {
+      return await fn();
+    } catch (e) {
+      setError(String(e));
+      return undefined;
+    } finally {
+      actionLock.current = false;
+      setWorking(false);
+    }
+  }
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    async function poll() {
+      try {
+        const d = await fetchSnapshot();
+        failures = 0;
+        if (!disposed) {
+          if (!onboardingChecked.current) {
+            onboardingChecked.current = true;
+            if (!d.accounts.length) setDialog("accounts");
+          }
+        }
+      } catch (e) {
+        // The host may restart briefly while it upgrades itself; the next poll reconnects.
+        failures += 1;
+        if (!disposed && shouldSurfacePollError(failures)) setError(String(e));
+      }
+      if (!disposed) timer = setTimeout(poll, 350);
+    }
+    void poll();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [native]);
+  useEffect(() => {
+    const markVisibleRead = () => {
+      if (!dialog && !threadDialog && document.visibilityState === "visible" && document.hasFocus())
+        for (const t of openTasks) if (t.status === "done" || t.status === "failed") {
+          markThreadRead(t);
+        }
+    };
+    markVisibleRead();
+    window.addEventListener("focus", markVisibleRead);
+    document.addEventListener("visibilitychange", markVisibleRead);
+    return () => {
+      window.removeEventListener("focus", markVisibleRead);
+      document.removeEventListener("visibilitychange", markVisibleRead);
+    };
+  }, [openTasks.map(t => `${t.id}:${t.status}:${t.updated}`).join(), dialog, threadDialog, native, read]);
+  // A draft is dropped once its thread leaves every pane, as switching threads always did.
+  useEffect(() => {
+    const keep = (current: Record<string, any>) => Object.keys(current).some(id => !openIds.includes(id))
+      ? Object.fromEntries(Object.entries(current).filter(([id]) => openIds.includes(id))) : current;
+    pruneDrafts(openIds); setReplyAttachments(keep);
+    for (const id of Object.keys(replyRequests.current)) if (!openIds.includes(id)) delete replyRequests.current[id];
+  }, [openIds.join()]);
+  function selectNewAccount(value: string) {
+    setAccountId(value);
+    if (native && value !== "default") {
+      const preferences = { ...db.preferences, last_selected: value };
+      // Remember the choice without taking the send lock. Serialize rapid changes
+      // so an older write cannot overwrite the latest choice; polling refreshes it.
+      accountSelectionSave.current = accountSelectionSave.current
+        .then(() => invoke("save_preferences", { preferences }))
+        .catch(e => { setError(String(e)); });
+    }
+  }
+  function newThread() { openNewThread(true); }
+  function openNewThread(focus: boolean) {
+    newThreadInProject(projectFilter !== "all"
+      ? projectFilter
+      : task?.project || db.projects[0]?.id || "", focus);
+  }
+  // Above the single-pane (mobile) breakpoint the list always has a pane beside it: with nothing open, that is the new-thread draft.
+  // Opening it only fills in local draft state; no thread is created until the user sends.
+  useEffect(() => {
+    if (!narrow && !selected && !dialog && !pane && !threadDialog && !launching) openNewThread(false);
+  }, [narrow, selected, dialog, pane, threadDialog, launching]);
+  // The auto-opened draft can appear before the first snapshot lists projects; pick one once they arrive.
+  useEffect(() => {
+    if (dialog === "new" && !projectId && db.projects.length) setProjectId(projectFilter !== "all" ? projectFilter : db.projects[0].id);
+  }, [dialog, projectId, db.projects.length]);
+  function newThreadInProject(project: string, focus = true) {
+    setWorktree(db.preferences.use_worktree ?? false);
+    setModel(""); setEffort("default");
+    draftRequest.current = crypto.randomUUID();
+    setAccountId("default");
+    setProjectId(project);
+    setDialog("new");
+    if (focus) setTimeout(() => newPrompt.current?.focus(), 0);
+  }
+  function forkThread(thread = task) {
+    if (!thread) return;
+    newThread(); setProjectId(thread.project); setDraft(`Continue this work in a new conversation. Prior conversation (reference only):\n\n${thread.messages.filter(m => ["user","assistant"].includes(m.role)).map(m => `${m.role}: ${m.text}`).join("\n\n").slice(-24000)}`); 
+  }
+  function addProject() {
+    setEditing({
+      id: "",
+      name: "",
+      path: "",
+      color: colors[db.projects.length % colors.length],
+      policy: "inherit",
+      account: null,
+      last: null,
+    });
+    setDialog("project");
+  }
+  // The one place staged files land in a composer: the new-thread composer or a thread's own draft.
+  function addAttachments(target: string, files: Attachment[]) {
+    const add = (old: Attachment[]) => mergeAttachments(old, files);
+    if (target === "new") setNewAttachments(add); else setReplyAttachments(previous => ({ ...previous, [target]: add(previous[target] ?? []) }));
+  }
+  async function screenGrab(destination: ScreenGrabDestination) {
+    if (!native || grabbing.current) return;
+    grabbing.current = true; setGrabbing(true); setError("");
+    try {
+      await runScreenGrab(destination, {
+        invoke,
+        currentThread: selected,
+        isLive: target => liveTargets.current.includes(target),
+        openNewThread: newThread,
+        addAttachments,
+        focusComposer: target => setTimeout(() => (target === "new" ? newPrompt : composer).current?.focus(), 0),
+        showError: setError,
+        showNotice: setNotice,
+      });
+    } finally { grabbing.current = false; setGrabbing(false); }
+  }
+  async function stage(paths: string[], target: string) {
+    if (!target || !paths.length) return;
+    setStaging(n => n + 1);
+    try {
+      const files = await invoke<Attachment[]>("stage_attachments", { paths });
+      if (!liveTargets.current.includes(target)) { setNotice("Files were copied. Attach again in the intended conversation."); return; }
+      addAttachments(target, files);
+    } catch (e) { setError(String(e)); }
+    finally { setStaging(n => n - 1); }
+  }
+  async function attach(target = targetRef.current) {
+    if (!native) return;
+    const paths = await open({ multiple: true, directory: false, title: "Attach files" });
+    if (paths) await stage(typeof paths === "string" ? [paths] : paths, target);
+  }
+  async function importProjects(paths: string[]) {
+    if (importingProjects.current || !paths.length) return;
+    importingProjects.current = true;
+    setProjectImportBusy(true);
+    setError("");
+    const imported: Project[] = [], failures: string[] = [];
+    try {
+      for (const path of new Set(paths)) {
+        try {
+          imported.push(await invoke<Project>("import_project", {
+            path, color: colors[(db.projects.length + imported.length) % colors.length],
+          }));
+        } catch (e) { failures.push(`${path}: ${String(e)}`); }
+      }
+      if (imported.length) {
+        await refresh();
+        setProjectFilter(imported[imported.length - 1].id);
+        setFilter("all"); setQuery(""); setOlderPages({});
+        setNotice(imported.length === 1 ? `${imported[0].name} is ready. Use + to start a thread.` : `${imported.length} project folders are ready.`);
+      }
+    } catch (e) { failures.push(String(e)); }
+    finally {
+      if (failures.length) setError(failures.join("\n"));
+      importingProjects.current = false;
+      setProjectImportBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (!native) return;
+    let off: (() => void) | undefined, disposed = false;
+    void getCurrentWebview().onDragDropEvent(e => {
+      const event = e.payload;
+      if (event.type === "leave") { setProjectDropActive(false); return; }
+      const inNavigation = projectDropTarget(event.position,
+        projectNavigation.current?.getBoundingClientRect(), window.devicePixelRatio, settingsVisible || !!threadDialog);
+      setProjectDropActive(event.type !== "drop" && inNavigation);
+      if (event.type !== "drop") return;
+      if (inNavigation) { void importProjects(event.paths); return; }
+      if (!threadDialog && (dialog === "new" || (!dialog && selected)))
+        void stage(event.paths, targetRef.current);
+    }).then(f => { if (disposed) f(); else off = f; }).catch(e => { if (!disposed) setError(String(e)); });
+    return () => { disposed = true; off?.(); };
+  }, [native, dialog, threadDialog, selected, db.projects.length]);
+  function focusList() {
+    if (listPanel.current?.isCollapsed()) listPanel.current.expand();
+    const row =
+      list.current?.querySelector<HTMLElement>('[aria-current="true"]') ||
+      list.current?.querySelector<HTMLElement>(".task-row");
+    if (row) row.focus();
+    else search.current?.focus();
+  }
+  useEffect(() => {
+    function key(e: KeyboardEvent) {
+      const command = commandFor(e);
+      if (threadDialog || document.querySelector('[role="menu"], .attachment-preview')) return;
+      if (settingsVisible) {
+        if (settingsVisible && e.key === "Escape" && !e.isComposing && !document.querySelector('[role="listbox"], [role="dialog"]')) {
+          e.preventDefault();
+          if (dialog === "accounts") finishAccounts();
+          else if (dialog === "project") setDialog("projects");
+          else { setDialog(null); setTimeout(focusList, 0); }
+        }
+        return;
+      }
+      if (command) {
+        e.preventDefault();
+        switch (command) {
+          case "schedules": setDialog("schedules"); break;
+          case "fork": forkThread(); break;
+          case "split": if (!narrow) setView(toggleSplit); break;
+          case "new":
+            newThread();
+            break;
+          case "search":
+            search.current?.focus();
+            search.current?.select();
+            break;
+          case "settings":
+            setDialog("settings");
+            break;
+          case "accounts":
+            setDialog("usage");
+            break;
+          case "projects":
+            addProject();
+            break;
+          case "list":
+            focusList();
+            break;
+          case "composer":
+            (dialog === "new" ? newPrompt : composer).current?.focus();
+            break;
+          case "attention":
+            setFilter("attention");
+            focusList();
+            break;
+          case "attach":
+            void attach();
+            break;
+          case "stop":
+            if (task && busy(task))
+              void action(() => invoke("stop", { session: task.id }));
+            break;
+          case "help":
+            setDialog("help");
+            break;
+        }
+      } else if (
+        e.key === "Escape" &&
+        !e.isComposing &&
+        !document.querySelector('[role="listbox"]')
+      ) {
+        e.preventDefault();
+        setSelected("");
+        setTimeout(focusList, 0);
+      }
+    }
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [dialog, threadDialog, task, db, projectFilter, narrow]);
+  async function start(e?: FormEvent) {
+    e?.preventDefault();
+    if (!db.accounts.length) {
+      openAccounts();
+      return;
+    }
+    if (!native || working || staging || !newAccount || !destination || !draft.trim()) return;
+    await action(async () => {
+      const preview: Session = {
+        id: "pending-launch", project: projectId, account: effective,
+        title: draft.trim().split("\n")[0].slice(0, 100), status: "starting",
+        updated: Date.now(), provider_id: null, pending: null, error: null,
+        messages: [{ id: draftRequest.current, role: "user", text: draft, attachments: newAttachments }],
+      };
+      setLaunching(preview);
+      try {
+      const sid = await invoke<string>("launch", {
+        project: projectId,
+        account: effective,
+        prompt: draft,
+        options: { permission_mode: effectivePermissionMode(newAccount?.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" || !["codex","claude"].includes(db.accounts.find(a => a.id === effective)?.provider || "") ? null : effort, attachments: newAttachments.map(f => f.id), request_id: draftRequest.current },
+        existing: null,
+      });
+      setLaunching({ ...preview, id: sid });
+      setSelected(sid);
+      setDraft("");
+      setNewAttachments([]);
+      setDialog(null);
+      } catch (error) {
+        setLaunching(null);
+        throw error;
+      }
+      await refresh();
+    });
+  }
+  async function send(task: Session, e?: FormEvent, steer = false) {
+    e?.preventDefault();
+    const taskAccount = db.accounts.find(a => a.id === task.account), reply = getDraft(task.id), attachments = replyAttachments[task.id] ?? [];
+    if (!native || working || staging || !taskAccount || (task.status === "archived" || !!task.archived || task.deleted_at != null) || !reply.trim()) return;
+    await action(async () => {
+      const requestId = replyRequest(task.id);
+      setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
+      setThreadDraft(task.id, "");
+      setReplyAttachments(previous => ({ ...previous, [task.id]: [] }));
+      try {
+        await invoke(steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.length ? "queue_message" : "launch", {
+        session: task.id,
+        project: task.project,
+        account: null,
+        prompt: reply,
+        options: { permission_mode: effectivePermissionMode(taskAccount.provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: attachments.map(f => f.id), request_id: requestId },
+        existing: task.id,
+      });
+      } catch (error) {
+        setOutgoing(old => old.filter(m => m.message.id !== requestId));
+        updateDraft(task.id, previous => previous ? `${reply}\n${previous}` : reply);
+        setReplyAttachments(previous => ({ ...previous, [task.id]: [...attachments, ...(previous[task.id] || [])] }));
+        throw error;
+      }
+      setOutgoing(old => old.map(m => m.message.id === requestId ? { ...m, message: { ...m.message, delivery: "Sent · syncing…" } } : m));
+      delete replyRequests.current[task.id];
+      await refresh();
+    });
+  }
+  async function queueActionFor(task: Session, queueAction: string, message?: string, prompt?: string) {
+    return action(async () => {
+      await invoke("queue_action", { session: task.id, action: queueAction, message: message || null, prompt: prompt ?? null });
+      await refresh();
+      return true;
+    });
+  }
+  const sorted = [...db.sessions]
+    .sort(compareThreadRecency)
+    .filter(
+      (t) =>
+        threadVisibility(t, filter) &&
+        (projectFilter === "all" || t.project === projectFilter) &&
+        t.title.toLowerCase().includes(query.toLowerCase()) &&
+        (["all", "archived", "deleted"].includes(filter) ||
+          (filter === "attention" &&
+            ["unread", "waiting", "failed", "interrupted"].includes(threadListStatus(t, read))) ||
+          (filter === "running" && busy(t)) ||
+          (filter === "failed" && t.status === "failed") ||
+          (filter === "done" && threadListStatus(t, read) === "done") ||
+          (filter === "scheduled" && !!t.options?.scheduled)),
+    );
+  const activeMatching = sorted.filter(t => threadInActiveList(t, read, selected, hideRead, filter, db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) || t.id === secondary);
+  const defaultProjectOrder = [...new Set([
+    ...sorted.map((t) => t.project),
+    ...(!query && filter === "all" ? db.projects.filter(p =>
+      (projectFilter === "all" || projectFilter === p.id) && !db.sessions.some(t => t.project === p.id),
+    ).map(p => p.id) : []),
+  ])];
+  const fullProjectOrder = [...new Set([
+    ...savedProjectOrder.filter(id => db.projects.some(p => p.id === id)),
+    ...defaultProjectOrder,
+    ...db.projects.map(p => p.id),
+  ])];
+  const projectOrder = fullProjectOrder.filter(id => defaultProjectOrder.includes(id));
+  function moveProjectGroup(id: string, target: string, after: boolean) {
+    if (id === target) return;
+    const next = fullProjectOrder.filter(p => p !== id);
+    const index = next.indexOf(target);
+    if (index < 0) return;
+    next.splice(index + (after ? 1 : 0), 0, id);
+    setSavedProjectOrder(next);
+  }
+  const collapsedVisible = activeMatching;
+  // Older rows (everything not in the active list, regardless of why it is hidden) are revealed OLDER_PAGE_SIZE at a time per project.
+  const olderFor = (pid: string) => sorted.filter(t => t.project === pid && !collapsedVisible.includes(t));
+  const shownOlder = (pid: string) => olderFor(pid).slice(0, (olderPages[pid] ?? 0) * OLDER_PAGE_SIZE);
+  const visible = collapsedVisible;
+  async function renameThread(session: string, title: string) {
+    if (native) await invoke("rename_session", { session, title });
+    setDb(current => ({ ...current, sessions: current.sessions.map(t => t.id === session ? { ...t, title } : t) }));
+  }
+  async function changeThread(id: string, operation: string, project?: string) {
+    await action(async () => {
+      await invoke("thread_action", { session: id, action: operation, project: project || null });
+      await refresh();
+      setThreadDialog(null);
+    });
+  }
+  function openThreadDialog(t: Session, operation: "move" | "delete" | "resume" | "review") {
+    setError("");
+    setMoveProject(t.project);
+    setResumePrompt("Continue where you left off.");
+    resumeRequest.current = crypto.randomUUID();
+    setThreadDialog({ id: t.id, action: operation });
+  }
+  function row(t: Session) {
+    const a = db.accounts.find((a) => a.id === t.account);
+    const capabilities = threadCapabilities(t, !!a);
+    const disabled = working || !native || !!db.host_update_pending;
+    const removalDisabled = working || !native;
+    return (
+      <ContextMenu key={t.id}>
+      <ContextMenuTrigger asChild>
+      <div
+        role="button"
+        tabIndex={0}
+        className={`task-row compact-session ${selected === t.id ? "task-selected" : ""}${splitActive && secondary === t.id ? " task-open-other" : ""}`}
+        aria-current={selected === t.id ? "true" : undefined}
+        data-open-pane={splitActive && secondary === t.id ? "other" : undefined}
+        aria-description={splitActive && secondary === t.id ? "Open in the other pane" : undefined}
+        onClick={() => { setPane(null); setSelected(t.id); setDialog(null); }}
+        onKeyDown={(e) => {
+          if ((e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) && !(e.target instanceof HTMLInputElement)) {
+            e.preventDefault(); e.stopPropagation();
+            const bounds = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: bounds.left + 20, clientY: bounds.bottom - 4 }));
+            return;
+          }
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPane(null); setSelected(t.id); setDialog(null); return; }
+          const rows = Array.from(
+            list.current?.querySelectorAll<HTMLElement>(".task-row") ||
+              [],
+          );
+          const index = rows.indexOf(e.currentTarget);
+          const target =
+            e.key === "ArrowDown"
+              ? Math.min(rows.length - 1, index + 1)
+              : e.key === "ArrowUp"
+                ? Math.max(0, index - 1)
+                : e.key === "Home"
+                  ? 0
+                  : e.key === "End"
+                    ? rows.length - 1
+                    : -1;
+          if (target >= 0) {
+            e.preventDefault();
+            rows[target]?.focus();
+          }
+        }}
+      >
+        <span
+          className="session-agent"
+          title={`${a?.provider} · ${a?.name}`}
+          aria-label={`${a?.provider} · ${a?.name}`}
+          style={{ color: a?.color }}
+        >
+          {a?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
+        </span>
+        <strong className="session-title"><ThreadTitle title={t.title} displayTitle={threadListTitle(t.title, t.messages)} onRename={title => renameThread(t.id, title)} /></strong>
+        {!grouped && (
+          <span
+            style={{
+              color: db.projects.find((p) => p.id === t.project)?.color,
+            }}
+          >
+            {db.projects.find((p) => p.id === t.project)?.name}
+          </span>
+        )}
+        <Dot status={threadListStatus(t, read)} />
+      </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="thread-context-menu" aria-label={`Actions for ${t.title}`}>
+        <ContextMenuLabel className="thread-menu-label">{t.title}</ContextMenuLabel>
+        {(t.status === "done" || t.status === "failed") && <ContextMenuItem onSelect={() => markThreadRead(t)}>Mark as read</ContextMenuItem>}
+        <ContextMenuItem disabled={working || !native || !capabilities.review} onSelect={() => openThreadDialog(t, "review")}>Review decision…</ContextMenuItem>
+        <ContextMenuItem disabled={disabled || !capabilities.stop} onSelect={() => void action(async () => { await invoke("stop", { session: t.id }); await refresh(); })}>Stop</ContextMenuItem>
+        <ContextMenuItem disabled={disabled || !capabilities.resume} onSelect={() => openThreadDialog(t, "resume")}>Resume…</ContextMenuItem>
+        <ContextMenuSeparator />
+        {capabilities.restore ?
+          <ContextMenuItem disabled={disabled || busy(t)} onSelect={() => void changeThread(t.id, "restore")}>Restore thread</ContextMenuItem> : <>
+          <ContextMenuItem disabled={t.archived ? disabled || !capabilities.change : removalDisabled || !capabilities.archive} onSelect={() => void changeThread(t.id, t.archived ? "unarchive" : "archive")}>{t.archived ? "Unarchive" : "Archive"}</ContextMenuItem>
+          <ContextMenuItem disabled={disabled || !capabilities.change || db.projects.length < 2} onSelect={() => openThreadDialog(t, "move")}>Change project…</ContextMenuItem>
+          <ContextMenuItem className="thread-menu-danger" disabled={removalDisabled || !capabilities.delete} onSelect={() => openThreadDialog(t, "delete")}>Delete…</ContextMenuItem>
+        </>}
+      </ContextMenuContent>
+      </ContextMenu>
+    );
+  }
+  function older(pid: string) {
+    const total = olderFor(pid).length;
+    if (!total) return null;
+    const pages = olderPages[pid] ?? 0;
+    const shown = shownOlder(pid);
+    const remaining = total - shown.length;
+    const projectName = !grouped ? ` · ${db.projects.find(p => p.id === pid)?.name}` : "";
+    return <div key={pid} className="thread-older">
+      {groupThreadsByDay(shown).map(group => <div key={group.label || "today"}>
+        {group.label && <div className="thread-day-label" role="separator" aria-label={group.label}>{group.label}</div>}
+        {group.threads.map(row)}
+      </div>)}
+      {remaining > 0 && <Button className="thread-history" variant="ghost" size="sm"
+        onClick={() => setOlderPages(p => ({ ...p, [pid]: pages + 1 }))}>
+        {pages ? `Show ${Math.min(OLDER_PAGE_SIZE, remaining)} more` : "Show older threads"} ({remaining}){projectName}
+      </Button>}
+      {pages > 0 && <Button className="thread-history" variant="ghost" size="sm"
+        aria-expanded
+        onClick={() => setOlderPages(p => ({ ...p, [pid]: 0 }))}>
+        Hide older threads{projectName}
+      </Button>}
+    </div>;
+  }
+  function fileChips(files: Attachment[], set: (v: Attachment[]) => void) {
+    return (
+      <div className="chat-attachments">
+        {files.map((f) => (
+          <span key={f.id} title={`${f.name} · ${Math.ceil(f.bytes / 1024)} KB`}>
+            <AttachmentLabel file={f}/>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove ${f.name}`}
+              onClick={() => set(files.filter((p) => p !== f))}
+            >
+              <X size={12} />
+            </Button>
+          </span>
+        ))}
+      </div>
+    );
+  }
+  // One pane of the conversation area; `side` is the pane when split, otherwise the single pane.
+  function conversation(side: SplitSide) {
+    const id = splitActive ? view[side] : selected, thread = db.sessions.find(t => t.id === id);
+    const focused = !splitActive || view.focus === side;
+    const toggle = { canToggleSplit: !narrow && (!splitActive || side === "right"), onToggleSplit: () => setView(toggleSplit) };
+    const onFocus = () => setView(current => focusPane(current, side));
+    const onClose = () => {
+      if (splitActive) setView(current => closePane(current, side));
+      else setSelected("");
+      setTimeout(focusList, 0);
+    };
+    if (!thread) return splitActive ? <EmptyPane side={side} focused={focused} onFocus={onFocus} onClose={onClose} {...toggle} /> : null;
+    return (
+      <ConversationPane
+        key={thread.id}
+        task={thread} db={db} read={read} native={native} working={working} staging={staging}
+        split={splitActive} side={side} focused={focused} {...toggle}
+        composerRef={focused ? composer : undefined}
+        attachments={replyAttachments[thread.id] ?? []} onAttachments={files => setReplyAttachments(previous => ({ ...previous, [thread.id]: files }))}
+        permission={replyPermissions[thread.id] || savedPermissionMode(thread.options?.permission_mode)}
+        onPermission={value => setReplyPermissions(previous => ({ ...previous, [thread.id]: value }))}
+        selection={replySelectionFor(thread)} onSelection={value => setReplySelections(previous => ({ ...previous, [thread.id]: value }))}
+        onFocus={onFocus} onClose={onClose} onFork={() => forkThread(thread)}
+        onRename={title => renameThread(thread.id, title)}
+        onSend={(e, steer) => send(thread, e, steer)}
+        onQueueAction={(queueAction, message, prompt) => queueActionFor(thread, queueAction, message, prompt)}
+        onAttach={() => void attach(thread.id)}
+        action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips}
+      />
+    );
+  }
+  return (
+    <div className={`dev-app native-workspace${settingsVisible ? " settings-visible" : ""}${native && /Mac/.test(navigator.platform) ? " native-macos" : ""}`}>
+      <a className="skip-link" href={settingsVisible ? "#settings-content" : "#thread-composer"}>
+        {settingsVisible ? "Skip to settings" : "Skip to message composer"}
+      </a>
+      <header className="app-titlebar workbench-toolbar native-titlebar" data-tauri-drag-region>
+        <div className="titlebar-leading" data-tauri-drag-region>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="titlebar-sidebar-toggle"
+            aria-label={listHidden ? "Show thread list" : "Hide thread list"}
+            aria-pressed={!listHidden}
+            title={listHidden ? "Show thread list" : "Hide thread list"}
+            onClick={toggleList}
+          >
+            <PanelLeft size={16} />
+          </Button>
+        </div>
+        <div className="titlebar-heading" data-tauri-drag-region>
+          {settingsVisible ? <span className="titlebar-title" data-tauri-drag-region>Settings</span>
+            : dialog === "new" ? <span className="titlebar-title" data-tauri-drag-region>New thread</span>
+            : task && splitActive && <>
+              <span className="titlebar-title" data-tauri-drag-region>{task.title}</span>
+              {toolbarProject && <><span className="titlebar-divider" aria-hidden="true" data-tauri-drag-region /><span className="titlebar-project" data-tauri-drag-region>{toolbarProject.name}</span></>}
+              {otherTask && <span className="titlebar-secondary" data-tauri-drag-region>{otherTask.title}</span>}
+            </>}
+        </div>
+        <div className="titlebar-actions">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="New thread"
+            title="New thread (⌘ N)"
+            onClick={newThread}
+          >
+            <Plus size={16} />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="More actions" title="More actions"><Ellipsis size={16} /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="titlebar-menu">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={!native || grabbingUi}>Screen grab</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuItem disabled={!task || dialog === "new"} onSelect={() => void screenGrab("current")}>Attach to current thread</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void screenGrab("new")}>Start new thread</DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuItem onSelect={() => setDialog("schedules")}>Schedules<DropdownMenuShortcut>⌘⇧S</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setDialog("settings")}>Settings<DropdownMenuShortcut>⌘,</DropdownMenuShortcut></DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+      {!native && (
+        <div className="native-banner">
+          Open the Freddai macOS app to connect agents. This browser view cannot
+          launch local sessions.
+        </div>
+      )}
+      {hostUpdateNotice(db) && <div role="status" className="native-banner host-update-notice">{hostUpdateNotice(db)}</div>}
+      {error && (
+        <div role="alert" className="native-error">
+          {error}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Dismiss error"
+            onClick={() => setError("")}
+          >
+            <X size={14} />
+          </Button>
+        </div>
+      )}
+      <div className="app-body">
+        <main className="workbench">
+          <div className={`workbench-panes ${task || dialog === "new" ? "has-detail" : ""}`}>
+            <ResizablePanelGroup orientation="horizontal" defaultLayout={threadPaneLayout.defaultLayout} onLayoutChanged={threadPaneLayout.onLayoutChanged}>
+              <ResizablePanel id="thread-list" defaultSize="42%" minSize="25%" collapsible collapsedSize="0%" panelRef={listPanel} onResize={size => setListHidden(size.asPercentage === 0)}>
+                <section ref={projectNavigation} className="thread-browser project-navigation" aria-label="Threads" aria-busy={projectImportBusy}>
+                  {(projectDropActive || projectImportBusy) && <div className="project-drop-overlay" role="status">
+                    <FolderGit2 size={28} />
+                    <strong>{projectImportBusy ? "Adding project folders…" : "Drop folders to add projects"}</strong>
+                    <span>Folder names and your account defaults are used automatically.</span>
+                  </div>}
+                  {launching?.id === "pending-launch" && <div className="task-row compact-session" role="status" aria-label="Starting new thread"><Dot status="starting"/><span>{launching.title}</span><span>Starting…</span></div>}
+                  <div className="list-heading list-search-row">
+                    <div className="toolbar-search">
+                      <Search size={13} />
+                      <Input
+                        ref={search}
+                        aria-label="Search threads"
+                        placeholder="Filter threads…"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Add project"
+                      title="Add project (⌘ ⇧ P)"
+                      onClick={addProject}
+                    >
+                      <FolderPlus size={15} />
+                    </Button>
+                  </div>
+                  <div className="thread-filter-row">
+                    <Picker
+                      label="Project filter"
+                      value={projectFilter}
+                      onChange={(v) => {
+                        setProjectFilter(v);
+                        setOlderPages({});
+                      }}
+                      options={[
+                        { value: "all", label: "All projects" },
+                        ...db.projects.map((p) => ({
+                          value: p.id,
+                          label: p.name,
+                        })),
+                      ]}
+                    />
+                    <Picker
+                      label="Status filter"
+                      value={filter}
+                      onChange={(v) => {
+                        setFilter(v);
+                        setOlderPages({});
+                      }}
+                      options={[
+                        { value: "all", label: "All threads" },
+                        { value: "attention", label: "Needs attention" },
+                        { value: "running", label: "Running" },
+                        { value: "failed", label: "Failed" },
+                        { value: "done", label: "Finished" },
+                        { value: "scheduled", label: "Scheduled runs" },
+                        { value: "archived", label: "Archived" },
+                        { value: "deleted", label: "Deleted" },
+                      ]}
+                    />
+                    <span
+                      className="thread-count"
+                      title={`${grouped ? "Grouped by project · " : ""}Most recent message sent first`}
+                    >
+                      {sorted.length} {sorted.length === 1 ? "thread" : "threads"}
+                    </span>
+                  </div>
+                  <ScrollArea className="thread-list-scroll min-h-0 flex-1" viewportRef={list} viewportProps={{ className: "thread-list", "aria-label": "Thread list" }}>
+                    {grouped ? (
+                      projectOrder.map((pid) => {
+                        const p = db.projects.find((p) => p.id === pid);
+                        return (
+                          <section key={pid} data-project-id={pid} aria-label={`${p?.name} threads`}
+                            className={projectDrag?.target === pid && projectDrag.id !== pid ? `project-reorder-${projectDrag.after ? "after" : "before"}` : undefined}>
+
+                            <div className="project-group-heading">
+                              <button type="button" className="project-drag-handle"
+                                aria-label={`Reorder ${p?.name}`}
+                                title="Drag to reorder · Alt+↑/↓ to move"
+                                onKeyDown={e => {
+                                  if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+                                  e.preventDefault();
+                                  const offset = e.key === "ArrowUp" ? -1 : 1;
+                                  const target = projectOrder[projectOrder.indexOf(pid) + offset];
+                                  if (target) moveProjectGroup(pid, target, offset > 0);
+                                }}
+                                onPointerDown={e => {
+                                  if (e.button !== 0) return;
+                                  e.currentTarget.setPointerCapture(e.pointerId);
+                                  setProjectDrag({ id: pid, target: pid, after: false });
+                                }}
+                                onPointerMove={e => {
+                                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                                  const section = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("section[data-project-id]");
+                                  if (!section || !projectNavigation.current?.contains(section)) return;
+                                  const bounds = section.getBoundingClientRect();
+                                  setProjectDrag({ id: pid, target: section.dataset.projectId!, after: e.clientY > bounds.top + bounds.height / 2 });
+                                  const viewport = list.current;
+                                  if (viewport) {
+                                    const rect = viewport.getBoundingClientRect();
+                                    if (e.clientY < rect.top + 35) viewport.scrollTop -= 16;
+                                    if (e.clientY > rect.bottom - 35) viewport.scrollTop += 16;
+                                  }
+                                }}
+                                onPointerUp={e => {
+                                  if (projectDrag && projectNavigation.current?.contains(document.elementFromPoint(e.clientX, e.clientY))) {
+                                    moveProjectGroup(projectDrag.id, projectDrag.target, projectDrag.after);
+                                  }
+                                  setProjectDrag(null);
+                                }}
+                                onPointerCancel={() => setProjectDrag(null)}
+                                onLostPointerCapture={() => setProjectDrag(null)}
+                              ><GripVertical size={13} /></button>
+                              <FolderGit2
+                                size={14}
+                                style={{ color: p?.color }}
+                              />
+                              <strong style={{ color: p?.color }}>
+                                {p?.name}
+                              </strong>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Git history for ${p?.name}`}
+                                title={`Git history for ${p?.name}`}
+                                aria-pressed={pane?.kind === "git" && pane.projectId === pid}
+                                className="project-settings-button project-git-button"
+                                onClick={e => { e.stopPropagation(); if (!view.split) setSelected(""); setDialog(null); setPane({ kind: "git", projectId: pid }); }}
+                              >
+                                <GitBranch size={13} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`New task in ${p?.name}`}
+                                title={`New task in ${p?.name}`}
+                                className="project-settings-button"
+                                onClick={() => newThreadInProject(pid)}
+                              >
+                                <Plus size={13} />
+                              </Button>
+                            </div>
+                            <ThreadList key={`${filter}:${query}:${hideRead}`} threads={visible.filter((t) => t.project === pid)} renderRow={row} />
+                            {older(pid)}
+                          </section>
+                        );
+                      })
+                    ) : (
+                      <>
+                        <ThreadList key={`${filter}:${query}:${hideRead}:${projectFilter}`} threads={visible} renderRow={row} />
+                        {projectOrder.map(pid => older(pid))}
+                      </>
+                    )}
+                    {!sorted.length && (
+                      <div className="native-empty">
+                        <MascotHero line={db.projects.length ? "Nothing here yet. Want to start something?" : "Hi, I'm Freddai. Let's get you set up."} />
+                        <FolderGit2 size={24} />
+                        <h2>
+                          {db.projects.length
+                            ? "No matching threads"
+                            : "Choose where you build"}
+                        </h2>
+                        <p>
+                          {db.projects.length
+                            ? "Start a thread or adjust your filters."
+                            : "Add a local project folder, connect an account, then start a conversation."}
+                        </p>
+                        <Button
+                          variant="outline"
+                          onClick={db.projects.length ? newThread : addProject}
+                        >
+                          {db.projects.length ? "New thread" : "Add project"}
+                        </Button>
+                      </div>
+                    )}
+
+                  </ScrollArea>
+                </section>
+              </ResizablePanel>
+              {dialog === "new" && <>
+                <ResizableHandle withHandle />
+                <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
+                  <section className="thread-detail new-conversation" aria-label="New conversation">
+                    <div className="pane-title"><span>New thread</span><Button variant="ghost" size="icon" className="ml-auto" aria-label="Close new conversation" onClick={() => { setDialog(null); setTimeout(focusList, 0); }}><X size={14}/></Button></div>
+                    <div className="chat-surface">
+                      <div className="chat-transcript" aria-label={launching ? "Starting conversation" : "Empty conversation"}>
+                        {!launching && <MascotHero line="What should we work on today?" />}
+                        {launching && <ThreadTranscript messages={[]} pending={[{ id: "launching", text: launching.messages[0]?.text || "", attachments: launching.messages[0]?.attachments }]} renderAttachment={file => <AttachmentLabel file={file}/>}><ConversationActivity thread={launching} /></ThreadTranscript>}
+                      </div>
+                      {error && <p role="alert" className="inline-error">{error}</p>}
+                      {!db.accounts.length && <p className="new-conversation-note">Connect an agent account to start. <Button variant="ghost" size="sm" onClick={openAccounts}>Set up agents & accounts</Button></p>}
+                      {!db.projects.length && <p className="new-conversation-note">Add a project folder to start. <Button variant="ghost" size="sm" onClick={() => { addProject(); }}>Add project</Button></p>}
+                      <form className="chat-composer" onSubmit={start}>
+                        {fileChips(newAttachments, setNewAttachments)}
+                        <Textarea id="thread-composer" ref={newPrompt} autoFocus aria-label="Task prompt" placeholder="What should we work on?" disabled={!!launching} value={launching ? "" : draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => {
+                          if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) { e.preventDefault(); void start(); }
+                        }}/>
+                        <div className="new-conversation-options">
+                          <Picker label="Project" value={projectId} onChange={setProjectId} options={db.projects.map(p => ({ value: p.id, label: p.name }))}/>
+                          <Picker label="Agent and account" disabled={!native || working} value={accountId} onChange={selectNewAccount} options={[{ value: "default", label: resolveAccount(db, destination) ? `${db.preferences.new_thread_policy === "last_selected" && db.preferences.last_selected ? "Last selected" : db.preferences.new_thread_policy === "default" ? "Global default" : destination?.policy === "fixed" ? "Project default" : destination?.policy === "last" && destination.last ? "Last used in project" : "Global default"}: ${accountLabel(db, resolveAccount(db, destination))}` : "No default account configured" }, ...db.accounts.map(a => ({ value: a.id, label: `${providerName(a.provider)} · ${a.name}` }))]}/>
+                          <label className="new-worktree" title={worktree ? "New branch from the current commit; uncommitted files stay in the original folder." : "Use the project folder directly. Your choice is remembered."}><input type="checkbox" checked={worktree} onChange={e => {
+                            setWorktree(e.target.checked);
+                            if (native) void action(() => invoke("save_preferences", { preferences: { ...db.preferences, use_worktree: e.target.checked } }));
+                          }}/>Separate worktree</label>
+                        </div>
+                        <div className="chat-composer-tools">
+                          <Button type="button" variant="ghost" size="icon" className="composer-attach" aria-label="Attach files" title="Attach files (⌘ ⇧ U)" onClick={() => void attach()} disabled={!native}><Plus size={20}/></Button>
+                          <PermissionSelect provider={newAccount?.provider} value={permissionMode} onChange={setPermissionMode} disabled={working}/>
+                          <span className="composer-spacer"/>
+                          {!!staging && <span className="attachment-status" role="status">Copying attachments…</span>}
+                          <AgentControls account={newAccount} native={native} value={{ model, effort }} onChange={value => { setModel(value.model); setEffort(value.effort); }} disabled={working}/>
+                          <Button className="chat-send" size="icon" aria-label="Start thread" title="Start thread" disabled={!native || !!staging || working || !newAccount || !draft.trim() || !destination}><ArrowUp size={16}/></Button>
+                        </div>
+                      </form>
+                      <p className="sr-only">Enter to start · Shift Enter for new line</p>
+                    </div>
+                  </section>
+                </ResizablePanel>
+              </>}
+              {pane?.kind === "git" && !dialog && <>
+                <ResizableHandle withHandle />
+                <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
+                  <GitHistoryPanel key={pane.projectId} project={db.projects.find(p => p.id === pane.projectId)} native={native} onClose={() => { setPane(null); setTimeout(focusList, 0); }} />
+                </ResizablePanel>
+              </>}
+              {dialog !== "new" && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
+                <>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
+                    {splitActive ? (
+                      <ResizablePanelGroup orientation="horizontal">
+                        {(["left", "right"] as const).map((side, index) => <Fragment key={side}>
+                          {index > 0 && <ResizableHandle withHandle />}
+                          <ResizablePanel defaultSize="50%" minSize="25%">{conversation(side)}</ResizablePanel>
+                        </Fragment>)}
+                      </ResizablePanelGroup>
+                    ) : conversation(view.focus)}
+                  </ResizablePanel>
+                </>
+              )}
+            </ResizablePanelGroup>
+          </div>
+        </main>
+      </div>
+      <footer className="statusbar native-accounts">
+        <span role="status" className="sr-only">
+          {notice}
+        </span>
+        <ScrollArea orientation="horizontal" className="min-w-0 flex-1 h-full" viewportProps={{ "aria-label": "Accounts" }}><div className="footer-account-list">
+        <UsageFooter accounts={db.accounts} native={native} onOpen={() => setDialog("usage")} />
+        </div></ScrollArea>
+        {!db.accounts.length && <Button variant="ghost" size="sm" onClick={openAccounts}>
+          <Plus size={13} /> Connect accounts
+        </Button>}
+      </footer>
+      <Dialog open={!!threadDialog} onOpenChange={open => { if (!open && !working) setThreadDialog(null); }}>
+        <DialogContent className="capture-panel native-dialog" onCloseAutoFocus={e => { e.preventDefault(); focusList(); }}>
+          <ScrollArea viewportProps={{ style: { maxHeight: "calc(85dvh - 3rem)" }, "aria-label": "Thread action details" }}><div className="grid gap-4 pr-3">
+          <DialogHeader>
+            <DialogTitle>{threadDialog?.action === "review" ? "Review decision" : threadDialog?.action === "resume" ? "Resume thread" : threadDialog?.action === "move" ? "Change project" : "Delete thread"}</DialogTitle>
+            <DialogDescription>{dialogThread?.title || "This thread is no longer available."}</DialogDescription>
+          </DialogHeader>
+          {error && <p role="alert" className="inline-error">{error}</p>}
+          {dialogThread && threadDialog?.action === "review" && (dialogThread.pending ?
+            <Permission key={`${dialogThread.id}:${JSON.stringify(dialogThread.pending.request_id ?? dialogThread.pending.id)}`}
+              pending={dialogThread.pending} provider={db.accounts.find(a => a.id === dialogThread.account)?.provider || "codex"}
+              onReply={async (allow, answers) => {
+                await invoke("respond", { session: dialogThread.id, requestId: JSON.stringify(dialogThread.pending?.request_id ?? dialogThread.pending?.id), allow, answers });
+                setThreadDialog(null); await refresh().catch(() => {});
+              }} /> : <p role="status">This decision is no longer pending.</p>)}
+          {dialogThread && threadDialog?.action === "move" && <form onSubmit={e => { e.preventDefault(); void changeThread(dialogThread.id, "move", moveProject); }}>
+            <p className="capture-help">Changes the thread’s project group. Its original working folder, account, and conversation stay the same. Queued messages will pause.</p>
+            <label>Project<Picker label="Move thread to project" value={moveProject} onChange={setMoveProject} options={db.projects.map(p => ({ value: p.id, label: p.name }))}/></label>
+            <Button disabled={working || !native || !!db.host_update_pending || busy(dialogThread) || !moveProject || moveProject === dialogThread.project}>Change project</Button>
+          </form>}
+          {dialogThread && threadDialog?.action === "delete" && <>
+            <p>Permanently delete this thread and its queued messages from Freddai? This cannot be undone. Active work will stop in the background. Project files and provider-side conversation history are kept.</p>
+            <Button variant="outline" disabled={working || !native} onClick={() => void changeThread(dialogThread.id, "purge")}>Delete permanently</Button>
+          </>}
+          {dialogThread && threadDialog?.action === "resume" && <form onSubmit={e => { e.preventDefault(); void action(async () => {
+            if (db.queues?.some(q => q.session === dialogThread.id)) await invoke("queue_action", { session: dialogThread.id, action: "pause", message: null });
+            await invoke("launch", { project: dialogThread.project, account: null, existing: dialogThread.id, prompt: resumePrompt, options: { request_id: resumeRequest.current } });
+            await refresh(); setThreadDialog(null);
+          }); }}>
+            <p className="capture-help">Resumes the saved conversation with its existing account, working folder, and agent settings. Existing queued messages stay paused.</p>
+            <label>Message<Textarea autoFocus aria-label="Resume message" value={resumePrompt} onChange={e => setResumePrompt(e.target.value)} /></label>
+            <Button disabled={working || !native || !!db.host_update_pending || !resumePrompt.trim() || !threadCapabilities(dialogThread, db.accounts.some(a => a.id === dialogThread.account)).resume}>Resume thread</Button>
+          </form>}
+          <Button variant="ghost" disabled={working} onClick={() => setThreadDialog(null)}>Cancel</Button>
+          </div></ScrollArea>
+        </DialogContent>
+      </Dialog>
+      <SettingsPanel
+        page={settingsVisible}
+        open={settingsVisible}
+        current={dialog || "settings"}
+        onNavigate={setDialog}
+        onClose={() => {
+          setDialog(null); setAccountReturn(null); setTimeout(focusList, 0);
+        }}
+        onRestoreFocus={() => {
+          if (task) composer.current?.focus();
+          else search.current?.focus();
+        }}
+        title={
+              dialog === "schedules" ? "Schedules" : dialog === "usage"
+                ? "Accounts & usage"
+                : dialog === "new"
+                ? "New thread"
+                : dialog === "accounts"
+                  ? "Set up agents & accounts"
+                  : dialog === "threads" ? "Thread display"
+                  : dialog === "projects" ? "Projects"
+                  : dialog === "appearance" ? "Appearance"
+                  : dialog === "companion" ? "Phone pairing"
+                  : dialog === "background" ? "Background work"
+                  : dialog === "settings"
+                    ? "Agents & defaults"
+                    : dialog === "project"
+                      ? editing.id
+                        ? `${editing.name} settings`
+                        : "Add project"
+                      : "Keyboard shortcuts"
+        }
+        description={
+              dialog === "schedules" ? "Schedules belong to Freddai, independently of agent sign-ins." : dialog === "usage"
+                ? "Usage limits and reset times across your accounts."
+                : dialog === "new"
+                ? "Choose the project and account for this conversation."
+                : dialog === "accounts"
+                  ? "Each agent’s accounts in one place. Sign in, then pick the default for new threads."
+                  : dialog === "threads" ? "Choose how conversations appear in your workspace."
+                  : dialog === "projects" ? "Manage local folders and each project’s agent defaults."
+                  : dialog === "appearance" ? "Make Freddai feel at home with a workspace theme."
+                  : dialog === "companion" ? "Generate a six-digit code, then approve your phone to connect to this Mac."
+                  : dialog === "background" ? "Control startup and work that continues when the window closes."
+                  : dialog === "settings"
+                    ? "Manage agents and accounts, then choose the default for new conversations."
+                    : dialog === "project"
+                      ? "A local folder and the agent defaults for its threads."
+                      : "Use Command on macOS, Control elsewhere. Shortcuts never approve agent actions."
+        }
+      >
+          {error && (
+            <p role="alert" className="inline-error">
+              {error}
+            </p>
+          )}
+          {dialog === "schedules" && <ScheduleManager db={db} native={native} onRefresh={refresh} onSelect={id => { setSelected(id); setDialog(null); }}/>}
+          {dialog === "usage" && <AccountOverview db={db} native={native} onManage={openAccounts} />}
+          {dialog === "accounts" && (
+            <AccountSetup
+              db={db}
+              native={native}
+              onRefresh={refresh}
+              onDone={finishAccounts}
+            />
+          )}
+          {dialog === "project" && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void action(async () => {
+                  await invoke("save_project", { project: editing });
+                  setDialog("projects");
+                  await refresh();
+                });
+              }}
+            >
+              <label>
+                Project name
+                <Input
+                  value={editing.name}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, name: e.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                Local folder
+                <Input
+                  value={editing.path}
+                  readOnly
+                  placeholder="Choose a folder"
+                />
+              </label>
+              {!editing.id && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!native}
+                  onClick={() =>
+                    void action(async () => {
+                      const path = await open({
+                        directory: true,
+                        multiple: false,
+                        title: "Select project folder",
+                      });
+                      if (typeof path === "string")
+                        setEditing((p) => ({
+                          ...p,
+                          path,
+                          name: p.name || path.split("/").pop() || "",
+                        }));
+                    })
+                  }
+                >
+                  Choose folder
+                </Button>
+              )}
+              <label>
+                Project color
+                <input
+                  aria-label="Project color"
+                  type="color"
+                  value={editing.color}
+                  onChange={(e) =>
+                    setEditing((p) => ({ ...p, color: e.target.value }))
+                  }
+                />
+              </label>
+              <h3>Default agent & account</h3>
+              {!db.accounts.length ? (
+                <div className="setup-note">
+                  <strong>No agent accounts connected yet</strong>
+                  <p>
+                    You can save this project now. Before starting a thread, set
+                    up Codex or Claude Code and sign in to an account.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={openAccounts}
+                  >
+                    Set up agents & accounts
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Picker
+                    label="Project agent policy"
+                    value={editing.policy}
+                    onChange={(v) =>
+                      setEditing((p) => ({
+                        ...p,
+                        policy: v as Project["policy"],
+                      }))
+                    }
+                    options={[
+                      {
+                        value: "inherit",
+                        label: `Global default: ${accountLabel(db, resolveAccount(db))}`,
+                      },
+                      { value: "fixed", label: "Use this account for this project" },
+                      {
+                        value: "last",
+                        label: "Remember last used in this project",
+                      },
+                    ]}
+                  />
+                  {editing.policy === "fixed" && (
+                    <Picker
+                      label="Project default account"
+                      value={editing.account || ""}
+                      onChange={(v) =>
+                        setEditing((p) => ({ ...p, account: v }))
+                      }
+                      options={db.accounts.map((a) => ({
+                        value: a.id,
+                        label: `${a.provider} · ${a.name}`,
+                      }))}
+                    />
+                  )}
+                  <p className="capture-help">Project preferences apply when your new-thread setting allows them. Last selected and Global default everywhere take precedence. Manage this in Agents & defaults.</p>
+                  <p className="capture-help">
+                    {editing.policy === "fixed"
+                      ? `New threads use ${accountLabel(db, editing.account || "")}.`
+                      : editing.policy === "last"
+                        ? `Remembers this project's last account. Until then: ${accountLabel(db, resolveAccount(db))}.`
+                        : `Global default currently resolves to ${accountLabel(db, resolveAccount(db))}. Change it in account setup, or choose a specific account for this project.`}
+                  </p>
+                  <Button type="button" variant="ghost" onClick={openAccounts}>
+                    Manage accounts & default
+                  </Button>
+                </>
+              )}
+              <p className="capture-help">
+                Multiple conversations can run at the same time. Threads share the project files.
+              </p>
+              <Button
+                disabled={
+                  !native ||
+                  working ||
+                  !editing.name ||
+                  !editing.path ||
+                  (editing.policy === "fixed" && !editing.account)
+                }
+              >
+                Save project
+              </Button>
+            </form>
+          )}
+          {dialog === "settings" && (
+            <>
+              <Field>
+                <FieldLabel>Agent and connection for new threads</FieldLabel>
+                <Picker label="New thread selection" disabled={!native || working} value={db.preferences.new_thread_policy || (db.preferences.prefer_last ? "legacy" : "project")} onChange={value => void action(async () => {
+                  await invoke("save_preferences", { preferences: { ...db.preferences, new_thread_policy: value === "legacy" ? null : value, prefer_last: value === "legacy" } });
+                  await refresh();
+                })} options={[
+                  { value: "last_selected", label: "Last selected across projects" },
+                  { value: "project", label: "Project preferences" },
+                  { value: "default", label: "Global default everywhere" },
+                  ...(!db.preferences.new_thread_policy && db.preferences.prefer_last ? [{ value: "legacy", label: "Project preferences, then last successfully used (existing)" }] : []),
+                ]}/>
+                <FieldDescription>{db.preferences.new_thread_policy === "last_selected"
+                  ? `Last selected takes precedence over project preferences. Until you select a connection, use project preferences, then the global default. Remembered: ${accountLabel(db, db.preferences.last_selected || "")}.`
+                  : db.preferences.new_thread_policy === "default"
+                    ? "Use the global default in every project."
+                    : "Use each project’s fixed connection or last used connection, then the global default."} You can override this in the new-thread composer. Changes save automatically.</FieldDescription>
+              </Field>
+              {!!db.accounts.length && (
+                <Picker
+                  label="Global fallback account"
+                  value={db.preferences.fallback || ""}
+                  onChange={(v) =>
+                    void action(async () => {
+                      await invoke("save_preferences", {
+                        preferences: { ...db.preferences, fallback: v },
+                      });
+                      await refresh();
+                    })
+                  }
+                  options={db.accounts.map((a) => ({
+                    value: a.id,
+                    label: `${a.provider} · ${a.name}`,
+                  }))}
+                />
+              )}
+              <section aria-labelledby="settings-agent-setup-heading">
+                <h2 id="settings-agent-setup-heading">Set up agents & accounts</h2>
+                <AccountSetup db={db} native={native} onRefresh={refresh} />
+              </section>
+            </>
+          )}
+          {dialog === "companion" && <CompanionSettings native={native} />}
+          {dialog === "appearance" && <AppearanceSettings appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
+          {dialog === "background" && <BackgroundSettings native={native}/>}
+          {dialog === "threads" && (
+            <FieldGroup>
+              <Field orientation="horizontal">
+                <FieldContent><FieldLabel htmlFor="group-by-project">Group by project</FieldLabel><FieldDescription>Organize your thread list by project folder.</FieldDescription></FieldContent>
+                <Switch id="group-by-project" checked={grouped} onCheckedChange={setGrouped} />
+              </Field>
+              <Field orientation="horizontal">
+                <FieldContent><FieldLabel htmlFor="hide-read-threads">Hide completed threads after reading</FieldLabel><FieldDescription>Completed conversations remain available in the Finished filter.</FieldDescription></FieldContent>
+                <Switch id="hide-read-threads" checked={hideRead} onCheckedChange={setHideRead} />
+              </Field>
+            </FieldGroup>
+          )}
+          {dialog === "projects" && (
+              <div className="settings-projects">
+                {!db.projects.length && <p className="capture-help">Add a local folder to organize threads and choose project defaults.</p>}
+                {db.projects.map((p) => (
+                  <Button
+                    variant="ghost"
+                    key={p.id}
+                    onClick={() => {
+                      setEditing(p);
+                      setDialog("project");
+                    }}
+                  >
+                    <span
+                      className="account-color"
+                      style={{ background: p.color }}
+                    />
+                    {p.name}
+                    <Settings2 size={12} />
+                  </Button>
+                ))}
+                <Button variant="outline" onClick={addProject}>
+                  Add project
+                </Button>
+              </div>
+          )}
+          {dialog === "help" && (
+            <>
+              <Input
+                autoFocus
+                aria-label="Search shortcuts"
+                placeholder="Find a shortcut…"
+                value={helpQuery}
+                onChange={(e) => setHelpQuery(e.target.value)}
+              />
+              <dl className="shortcut-list">
+                {[...shortcuts.map((s) => [s.keys, s.name]), ...navigation]
+                  .filter(([keys, name]) =>
+                    `${keys} ${name}`
+                      .toLowerCase()
+                      .includes(helpQuery.toLowerCase()),
+                  )
+                  .map(([keys, name]) => (
+                    <div key={name}>
+                      <dt>{name}</dt>
+                      <dd>
+                        <kbd>{keys}</kbd>
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
+            </>
+          )}
+      </SettingsPanel>
+    </div>
+  );
+}

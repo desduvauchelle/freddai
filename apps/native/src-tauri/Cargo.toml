@@ -1,0 +1,38 @@
+[package]
+name = "freddai-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "freddai_native_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+tauri-plugin-dialog = "2"
+sha2 = "0.10"
+libc = "0.2"
+aes-gcm = "0.10"
+rand = "0.8"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+freddai-core = { path = "../../../crates/core" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fs2 = "0.4"
+tiny_http = { version = "0.12", features = ["ssl-rustls"] }
+subtle = "2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+security-framework = "3"
+tauri-plugin-native-shell = { path = "plugins/native-shell" }
+tokio = { version = "1", features = ["time"] }

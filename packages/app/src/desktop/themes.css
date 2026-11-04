@@ -1,0 +1,59 @@
+/* Theme tokens reach both the workspace and Radix portals on document.body. */
+html[data-freddai-theme="neutral"] { --theme-background: #171717; --theme-card: #1c1c1c; --theme-surface: #262626; --theme-primary: #e5e5e5; --theme-border: #404040; }
+html[data-freddai-theme="slate"] { --theme-background: #0f172a; --theme-card: #162033; --theme-surface: #1e293b; --theme-primary: #93c5fd; --theme-border: #334155; }
+html[data-freddai-theme="violet"] { --theme-background: #1c1726; --theme-card: #241e30; --theme-surface: #30263f; --theme-primary: #c4b5fd; --theme-border: #49395e; }
+html[data-freddai-theme="rose"] { --theme-background: #24191d; --theme-card: #2c2026; --theme-surface: #38272f; --theme-primary: #fda4af; --theme-border: #543a46; }
+html[data-freddai-theme="green"] { --theme-background: #14201c; --theme-card: #1b2922; --theme-surface: #24352d; --theme-primary: #86efac; --theme-border: #364d40; }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) :is(.dev-app, .capture-panel, .dev-popup, .thread-context-menu, [data-slot="sheet-content"]) {
+  --background: var(--theme-background);
+  --foreground: #eeeef1;
+  --card: var(--theme-card);
+  --card-foreground: var(--foreground);
+  --popover: var(--theme-surface);
+  --popover-foreground: var(--foreground);
+  --primary: var(--theme-primary);
+  --primary-foreground: var(--theme-background);
+  --secondary: var(--theme-surface);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--theme-surface);
+  --muted-foreground: #a8a8b3;
+  --accent: var(--theme-surface);
+  --accent-foreground: var(--foreground);
+  --border: var(--theme-border);
+  --input: var(--theme-border);
+  --ring: var(--theme-primary);
+  --sidebar: var(--theme-card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  background: var(--background);
+  color: var(--foreground);
+  color-scheme: dark;
+}
+/* Legacy workspace surfaces now follow the selected palette as well. */
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.native-titlebar, .explorer, .workbench-toolbar, .thread-detail, .chat-surface, .native-accounts, .list-group) { background: var(--card); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.chat-composer, .agent-controls-panel, .message-queue-menu-panel, .conversation-usage-details, .jump-to-latest) { background: var(--secondary); border-color: var(--border); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace .chat-composer-tools > .chat-send { background: var(--primary); color: var(--primary-foreground); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace .chat-composer-tools > .chat-send:disabled { background: var(--muted); color: var(--muted-foreground); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace .chat-composer:focus-within { border-color: var(--ring); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.task-selected, .session-selected, .project-selected, .nav-row.active) { background: var(--accent) !important; box-shadow: inset 2px 0 var(--primary); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.task-row, .compact-session, .nav-row):hover { background: var(--accent); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace button:focus-visible { outline-color: var(--ring); }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .thread-context-menu [data-highlighted] { background: var(--accent); }
+
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 16px; }
+.theme-choice[data-slot="button"] { height: auto; display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; white-space: normal; text-align: left; }
+.theme-choice[aria-pressed="true"] { border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); }
+.theme-choice-name { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+.theme-choice-description { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.theme-preview { display: flex; height: 92px; overflow: hidden; border: 1px solid var(--preview-surface); border-radius: 5px; background: var(--preview-background); }
+.theme-preview-sidebar { width: 28%; padding: 12px 7px; background: var(--preview-surface); display: flex; flex-direction: column; gap: 7px; }
+.theme-preview i { display: block; height: 5px; border-radius: 3px; background: var(--preview-primary); opacity: .3; }
+.theme-preview-sidebar i:first-child { opacity: 1; }
+.theme-preview-content { flex: 1; display: flex; flex-direction: column; gap: 9px; padding: 15px 12px; }
+.theme-preview-content i:first-child { width: 60%; opacity: .8; }
+.theme-preview-content i:last-child { height: 20px; margin-top: auto; background: var(--preview-surface); opacity: 1; }
