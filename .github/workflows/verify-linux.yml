@@ -1,0 +1,50 @@
+name: Verify Linux installer
+on:
+  workflow_run:
+    workflows: ['Package desktop']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Package desktop run containing installers-Linux'
+        required: true
+        type: string
+permissions:
+  actions: read
+  contents: read
+jobs:
+  launch:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-Linux
+          path: installers
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+      - name: Install package on a clean runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb dbus-x11 ./installers/Freddai-linux-x64.deb
+          dpkg-query -W freddai
+      - name: Launch without accounts or provider activity
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/freddai-smoke/data" "$RUNNER_TEMP/freddai-smoke/config"
+          set +e
+          XDG_DATA_HOME="$RUNNER_TEMP/freddai-smoke/data" XDG_CONFIG_HOME="$RUNNER_TEMP/freddai-smoke/config" \
+            timeout 20s dbus-run-session -- xvfb-run -a freddai > launch.log 2>&1
+          result=$?
+          set -e
+          cat launch.log
+          test "$result" = 124 || { echo "App exited before the 20-second launch check (status $result)"; exit 1; }
+          if grep -E 'panicked at|symbol lookup error|error while loading shared libraries' launch.log; then
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-launch-log
+          path: launch.log
