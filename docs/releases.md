@@ -77,3 +77,6 @@ All three published installer files were downloaded from their public GitHub rel
 ## Android APK beta
 
 See [Android installation and release signing](android.md). Android uses the separate `android-beta-0.1.0` prerelease, with `Freddai-android-arm64.apk` and a SHA-256 checksum; it never replaces desktop’s latest stable release. Vercel’s production `ANDROID_DOWNLOAD_URL` enables the landing-page Android beta button only after the asset is published and checked. The Android app enrolls each user’s own Mac at runtime. Existing public Mac builds can use the documented public provisioning helper; current Mac source exposes setup directly in Pair phone. Physical-device pairing, relay and live-provider verification remain pending.
+
+
+Android beta upload verified: anonymous APK download matches SHA-256 `b1c5046f62447d7b3738e993ce23200521fe0f7b0c1f005daf386ebfcdc5e5e0`. The production Vercel Android download setting is configured. The push also triggered desktop packaging of the accumulated workspace changes; those jobs stopped before building because GitHub updater signing secrets are absent. This does not affect the separately signed Android release; desktop stable assets remain unchanged.

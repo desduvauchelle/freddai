@@ -165,7 +165,8 @@ fn write_text(ctx: &Ctx, path: &Path, content: &str) -> Res<()> {
             tag
         };
         let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ");
-        let backup = ctx.backups.join(format!("{stamp}__{tag}"));
+        // Multiple edits can occur in the same millisecond. Never overwrite an earlier backup.
+        let backup = ctx.backups.join(format!("{stamp}__{}__{tag}", uuid::Uuid::new_v4().simple()));
         fs::copy(&target, &backup).map_err(|e| {
             format!(
                 "{}: backup failed, nothing was written ({e})",
