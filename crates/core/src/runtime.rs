@@ -379,6 +379,14 @@ fn antigravity_supports_acp(help: &std::process::Output) -> bool {
         .any(|text| String::from_utf8_lossy(text).to_lowercase().contains("acp"))
 }
 fn command(account: &Account, root: &Path) -> Result<Command> {
+    command_with_resolver(account, root, executable)
+}
+
+fn command_with_resolver(
+    account: &Account,
+    root: &Path,
+    resolve: impl Fn(&str) -> Result<PathBuf>,
+) -> Result<Command> {
     let home = account
         .config_home
         .clone()
@@ -386,7 +394,7 @@ fn command(account: &Account, root: &Path) -> Result<Command> {
     if account.config_home.is_none() {
         private_dir(&home)?;
     }
-    let mut cmd = Command::new(executable(&account.provider)?);
+    let mut cmd = Command::new(resolve(&account.provider)?);
     for key in AUTH_ENV {
         cmd.env_remove(key);
     }
@@ -396,7 +404,7 @@ fn command(account: &Account, root: &Path) -> Result<Command> {
         if account.config_home.is_none() {
             return Err("Antigravity uses the shared CLI sign-in. Connect it in Accounts.".into());
         }
-        let help = Command::new(executable("antigravity")?).args(["acp", "--help"]).output().map_err(|e| e.to_string())?;
+        let help = Command::new(resolve("antigravity")?).args(["acp", "--help"]).output().map_err(|e| e.to_string())?;
         if !antigravity_supports_acp(&help) {
             return Err("Update Antigravity CLI to a version supporting agy acp, then scan again.".into());
         }
@@ -3095,6 +3103,15 @@ mod tests {
         }
     }
     #[test]
+    fn missing_cli_resolution_still_prevents_command_creation() {
+        let mut account = db().accounts[0].clone();
+        account.config_home = Some(PathBuf::from("/unused/shared-profile"));
+        let error = command_with_resolver(&account, Path::new("/unused"), |provider| {
+            Err(format!("Install {provider} CLI before using this account."))
+        }).unwrap_err();
+        assert_eq!(error, "Install codex CLI before using this account.");
+    }
+    #[test]
     fn shared_default_claude_profile_preserves_default_auth_namespace() {
         // Explicit ~/.claude selects a different Keychain namespace from an
         // unset CLAUDE_CONFIG_DIR. Persist that distinction across restarts.
@@ -3103,7 +3120,7 @@ mod tests {
             "config_home":"/unused/shared-claude", "claude_default_config":true
         })).unwrap();
         let restored: Account = serde_json::from_value(serde_json::to_value(&a).unwrap()).unwrap();
-        let cmd = command(&restored, Path::new("/unused/freddai")).unwrap();
+        let cmd = command_with_resolver(&restored, Path::new("/unused/freddai"), |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
         assert!(cmd.get_envs().any(|(key, value)| key == "CLAUDE_CONFIG_DIR" && value.is_none()),
             "Default CLI sign-in must not acquire an explicit configuration override");
         assert!(cmd.get_envs().any(|(key, value)| key == "ANTHROPIC_API_KEY" && value.is_none()));
@@ -3121,7 +3138,7 @@ mod tests {
             }).unwrap();
             assert_eq!(a.claude_default_config, !explicit);
             let restored: Account = serde_json::from_value(serde_json::to_value(a).unwrap()).unwrap();
-            let cmd = command(&restored, &root.join("unused")).unwrap();
+            let cmd = command_with_resolver(&restored, &root.join("unused"), |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
             let setting = cmd.get_envs().find(|(key, _)| *key == "CLAUDE_CONFIG_DIR").unwrap().1;
             assert_eq!(setting, if explicit { Some(profile.as_os_str()) } else { None });
             assert!(!root.join("unused").exists());
@@ -3144,7 +3161,7 @@ mod tests {
         let root = std::env::temp_dir().join(id());
         let mut a = db().accounts[0].clone();
         a.provider = "claude".into();
-        let cmd = command(&a, &root).unwrap();
+        let cmd = command_with_resolver(&a, &root, |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
         assert_eq!(cmd.get_envs().find(|(key, _)| *key == "CLAUDE_CONFIG_DIR").unwrap().1.unwrap(),
             root.join("accounts").join(&a.id).as_os_str());
         fs::remove_dir_all(root).unwrap();
@@ -3159,7 +3176,7 @@ mod tests {
             let mut a = db().accounts[0].clone();
             a.provider = provider.into();
             a.config_home = Some(root.clone());
-            let cmd = command(&a, &root.join("unused")).unwrap();
+            let cmd = command_with_resolver(&a, &root.join("unused"), |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
             let key = if provider == "codex" {
                 "CODEX_HOME"
             } else {
@@ -3234,9 +3251,9 @@ mod tests {
     fn profile_paths_are_unique_and_api_keys_removed() {
         let root = std::env::temp_dir().join(id());
         let mut a = db().accounts[0].clone();
-        let first = command(&a, &root).unwrap();
+        let first = command_with_resolver(&a, &root, |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
         a.id = "b".into();
-        let second = command(&a, &root).unwrap();
+        let second = command_with_resolver(&a, &root, |_| Ok(PathBuf::from("unused-test-cli"))).unwrap();
         let env = |c: &Command| {
             c.get_envs()
                 .find(|(k, _)| *k == "CODEX_HOME")

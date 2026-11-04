@@ -3,6 +3,9 @@ mod window_state;
 mod companion_crypto;
 #[cfg(target_os = "macos")]
 mod companion_pairing;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[path = "companion_pairing_unsupported.rs"]
+mod companion_pairing;
 #[cfg(target_os = "macos")]
 mod companion_relay;
 #[cfg(not(target_os = "ios"))]

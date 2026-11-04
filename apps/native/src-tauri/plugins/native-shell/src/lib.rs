@@ -1,3 +1,4 @@
+#![cfg(target_os = "ios")]
 //! iOS-only native shell (UINavigationController + native composer) around the Tauri WKWebView.
 use serde::{Deserialize, Serialize};
 use tauri::{

@@ -1512,3 +1512,7 @@ Verification: app and native typechecks, all app Vitest tests (new `native-home.
 The landing page now has separate Mac, Linux, Windows and iPhone entries. Links activate only from uploaded assets in a published stable GitHub release; the Mac HTTPS override remains supported. Linux assets have stable AppImage/Debian filenames. Windows remains unavailable pending functional Windows host support. TestFlight uses a validated `TESTFLIGHT_PUBLIC_URL` only after external testing is available. Missing releases display disabled actions and explicit status text. No fabricated download URLs or development bundles are advertised.
 
 The iOS app currently embeds a developer-Mac endpoint and pinned certificate from a local provisioning file at compile time. External TestFlight requires a generic, secure host-enrollment flow, distribution signing, an App Store Connect app record, a processed archive, beta-review information and Apple approval. Website availability does not establish installer or TestFlight availability.
+
+### CI portability verification (2026-11-04)
+
+Desktop CI isolates the iOS-only native-shell plugin, exposes an explicit unsupported pairing result on non-macOS desktops, and tests provider environment setup without requiring installed provider CLIs. Production CLI discovery still rejects missing executables. Freddai App Store Connect record: 6830788346 (com.freddai.companion). External TestFlight remains pending a distributable pairing flow and Apple beta review; no public join URL is advertised.
