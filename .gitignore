@@ -37,3 +37,9 @@ xcuserdata/
 build/
 companion-provision.json
 .pnpm-store/
+
+dist-android/
+*.jks
+*.keystore
+
+.playwright-mcp/

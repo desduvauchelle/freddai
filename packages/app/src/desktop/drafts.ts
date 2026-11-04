@@ -23,6 +23,35 @@ export function pruneDrafts(keep: readonly string[]) {
   drafts = Object.fromEntries(Object.entries(drafts).filter(([id]) => keep.includes(id)));
   emit(dropped);
 }
+
+// Drafts are memory-only, so an app restart (updater) would lose them. Before restarting they are written to
+// localStorage once; the next launch reads and deletes that copy and re-applies it as threads reopen.
+const RESTART_KEY = "freddai.drafts-before-restart";
+export const NEW_THREAD_DRAFT = "__new__";
+let restored: Record<string, string> = readRestartDrafts();
+function readRestartDrafts(): Record<string, string> {
+  try {
+    const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(RESTART_KEY);
+    if (raw === null) return {};
+    localStorage.removeItem(RESTART_KEY);
+    const parsed = JSON.parse(raw);
+    return Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === "string" && v !== "")) as Record<string, string>;
+  } catch (e) { console.error("Couldn't read saved drafts", e); return {}; }
+}
+/** Persists thread drafts plus the new-thread draft ahead of a restart. Throws if storage fails, so the caller can stop. */
+export function saveDraftsForRestart(newThreadDraft: string) {
+  const all = { ...drafts, ...(newThreadDraft ? { [NEW_THREAD_DRAFT]: newThreadDraft } : {}) };
+  if (Object.keys(all).length) localStorage.setItem(RESTART_KEY, JSON.stringify(all)); else localStorage.removeItem(RESTART_KEY);
+}
+/** Re-applies saved drafts for threads that are open now (each only once); returns the new-thread draft if one was saved. */
+export function restoreDrafts(openIds: readonly string[]): string | null {
+  let fresh: string | null = null;
+  for (const [id, value] of Object.entries(restored)) {
+    if (id === NEW_THREAD_DRAFT) { fresh = value; delete restored[id]; }
+    else if (openIds.includes(id)) { if (!getDraft(id)) setDraft(id, value); delete restored[id]; }
+  }
+  return fresh;
+}
 export function resetDrafts() { const ids = Object.keys(drafts); drafts = {}; emit(ids); }
 
 function subscribeTo(id: string) {

@@ -1,0 +1,31 @@
+name: CompanionLayoutTests
+options:
+  deploymentTarget:
+    iOS: '16.0'
+targets:
+  CompanionLayoutTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ${FREDDAI_REPO_ROOT}/scripts/tests/ios-layout/CompanionLayoutTests.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/CompanionLayout.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/DrawerContainerViewController.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.freddai.layout-tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+    scheme:
+      testTargets: [CompanionLayoutTests]
+  CompanionLayoutUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ${FREDDAI_REPO_ROOT}/scripts/tests/ios-layout/CompanionLayoutUITests.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.freddai.layout-ui-tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+    scheme:
+      testTargets: [CompanionLayoutUITests]

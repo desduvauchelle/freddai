@@ -26,6 +26,7 @@ export type Preferences = {
 export type Attachment = { id: string; name: string; bytes: number; mime: string; sha256: string };
 export type PermissionMode = "ask" | "bypass";
 export type LaunchOptions = { permission_mode?: PermissionMode | null; scheduled?: boolean; update_agent_controls?: boolean; worktree?: boolean; model?: string | null; effort?: string | null; attachments?: string[]; request_id?: string };
+export type BackgroundTask = { id: string; description: string; kind?: string | null; status: "running" | "completed" | "failed" | "stopped" | string; summary?: string | null };
 export type Message = { delivery?: string; id: string; role: string; text: string; attachments?: Attachment[] };
 export type Pending = {
   id?: string | number;
@@ -56,6 +57,8 @@ export type Session = {
   working_dir?: string | null;
   options?: LaunchOptions;
   messages: Message[];
+  /** Background sub-agents launched by this thread; the thread stays running until all report back. */
+  tasks?: BackgroundTask[];
   pending: Pending | null;
   error: string | null;
 };
@@ -127,8 +130,9 @@ export function threadListStatus(thread: Pick<Session, "id" | "status" | "update
 /**
  * Status rule for the live (top) section of a project's thread list. A thread is live when any holds:
  * running/starting/waiting, a pending approval/input request, queued follow-ups, an unread completed reply,
- * a failed run whose latest update has not been viewed, or it is the selected thread.
- * Everything else goes under "Show older threads". Read cursors (`read[id] >= updated`) record viewing.
+ * a failed run whose latest update has not been viewed, or it is the selected thread (list bucketing uses `bucketThreads`, which ignores selection).
+ * Everything else is non-live: the first N (setting `freddai.recentFinished`, default 5) stay visible under the live rows
+ * via `splitOlderThreads`; the rest go under "Show older threads". Read cursors (`read[id] >= updated`) record viewing.
  */
 export function threadIsLive(thread: Pick<Session, "id" | "status" | "updated"> & { pending?: unknown }, read: Record<string, number>, selected: string, queued = 0): boolean {
   return selected === thread.id || ["starting", "running", "waiting"].includes(thread.status) || !!thread.pending || queued > 0 ||
@@ -139,7 +143,55 @@ export function threadInActiveList(thread: Pick<Session, "id" | "status" | "upda
   return !hideRead || ["done", "failed", "archived", "deleted"].includes(filter) || threadIsLive(thread, read, selected, queued);
 }
 
+/** Number of threads that need attention (running, waiting on you, unread, or an unviewed failure); selection is ignored. */
+export function attentionCount<T extends Pick<Session, "id" | "status" | "updated"> & { pending?: unknown }>(threads: T[], read: Record<string, number>, queued: (thread: T) => number = () => 0): number {
+  return threads.filter(t => !["archived", "deleted"].includes(t.status) && threadIsLive(t, read, "", queued(t))).length;
+}
+
 export const OLDER_PAGE_SIZE = 10;
+export const RECENT_FINISHED_DEFAULT = 5;
+export const RECENT_FINISHED_MAX = 50;
+
+/** Clamps a persisted/typed value to an integer in 0..RECENT_FINISHED_MAX; non-numeric falls back to the default. */
+export function sanitizeRecentCount(value: unknown): number {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(n) ? Math.min(RECENT_FINISHED_MAX, Math.max(0, Math.floor(n))) : RECENT_FINISHED_DEFAULT;
+}
+
+/** Splits recency-ordered non-live threads into the first `recentCount` (kept visible) and the rest (behind Show older threads). */
+export function splitOlderThreads<T>(older: T[], recentCount: number): { recent: T[]; rest: T[] } {
+  const n = sanitizeRecentCount(recentCount);
+  return { recent: older.slice(0, n), rest: older.slice(n) };
+}
+
+export interface ThreadBuckets<T> { active: T[]; recent: T[]; older: T[] }
+
+/**
+ * Splits recency-ordered threads into the sidebar buckets. `active` = live threads (liveness is computed WITHOUT selection, so opening a
+ * thread never moves it between buckets), `recent` = the first `recentCount` non-live threads (per project when `scope` is "grouped",
+ * across all threads when "flat"), `older` = the rest. A selected (or `pinned`, e.g. the other split pane) thread that would land in `older` is appended to `recent` so it stays visible.
+ * With hideRead off or a done/failed/archived/deleted filter every thread is active (no recent bucket).
+ */
+export function bucketThreads<T extends Pick<Session, "id" | "status" | "updated"> & { project?: string; pending?: unknown }>(threads: T[], options: {
+  read: Record<string, number>; selected: string; recentCount: number; scope: "flat" | "grouped"; hideRead: boolean; filter: string;
+  queued?: (thread: T) => number; pinned?: string;
+}): ThreadBuckets<T> {
+  const active: T[] = [], rest: T[] = [];
+  for (const t of threads) (threadInActiveList(t, options.read, "", options.hideRead, options.filter, options.queued?.(t) ?? 0) ? active : rest).push(t);
+  const n = sanitizeRecentCount(options.recentCount);
+  const taken = new Map<string, number>();
+  const recent: T[] = [], older: T[] = [];
+  for (const t of rest) {
+    const key = options.scope === "flat" ? "" : t.project ?? "";
+    const count = taken.get(key) ?? 0;
+    if (count < n) { taken.set(key, count + 1); recent.push(t); } else older.push(t);
+  }
+  for (const id of [options.selected, options.pinned]) {
+    const at = id ? older.findIndex(t => t.id === id) : -1;
+    if (at >= 0) recent.push(...older.splice(at, 1));
+  }
+  return { active, recent, older };
+}
 
 /** Day-separator label for a timestamp: "" for today, "Yesterday", else "Mon, Oct 27" (+ year when not current). */
 export function dayBucketLabel(timestamp: number, now: number = Date.now()): string {

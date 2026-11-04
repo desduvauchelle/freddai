@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":true,"cwd":"__CWD__","sessionId":"sub","message":{"role":"user","content":"Explore the repo"}}
+{"type":"assistant","isSidechain":true,"cwd":"__CWD__","message":{"id":"x","role":"assistant","content":[{"type":"text","text":"done"}]}}

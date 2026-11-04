@@ -29,7 +29,10 @@ pub fn approval_response(
     allow: bool,
     answers: &Value,
 ) -> Result<Value, String> {
-    if matches!(provider, "gemini" | "antigravity" | "grok" | "opencode" | "cursor") {
+    if matches!(
+        provider,
+        "gemini" | "antigravity" | "grok" | "opencode" | "cursor"
+    ) {
         return crate::acp::approval(frame, allow);
     }
     if provider == "codex" {
@@ -76,7 +79,9 @@ mod tests {
             let v = codex_start("/project", resume, PermissionMode::Bypass);
             assert_eq!(v["params"]["approvalPolicy"], "never");
             assert_eq!(v["params"]["sandbox"], "danger-full-access");
-            if resume.is_some() { assert_eq!(v["params"]["threadId"], "existing"); }
+            if resume.is_some() {
+                assert_eq!(v["params"]["threadId"], "existing");
+            }
         }
     }
     #[test]
@@ -84,10 +89,19 @@ mod tests {
         use crate::runtime::LaunchOptions;
         let legacy: LaunchOptions = serde_json::from_value(json!({})).unwrap();
         assert_eq!(legacy.permission_mode, None);
-        assert_eq!(legacy.permission_mode.unwrap_or_default().claude_mode(), "default");
-        let bypass: LaunchOptions = serde_json::from_value(json!({"permission_mode":"bypass"})).unwrap();
-        assert_eq!(bypass.permission_mode.unwrap().claude_mode(), "bypassPermissions");
-        assert!(serde_json::from_value::<LaunchOptions>(json!({"permission_mode":"anything"})).is_err());
+        assert_eq!(
+            legacy.permission_mode.unwrap_or_default().claude_mode(),
+            "default"
+        );
+        let bypass: LaunchOptions =
+            serde_json::from_value(json!({"permission_mode":"bypass"})).unwrap();
+        assert_eq!(
+            bypass.permission_mode.unwrap().claude_mode(),
+            "bypassPermissions"
+        );
+        assert!(
+            serde_json::from_value::<LaunchOptions>(json!({"permission_mode":"anything"})).is_err()
+        );
     }
     #[test]
     fn unknown_approval_is_not_allowed() {

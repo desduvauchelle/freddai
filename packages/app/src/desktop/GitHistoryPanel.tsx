@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
 import { GitBranch, RefreshCw, X } from "lucide-react";
+import { GitActions, GitFileActions, GitCommitBox } from "./GitActions";
+import { tauriGitClient, type GitClient } from "./git-actions";
 import type { Project } from "./types";
 import { aheadBehindLabel, commitDate, groupChanges, layoutGraph, graphColors, type GitHistory } from "./git-history";
 
-export function GitHistoryPanel({ project, native, onClose }: { project: Project | undefined; native: boolean; onClose: () => void }) {
+export function GitHistoryPanel({ project, native, onClose, client = tauriGitClient }: { project: Project | undefined; native: boolean; onClose: () => void; client?: GitClient }) {
   const [data, setData] = useState<GitHistory | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,6 +27,7 @@ export function GitHistoryPanel({ project, native, onClose }: { project: Project
   }
   const rows = layoutGraph(data?.commits.filter(c => !branch || reachable.has(c.hash)) ?? []);
   const graphWidth = Math.max(64, ...rows.map(r => r.width * 16 + 20));
+  const [diffOpen, setDiffOpen] = useState<string | null>(null);
   const load = useCallback(async () => {
     if (!native || !path) { setError(!native ? "Git history is only available in the desktop app." : "This project has no folder path."); return; }
     setLoading(true);
@@ -59,8 +62,10 @@ export function GitHistoryPanel({ project, native, onClose }: { project: Project
             <input aria-label="Search commits" placeholder="Search commits…" value={search} onChange={e => setSearch(e.target.value)} />
             <span>{rows.length} commits</span>
           </div>
-          <details className="git-working-tree">
+          {path && <GitActions client={client} path={path} data={data} onChanged={load} />}
+          <details className="git-working-tree" open={data.counts.files > 0 || undefined}>
           <summary>Uncommitted changes ({data.counts.files})</summary>
+          {path && data.counts.files > 0 && <GitCommitBox client={client} path={path} data={data} onChanged={load} />}
           {!data.changes.length && <p className="git-empty">Working tree clean.</p>}
           {groupChanges(data.changes).map(g => (
             <div key={g.group} className="git-group">
@@ -69,6 +74,7 @@ export function GitHistoryPanel({ project, native, onClose }: { project: Project
                 <li key={g.group + c.path} className="git-file">
                   <span className={`git-badge git-badge-${c.group}`} title={c.status}>{c.code}</span>
                   <span className="git-path" title={c.path}>{c.orig_path ? `${c.orig_path} → ${c.path}` : c.path}</span>
+                  {path && <GitFileActions client={client} path={path} change={c} diffOpen={diffOpen === g.group + c.path} onToggleDiff={() => setDiffOpen(o => (o === g.group + c.path ? null : g.group + c.path))} onChanged={load} />}
                 </li>
               ))}</ul>
             </div>

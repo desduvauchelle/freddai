@@ -1,15 +1,15 @@
 import { PopoverDetails } from "./PopoverDetails";
 import { useEffect, useId, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Cpu } from "lucide-react";
 import { providerName, type Account } from "./types";
 
 export { defaultSelection } from "./agent-selection";
 export type { AgentSelection } from "./agent-selection";
-import { effortChoices, type AgentSelection, type Model } from "./agent-selection";
+import { effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from "./agent-selection";
 
-export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels }: {
-  account?: Account; native: boolean; value: AgentSelection; onChange: (value: AgentSelection) => void; disabled?: boolean; provider?: string; loadModels?: () => Promise<Model[]>;
+export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels, iconOnly = false }: {
+  iconOnly?: boolean; account?: Account; native: boolean; value: AgentSelection; onChange: (value: AgentSelection) => void; disabled?: boolean; provider?: string; loadModels?: () => Promise<Model[]>;
 }) {
   const id = useId();
   const [expanded, setExpanded] = useState(false);
@@ -26,14 +26,13 @@ export function AgentControls({ account, native, value, onChange, disabled = fal
     return () => { cancelled = true; };
   }, [expanded, native, account?.id, provider, loadModels]);
   const models = catalog?.account === (account?.id || provider) ? catalog?.models || [] : [];
-  const aliases = provider === "claude" ? ["sonnet", "opus", "haiku"] : [];
-  const choices = models.length ? models.map(m => ({ value: m.model, label: m.displayName || m.model })) : aliases.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
+  const choices = modelChoices(provider, models);
   const known = !value.model || choices.some(m => m.value === value.model);
   const [custom, setCustom] = useState(false);
   const efforts = effortChoices(provider || "", value.model, models);
-  return <PopoverDetails className="agent-controls" open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
+  return <PopoverDetails className={`agent-controls${iconOnly ? " agent-controls-icon" : ""}`} open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
     <summary aria-label="Model and effort" aria-disabled={disabled || !provider} onClick={e => { if (disabled || !provider) e.preventDefault(); }}>
-      <span className="agent-model-label">{choices.find(choice => choice.value === value.model)?.label || value.model || "Model default"}</span>{value.effort !== "default" && <span className="agent-effort-label">{value.effort === "xhigh" ? "Extra high" : value.effort[0].toUpperCase() + value.effort.slice(1)}</span>}<ChevronDown size={12} aria-hidden="true"/>
+      {iconOnly && <Cpu size={18} aria-hidden="true"/>}<span className="agent-model-label">{choices.find(choice => choice.value === value.model)?.label || value.model || "Model default"}</span>{value.effort !== "default" && <span className="agent-effort-label">{effortLabel(value.effort)}</span>}<ChevronDown size={12} aria-hidden="true"/>
     </summary>
     <div className="agent-controls-panel">
       <p>{provider ? providerName(provider) : "Choose an account"} · Applies to the next message</p>
@@ -50,7 +49,7 @@ export function AgentControls({ account, native, value, onChange, disabled = fal
       {!!efforts.length && <><label htmlFor={`${id}-effort`}>Reasoning effort</label>
         <select id={`${id}-effort`} disabled={disabled || !provider} value={value.effort} onChange={e => onChange({ ...value, effort: e.target.value })}>
           <option value="default">Agent default</option>
-          {[...new Set([...efforts, ...(value.effort !== "default" ? [value.effort] : [])])].map(e => <option key={e} value={e}>{e === "xhigh" ? "Extra high" : e[0].toUpperCase() + e.slice(1)}</option>)}
+          {[...new Set([...efforts, ...(value.effort !== "default" ? [value.effort] : [])])].map(e => <option key={e} value={e}>{effortLabel(e)}</option>)}
         </select></>}
       {provider && !["codex", "claude"].includes(provider) && <small>Effort control is unavailable for this provider. Enter its model ID under Custom.</small>}
       {loading && <small role="status">Loading available models…</small>}

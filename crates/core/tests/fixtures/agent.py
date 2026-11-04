@@ -1,5 +1,6 @@
 import sys,json,time
 provider=sys.argv[1]
+scenario=sys.argv[2] if len(sys.argv)>2 else ''
 model_selected=False
 def out(v): print(json.dumps(v),flush=True)
 for line in sys.stdin:
@@ -42,6 +43,21 @@ for line in sys.stdin:
     assert v['request']['persist']==False
     out({'type':'control_response','response':{'request_id':'freddai-title','subtype':'success','response':{'title':'Generated title'}}})
    else:out({'type':'control_response','response':{'request_id':'init','subtype':'success'}})
+  elif v.get('type')=='user' and scenario.startswith('bg-'):
+   out({'type':'system','subtype':'init','session_id':'provider-session'})
+   for n,block in enumerate([{'type':'thinking','thinking':''},{'type':'text','text':'Started the agent.'},{'type':'tool_use','id':'toolu_bg','name':'Agent','input':{'description':'Fixture agent','subagent_type':'general-purpose','run_in_background':True}}]):
+    if block['type']=='text':
+     out({'type':'stream_event','event':{'type':'message_start','message':{'id':'m1'}}})
+     out({'type':'stream_event','event':{'type':'content_block_start','index':n,'content_block':{'type':'text','text':''}}})
+     out({'type':'stream_event','event':{'type':'content_block_delta','index':n,'delta':{'type':'text_delta','text':block['text']}}})
+    out({'type':'assistant','message':{'id':'m1','content':[block]}})
+   out({'type':'user','message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'toolu_bg','content':[{'type':'text','text':'Async agent launched successfully.\nagentId: fixture-agent (internal)'}]}]}})
+   out({'type':'result','is_error':False})
+   time.sleep(1)
+   if scenario=='bg-exit': sys.exit(0)
+   out({'type':'system','subtype':'task_notification','task_id':'fixture-agent','status':'completed','summary':'ok'})
+   out({'type':'assistant','message':{'id':'m2','content':[{'type':'text','text':'The agent finished.'}]}})
+   out({'type':'result','is_error':False})
   elif v.get('type')=='user':
    assert 'ATTACHMENT_FIXTURE_CONTENT' in json.dumps(v['message']['content'])
    out({'type':'system','subtype':'init','session_id':'provider-session'})

@@ -71,12 +71,6 @@ export function createChangeSender<T>(send: (value: T) => Promise<void>): (value
 
 export const bumpOlderPage = (pages: Record<string, number>, project: string): Record<string, number> => ({ ...pages, [project]: (pages[project] || 0) + 1 });
 
-/** Last-viewed thread if it still exists, else the most recent one, else null (-> New thread). */
-export function resolveLaunchThread(threads: CompanionThread[], lastViewed: string, read: Record<string, number> = {}): string | null {
-  if (lastViewed && threads.some(t => t.id === lastViewed)) return lastViewed;
-  return selectThreads({ projects: [], threads }, '', '', 'all', 'recent', read)[0]?.id ?? null;
-}
-
 export type ThreadEventActions = {
   selectThread(id: string): void;
   setQuery(query: string): void;

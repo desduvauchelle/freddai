@@ -13,6 +13,34 @@ use std::{
     time::Duration,
 };
 pub const VERSION: &str = "2";
+/// Upper bound for one newline-delimited host message (snapshot replies carry every transcript).
+pub const MAX_HOST_MESSAGE_BYTES: u64 = 512 * 1024 * 1024;
+/// Read one newline-terminated message, failing loudly if it was truncated by `cap` or is not valid JSON.
+fn read_json_line(reader: impl Read, cap: u64, method: &str) -> Result<Value, String> {
+    let mut line = String::new();
+    BufReader::new(reader)
+        .take(cap)
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    let n = line.len();
+    let invalid = |reason: String| {
+        eprintln!(
+            "{}",
+            json!({"event":"host_call.invalid_reply","method":method,"bytes":n,"cap":cap,"reason":reason})
+        );
+        reason
+    };
+    if !line.ends_with('\n') && n as u64 >= cap {
+        return Err(invalid(format!(
+            "Host reply for `{method}` exceeded {cap} bytes and was truncated"
+        )));
+    }
+    serde_json::from_str(&line).map_err(|e| {
+        invalid(format!(
+            "Invalid host response for `{method}` ({n} bytes): {e}"
+        ))
+    })
+}
 #[cfg(unix)]
 pub fn call(root: &Path, method: &str, params: Value) -> Result<Value, String> {
     let mut socket = UnixStream::connect(root.join("host.sock"))
@@ -29,12 +57,7 @@ pub fn call(root: &Path, method: &str, params: Value) -> Result<Value, String> {
         json!({"version":VERSION,"method":method,"params":params})
     )
     .map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    BufReader::new(socket)
-        .take(32 * 1024 * 1024)
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    let reply: Value = serde_json::from_str(&line).map_err(|_| "Invalid host response")?;
+    let reply = read_json_line(socket, MAX_HOST_MESSAGE_BYTES, method)?;
     if let Some(error) = reply["error"].as_str() {
         return Err(error.into());
     }
@@ -62,6 +85,18 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             });
             Value::Null
         }
+        "upgrade_force" => {
+            let interrupted = rt.force_upgrade()?;
+            eprintln!(
+                "{}",
+                json!({"event":"host_upgrade.forced","interrupted":interrupted})
+            );
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_millis(150));
+                std::process::exit(0)
+            });
+            json!({"interrupted":interrupted})
+        }
         "snapshot" => {
             let (db, wait, held) = rt.snapshot_timed();
             let t = std::time::Instant::now();
@@ -80,7 +115,9 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             let revision = p["revision"].as_u64().unwrap_or(0);
             let (mut value, wait, held, sent, total) =
                 rt.snapshot_since(revision, p["hostId"].as_str());
-            value["build"] = json!(std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()));
+            value["build"] = json!(std::env::current_exe()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned()));
             crate::timing::log(
                 "host",
                 format_args!(
@@ -106,6 +143,11 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             json!(rt.account(text(&p, "name")?, text(&p, "provider")?, text(&p, "color")?)?)
         }
         "import_project" => json!(rt.import_project(&text(&p, "path")?, text(&p, "color")?)?),
+        "import_candidates" => json!(rt.import_candidates()?),
+        "import_sessions" => json!(rt.import_sessions(
+            serde_json::from_value(p["sessions"].clone())
+                .map_err(|e| format!("Invalid import request: {e}"))?
+        )?),
         "save_project" => json!(
             rt.project(serde_json::from_value(p["project"].clone()).map_err(|e| e.to_string())?)?
         ),
@@ -145,20 +187,62 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             )
             .map_err(|e| e.to_string())?
         )?),
+        "list_slash_commands" => {
+            let (account, dir) = rt.composer_context(
+                optional(&p, "session").as_deref(),
+                optional(&p, "project").as_deref(),
+                optional(&p, "account").as_deref(),
+            )?;
+            let account = account.ok_or("Choose an agent account to list its slash commands")?;
+            let home =
+                crate::commands::default_home(&account.provider, account.config_home.as_deref());
+            json!(crate::commands::discover(
+                &account.provider,
+                home.as_deref(),
+                dir.as_deref(),
+                optional(&p, "session").as_deref()
+            ))
+        }
+        "list_project_files" => {
+            let (_, dir) = rt.composer_context(
+                optional(&p, "session").as_deref(),
+                optional(&p, "project").as_deref(),
+                None,
+            )?;
+            json!(crate::commands::list_files(
+                &dir.ok_or("Choose a project to list its files")?
+            )?)
+        }
         "queue_message" => {
-            rt.queue_message(&text(&p, "session")?, text(&p, "prompt")?, serde_json::from_value(p["options"].clone()).map_err(|e| e.to_string())?)?;
+            rt.queue_message(
+                &text(&p, "session")?,
+                text(&p, "prompt")?,
+                serde_json::from_value(p["options"].clone()).map_err(|e| e.to_string())?,
+            )?;
             Value::Null
         }
         "steer_message" => {
-            rt.steer_message(&text(&p, "session")?, text(&p, "prompt")?, serde_json::from_value(p["options"].clone()).map_err(|e| e.to_string())?)?;
+            rt.steer_message(
+                &text(&p, "session")?,
+                text(&p, "prompt")?,
+                serde_json::from_value(p["options"].clone()).map_err(|e| e.to_string())?,
+            )?;
             Value::Null
         }
         "queue_action" if p["action"] == "edit" => {
-            rt.edit_queued_message(&text(&p, "session")?, &text(&p, "message")?, text(&p, "prompt")?)?;
+            rt.edit_queued_message(
+                &text(&p, "session")?,
+                &text(&p, "message")?,
+                text(&p, "prompt")?,
+            )?;
             Value::Null
         }
         "queue_action" => {
-            rt.queue_action(&text(&p, "session")?, &text(&p, "action")?, p["message"].as_str())?;
+            rt.queue_action(
+                &text(&p, "session")?,
+                &text(&p, "action")?,
+                p["message"].as_str(),
+            )?;
             Value::Null
         }
         "stop" => {
@@ -178,7 +262,11 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             serde_json::from_value(p["paths"].clone()).map_err(|e| e.to_string())?
         )?),
         "thread_action" => {
-            rt.thread_action(&text(&p, "session")?, &text(&p, "action")?, p["project"].as_str())?;
+            rt.thread_action(
+                &text(&p, "session")?,
+                &text(&p, "action")?,
+                p["project"].as_str(),
+            )?;
             Value::Null
         }
         "rename_session" => {
@@ -211,6 +299,19 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
                 .collect::<Vec<_>>();
             json!({"unknown": rt.merge_read(&list)?})
         }
+        "day_summary" => crate::day_summary::state(rt, &text(&p, "date")?)?,
+        "summarize_day" => crate::day_summary::start(
+            rt,
+            &text(&p, "date")?,
+            p["force"].as_bool().unwrap_or(false),
+        )?,
+        "commit_message_start" => crate::commit_message::start(
+            rt,
+            &text(&p, "project")?,
+            &text(&p, "stat")?,
+            &text(&p, "diff")?,
+        )?,
+        "commit_message_state" => crate::commit_message::state(&text(&p, "project")?),
         "stop_all" => {
             rt.stop_all();
             Value::Null
@@ -230,7 +331,10 @@ extern "C" fn on_shutdown_signal(sig: libc::c_int) {
 fn install_shutdown_flush(rt: Runtime) {
     unsafe {
         for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-            libc::signal(sig, on_shutdown_signal as extern "C" fn(libc::c_int) as libc::sighandler_t);
+            libc::signal(
+                sig,
+                on_shutdown_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+            );
         }
     }
     std::thread::spawn(move || loop {
@@ -284,7 +388,7 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
             let mut method = String::new();
             let result = (|| {
                 BufReader::new(socket.try_clone().map_err(|e| e.to_string())?)
-                    .take(32 * 1024 * 1024)
+                    .take(MAX_HOST_MESSAGE_BYTES)
                     .read_line(&mut line)
                     .map_err(|e| e.to_string())?;
                 let req: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
@@ -325,4 +429,33 @@ pub fn call(_: &Path, _: &str, _: Value) -> Result<Value, String> {
 #[cfg(not(unix))]
 pub fn serve(_: PathBuf) -> Result<(), String> {
     Err("Background host currently requires macOS or Linux".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_json_line;
+    #[test]
+    fn truncated_reply_is_explicit() {
+        let data = format!("{{\"result\":\"{}\"}}\n", "x".repeat(100));
+        let e = read_json_line(data.as_bytes(), 50, "snapshot").unwrap_err();
+        assert!(
+            e.contains("`snapshot` exceeded 50 bytes and was truncated"),
+            "{e}"
+        );
+    }
+    #[test]
+    fn invalid_reply_names_method_and_size() {
+        let e = read_json_line(&b"nope\n"[..], 1024, "snapshot").unwrap_err();
+        assert!(
+            e.contains("Invalid host response for `snapshot` (5 bytes)"),
+            "{e}"
+        );
+    }
+    #[test]
+    fn valid_reply_parses() {
+        assert_eq!(
+            read_json_line(&b"{\"result\":1}\n"[..], 1024, "x").unwrap()["result"],
+            1
+        );
+    }
 }

@@ -1,3 +1,4 @@
+import brandMascotUrl from "../../../../assets/brand/dormouse/dormouse-v3.svg?url";
 import { threadListTitle } from "./thread-list-title";
 import { AttachmentLabel } from "./AttachmentLabel";
 import { previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
@@ -6,12 +7,14 @@ import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
 import { MessageQueue } from "./MessageQueue";
 import { projectDropTarget } from "./project-drop";
-import { OLDER_PAGE_SIZE, compareThreadRecency, groupThreadsByDay, threadInActiveList, threadListStatus, threadVisibility, threadCapabilities } from "./types";
+import { OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, RECENT_FINISHED_MAX, compareThreadRecency, sanitizeRecentCount, splitOlderThreads, groupThreadsByDay, bucketThreads, attentionCount, threadListStatus, threadVisibility, threadCapabilities } from "./types";
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuLabel } from "@freddai/ui/components/context-menu";
 import { ConversationUsage } from "./ConversationUsage";
 import { ThreadError } from "./ThreadError";
 import { ThreadList } from "./ThreadList";
+import { HomeView } from "./HomeView";
 import { ThreadTitle } from "./ThreadTitle";
+import { resolveHomeLaunch } from "./home-launch";
 import { PermissionSelect, effectivePermissionMode } from "./PermissionSelect";
 import { savedPermissionMode } from "./permission-mode";
 import type { PermissionMode } from "./types";
@@ -20,6 +23,8 @@ import { providerName } from "./types";
 import { ApprovalMouse, ConversationActivity, MascotHero } from "./MascotScenes";
 import { ScheduleManager } from "./ScheduleManager";
 import { GitHistoryPanel } from "./GitHistoryPanel";
+import { ShipButton, SHIP_PROMPT } from "./ShipButton";
+import { tauriGitClient } from "./git-actions";
 import type { PaneSelection } from "./git-history";
 import { UsageFooter } from "./UsageFooter";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@freddai/ui/components/field";
@@ -30,14 +35,22 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { useTheme } from "./use-theme";
 import { CompanionSettings } from "./CompanionSettings";
 import { BackgroundSettings } from "./BackgroundSettings";
+import { VoiceSettings } from "./VoiceSettings";
+import { AgentConfigSettings } from "./AgentConfigSettings";
+import { MicButton, VoiceNotice, useHoldToTalk } from "./VoiceControls";
+import { joinDictation, focusEnd, shortcutLabel, useVoice, voice } from "./voice";
+import { ImportSessions } from "./ImportSessions";
 import { AccountOverview } from "./AccountOverview";
 import { AccountSetup } from "./AccountSetup";
 import { accountLabel } from "./types";
 import { ThreadTranscript } from "../conversation/ThreadTranscript";
+import { TodoPanel } from "../conversation/TodoList";
 import { reconcileSnapshot } from "./reconcileSnapshot";
 import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
-import { getDraft, setDraft as setThreadDraft, updateDraft, pruneDrafts, useDraft, useHasDraftText } from "./drafts";
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
+import { getDraft, setDraft as setThreadDraft, updateDraft, pruneDrafts, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts } from "./drafts";
+import { updateBanner } from "./app-update";
+import { useAppUpdate } from "./use-app-update";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type Ref } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -46,6 +59,7 @@ import { Button } from "@freddai/ui/components/button";
 type PanelImperativeHandle = { collapse: () => void; expand: () => void; isCollapsed: () => boolean; getSize: () => { asPercentage: number; inPixels: number }; resize: (size: number | string) => void };
 import { Input } from "@freddai/ui/components/input";
 import { Textarea } from "@freddai/ui/components/textarea";
+import { SuggestTextarea } from "./ComposerSuggest";
 import {
   Dialog,
   DialogContent,
@@ -83,8 +97,12 @@ import {
   Columns2,
   X,
   FolderGit2,
+  Folder,
+  FolderOpen,
   PanelLeft,
   Ellipsis,
+  House,
+  SquareTerminal,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@freddai/ui/components/dropdown-menu";
 import {
@@ -96,10 +114,15 @@ import {
   type Session,
   type Pending,
   type Attachment,
+  type LaunchOptions,
 } from "./types";
 import { commandFor, shortcuts, navigation } from "./shortcuts";
+import { terminalPanel } from "./terminal-panel-state";
+import { TerminalPanel } from "./TerminalPanel";
+import { runInTerminal } from "./terminal-sessions";
 import { closePane, focusPane, focusedThread, openThreads, otherThread, restoreSplitView, selectThread, splitPreference, toggleSplit, type SplitPreference, type SplitSide, type SplitView } from "./split-view";
-import { hostUpdateNotice, shouldSurfacePollError } from "./host-update";
+import { hostUpdateNotice, shouldSurfacePollError, RESTART_NOW_LABEL } from "./host-update";
+import { dotClass, interruptedThreads, interruptedBannerText, resumeAll, resumeFailureMessage } from "./interrupted";
 import "../workspace.css";
 import "./desktop.css";
 import "./themes.css";
@@ -160,7 +183,7 @@ function Dot({ status }: { status: string }) {
       role="img"
       aria-label={labelStatus(status)}
       title={labelStatus(status)}
-      className={`state-dot state-${status === "failed" ? "Failed" : status === "done" ? "Done" : status === "running" || status === "starting" ? "In-progress" : status === "unread" || status === "waiting" || status === "interrupted" ? "Needs-you" : "Next"}`}
+      className={`state-dot state-${dotClass(status)}`}
     />
   );
 }
@@ -210,13 +233,14 @@ function ReplyTextarea({ threadId, id, composerRef, placeholder, onSend }: {
 }) {
   const reply = useDraft(threadId);
   return (
-    <Textarea
+    <SuggestTextarea
       id={id}
-      ref={composerRef}
+      composerRef={composerRef}
       aria-label="Message agent"
       placeholder={placeholder}
       value={reply}
-      onChange={(e) => setThreadDraft(threadId, e.target.value)}
+      context={{ session: threadId }}
+      onValueChange={(value) => setThreadDraft(threadId, value)}
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) {
           e.preventDefault();
@@ -239,7 +263,7 @@ function ConversationPane({
   task, db, read, native, working, staging, split, side, focused, canToggleSplit, composerRef,
   attachments, onAttachments, permission, onPermission, selection, onSelection,
   onFocus, onClose, onToggleSplit, onFork, onRename, onSend, onQueueAction, onAttach,
-  action, refresh, changeThread, openAccounts, fileChips,
+  action, refresh, changeThread, openAccounts, fileChips, resumeThread,
 }: {
   task: Session; db: Database; read: Record<string, number>; native: boolean; working: boolean; staging: number;
   split: boolean; side: SplitSide; focused: boolean; canToggleSplit: boolean;
@@ -255,9 +279,12 @@ function ConversationPane({
   action: <T>(fn: () => Promise<T>) => Promise<T | undefined>; refresh: () => Promise<void>;
   changeThread: (id: string, operation: string) => Promise<void>;
   openAccounts: () => void;
+  resumeThread: (task: Session) => Promise<void>;
   fileChips: (files: Attachment[], set: (v: Attachment[]) => void) => ReactNode;
 }) {
   const project = db.projects.find((p) => p.id === task.project),
+    terminalCwd = task.working_dir || project?.path,
+    terminalOpen = useSyncExternalStore(terminalPanel.subscribe, terminalPanel.getSnapshot).open,
     taskAccount = db.accounts.find((a) => a.id === task.account),
     taskQueue = db.queues?.find(q => q.session === task.id);
   const capabilities = threadCapabilities(task, !!taskAccount);
@@ -265,10 +292,16 @@ function ConversationPane({
   const renameChosen = useRef(false);
   const transcript = useRef<HTMLDivElement>(null);
   const [showLatest, setShowLatest] = useState(false);
+  const lastMessageCount = useRef(task.messages.length);
   useEffect(() => {
     const el = transcript.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 180)
-      el.scrollTop = el.scrollHeight;
+    const appended = task.messages.length - lastMessageCount.current;
+    lastMessageCount.current = task.messages.length;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 180) {
+      // Ease to the bottom when a new item was appended; follow streaming text instantly.
+      if (appended > 0 && appended < 4 && typeof el.scrollTo === "function") el.scrollTo({ top: el.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      else el.scrollTop = el.scrollHeight;
+    }
   }, [task.messages, task.status, task.pending]);
   useEffect(() => {
     const el = transcript.current;
@@ -296,14 +329,20 @@ function ConversationPane({
       onPointerDownCapture={onFocus}
     >
       <div className="pane-title" aria-current={split && focused ? "true" : undefined}>
-        <span className="pane-project" title={taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}>
+        <span className="pane-project" title={project?.name}>
           <span className="pane-project-dot" style={{ background: project?.color }} aria-hidden="true" />
           <span className="pane-project-name">{project?.name}</span>
+        </span>
+        <span className="pane-sep" aria-hidden="true">/</span>
+        <span className="pane-account" style={{ color: taskAccount?.color }} title={taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}>
+          {taskAccount?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
+          <span>{taskAccount ? providerName(taskAccount.provider) : "Connection removed"}</span>
         </span>
         <span className="pane-sep" aria-hidden="true">/</span>
         <h1 className="pane-thread-title"><ThreadTitle key={task.id} title={task.title} onRename={onRename} editRequest={renameRequest} /></h1>
         <div className="conversation-header-actions">
           <span className="conversation-header-status" role="status"><Dot status={task.status}/><span className="status-label">{labelStatus(task.status)}</span></span>
+          {native && terminalCwd && <Button variant="ghost" size="icon" aria-label="Toggle terminal" aria-pressed={terminalOpen} title="Toggle terminal (Ctrl+`)" onClick={terminalPanel.toggle}><SquareTerminal size={16} /></Button>}
           {canToggleSplit && <SplitToggle split={split} onToggle={onToggleSplit} />}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -334,9 +373,11 @@ function ConversationPane({
       <div className="chat-surface">
         <div className="chat-transcript-viewport">
         <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
-          <ThreadTranscript messages={task.messages} renderAttachment={file => <AttachmentLabel file={file}/>}>
-          {task.error && (
-            <ThreadError error={task.error} onOpenAccounts={openAccounts} />
+          <ThreadTranscript messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
+          {(task.error || task.status === "interrupted") && (
+            <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={openAccounts}
+              onContinue={task.status === "interrupted" && capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
+              continueDisabled={working || !native || !!db.host_update_pending} />
           )}
           {task.pending && (
             <div className="approval-with-mouse"><ApprovalMouse />
@@ -369,6 +410,7 @@ function ConversationPane({
           }}
         ><ArrowDown size={18}/></Button>}
         </div>
+        <TodoPanel key={`todos-${task.id}`} messages={task.messages} active={busy(task)}/>
         <ConversationUsage key={task.id} usage={task.usage}/>
         {taskQueue && <MessageQueue queue={taskQueue} active={busy(task)} disabled={working} canSteer={taskAccount?.provider === "codex"} onAction={onQueueAction}/>}
         <form className="chat-composer" onSubmit={e => void onSend(e)}>
@@ -384,6 +426,7 @@ function ConversationPane({
             }
             onSend={onSend}
           />
+          <VoiceNotice target={focused} />
           <div className="chat-composer-tools">
             <Button
               type="button"
@@ -397,6 +440,11 @@ function ConversationPane({
             >
               <Plus size={20} />
             </Button>
+            <MicButton target={focused} onText={(text, button) => {
+              updateDraft(task.id, previous => joinDictation(previous, text));
+              const box = button.closest("form")?.querySelector("textarea");
+              setTimeout(() => focusEnd(box), 0);
+            }} />
             <PermissionSelect provider={taskAccount?.provider} value={permission} onChange={onPermission} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
             <span className="composer-spacer"/>
             {(staging || attachments.length > 0) && <span className="attachment-status" role="status">
@@ -421,6 +469,7 @@ function ConversationPane({
             : "This connection was removed. Fork thread to continue with a connection you choose."}
         </p>
       </div>
+      {native && terminalCwd && terminalOpen && (!split || focused) && <TerminalPanel cwd={terminalCwd} />}
     </section>
   );
 }
@@ -468,6 +517,11 @@ export function DesktopApp() {
   const [pane, setPane] = useState<PaneSelection>(null);
   useEffect(() => { if (selected) setPane(null); }, [selected]);
   const [launching, setLaunching] = useState<Session | null>(null);
+  // Home hub is the landing view; it yields to any thread, new-thread draft or git pane the user opens.
+  const [home, setHome] = useState(true);
+  const lastSelected = useRef(selected);
+  useEffect(() => { if (selected && selected !== lastSelected.current) setHome(false); lastSelected.current = selected; }, [selected]);
+  useEffect(() => { if (pane) setHome(false); }, [pane]);
   const [outgoing, setOutgoing] = useState<OutgoingReply[]>([]);
   // Stable identities: these are rebuilt only when the snapshot, pending sends or launch actually change.
   const visibleSnapshot = useMemo(() => ({ ...snapshot, sessions: previewReplies(snapshot.sessions, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)) }), [snapshot, outgoing]);
@@ -481,15 +535,17 @@ export function DesktopApp() {
     if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
   }, [snapshot, launching]);
   const [dialog, setDialog] = useState<
-      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "background" | "companion" | "project" | "help" | "schedules" | null
+      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "background" | "companion" | "project" | "help" | "schedules" | "import" | null
     >(null),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all");
   const [savedProjectOrder, setSavedProjectOrder] = usePreference<string[]>("freddai.projectOrder", []);
   const [projectDrag, setProjectDrag] = useState<{ id: string; target: string; after: boolean } | null>(null);
+  const [collapsedProjects, setCollapsedProjects] = usePreference<string[]>("freddai.collapsedProjects", []);
   const [grouped, setGrouped] = usePreference("freddai.grouped", true),
     [hideRead, setHideRead] = usePreference("freddai.hideRead", true),
+    [recentFinishedPref, setRecentFinished] = usePreference<number>("freddai.recentFinished", RECENT_FINISHED_DEFAULT),
     [readOverlay, setReadOverlay] = useState<Record<string, number>>({}),
     [olderPages, setOlderPages] = useState<Record<string, number>>({});
   const [projectId, setProjectId] = useState(""),
@@ -577,8 +633,6 @@ export function DesktopApp() {
   const openIds = openThreads(splitActive ? view : { ...view, split: false, left: selected });
   const openTasks = openIds.flatMap(id => db.sessions.find(t => t.id === id) ?? []);
   liveTargets.current = dialog === "new" ? ["new"] : openIds;
-  const toolbarProject = db.projects.find(p => p.id === task?.project);
-  const otherTask = db.sessions.find(t => t.id === secondary);
   const threadPaneLayout = useDefaultLayout({
     id: "freddai.thread-panes",
     onlySaveAfterUserInteractions: true,
@@ -694,6 +748,8 @@ export function DesktopApp() {
     const keep = (current: Record<string, any>) => Object.keys(current).some(id => !openIds.includes(id))
       ? Object.fromEntries(Object.entries(current).filter(([id]) => openIds.includes(id))) : current;
     pruneDrafts(openIds); setReplyAttachments(keep);
+    const savedNewDraft = restoreDrafts(openIds);
+    if (savedNewDraft) setDraft(current => current || savedNewDraft);
     for (const id of Object.keys(replyRequests.current)) if (!openIds.includes(id)) delete replyRequests.current[id];
   }, [openIds.join()]);
   function selectNewAccount(value: string) {
@@ -716,8 +772,15 @@ export function DesktopApp() {
   // Above the single-pane (mobile) breakpoint the list always has a pane beside it: with nothing open, that is the new-thread draft.
   // Opening it only fills in local draft state; no thread is created until the user sends.
   useEffect(() => {
-    if (!narrow && !selected && !dialog && !pane && !threadDialog && !launching) openNewThread(false);
-  }, [narrow, selected, dialog, pane, threadDialog, launching]);
+    if (!narrow && !home && !selected && !dialog && !pane && !threadDialog && !launching) openNewThread(false);
+  }, [narrow, home, selected, dialog, pane, threadDialog, launching]);
+  useEffect(() => { if (dialog === "new") setHome(false); }, [dialog]);
+  const homeActive = home && dialog !== "new";
+  function goHome() {
+    setDialog(current => current === "new" ? null : current);
+    setPane(null);
+    setHome(true);
+  }
   // The auto-opened draft can appear before the first snapshot lists projects; pick one once they arrive.
   useEffect(() => {
     if (dialog === "new" && !projectId && db.projects.length) setProjectId(projectFilter !== "all" ? projectFilter : db.projects[0].id);
@@ -834,6 +897,22 @@ export function DesktopApp() {
     if (row) row.focus();
     else search.current?.focus();
   }
+  // Push-to-talk dictation: refresh settings on focus, hold the configured key to talk into the visible composer.
+  const voiceShortcut = useSyncExternalStore(voice.subscribe, () => { const s = voice.getSnapshot().status; return s?.ready ? s.shortcut : ""; });
+  useEffect(() => {
+    if (!native) return;
+    void voice.refresh();
+    const refresh = () => void voice.refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [native]);
+  useHoldToTalk({
+    canListen: () => !settingsVisible && !threadDialog && (dialog === "new" || !!selected),
+    onText: text => {
+      if (dialog === "new") { setDraft(previous => joinDictation(previous, text)); setTimeout(() => focusEnd(newPrompt.current), 0); }
+      else if (selected) { updateDraft(selected, previous => joinDictation(previous, text)); setTimeout(() => focusEnd(composer.current), 0); }
+    },
+  });
   useEffect(() => {
     function key(e: KeyboardEvent) {
       const command = commandFor(e);
@@ -850,9 +929,11 @@ export function DesktopApp() {
       if (command) {
         e.preventDefault();
         switch (command) {
+          case "home": goHome(); break;
           case "schedules": setDialog("schedules"); break;
           case "fork": forkThread(); break;
           case "split": if (!narrow) setView(toggleSplit); break;
+          case "terminal": if (native) terminalPanel.toggle(); break;
           case "new":
             newThread();
             break;
@@ -911,36 +992,104 @@ export function DesktopApp() {
     }
     if (!native || working || staging || !newAccount || !destination || !draft.trim()) return;
     await action(async () => {
-      const preview: Session = {
-        id: "pending-launch", project: projectId, account: effective,
-        title: draft.trim().split("\n")[0].slice(0, 100), status: "starting",
-        updated: Date.now(), provider_id: null, pending: null, error: null,
-        messages: [{ id: draftRequest.current, role: "user", text: draft, attachments: newAttachments }],
-      };
-      setLaunching(preview);
-      try {
-      const sid = await invoke<string>("launch", {
-        project: projectId,
-        account: effective,
-        prompt: draft,
+      await launchThread({
+        project: projectId, account: effective, prompt: draft, attachments: newAttachments, requestId: draftRequest.current,
         options: { permission_mode: effectivePermissionMode(newAccount?.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" || !["codex","claude"].includes(db.accounts.find(a => a.id === effective)?.provider || "") ? null : effort, attachments: newAttachments.map(f => f.id), request_id: draftRequest.current },
-        existing: null,
       });
-      setLaunching({ ...preview, id: sid });
-      setSelected(sid);
       setDraft("");
       setNewAttachments([]);
       setDialog(null);
-      } catch (error) {
-        setLaunching(null);
-        throw error;
-      }
       await refresh();
+    });
+  }
+  /** The single launch path: used by the New thread composer and by Home's per-project prompt. */
+  async function launchThread({ project, account, prompt, attachments, requestId, options, select = true }: {
+    project: string; account: string; prompt: string; attachments: Attachment[]; requestId: string; options: LaunchOptions;
+    /** False for Home tiles: the thread appears in the snapshot but is not opened, so Home stays put. */
+    select?: boolean;
+  }) {
+    const preview: Session = {
+      id: "pending-launch", project, account,
+      title: prompt.trim().split("\n")[0].slice(0, 100), status: "starting",
+      updated: Date.now(), provider_id: null, pending: null, error: null,
+      messages: [{ id: requestId, role: "user", text: prompt, attachments }],
+    };
+    setLaunching(preview);
+    try {
+      const sid = await invoke<string>("launch", { project, account, prompt, options, existing: null });
+      setLaunching({ ...preview, id: sid });
+      if (select) setSelected(sid);
+      return sid;
+    } catch (error) {
+      setLaunching(null);
+      throw error;
+    }
+  }
+  // Home prompt: same launch path and defaults as a fresh New thread draft (project/global default account,
+  // saved worktree preference, current default permission mode). Errors propagate to the tile.
+  const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode);
+  async function createHomeThread(project: string, prompt: string): Promise<string> {
+    if (!native) throw new Error("Open the Freddai macOS app to start threads.");
+    const plan = resolveHomeTile(project);
+    if (!plan.ok) { if (!db.accounts.length) openAccounts(); throw new Error(plan.reason); }
+    if (actionLock.current) throw new Error("Another action is still running.");
+    actionLock.current = true; setWorking(true); setError("");
+    try {
+      const requestId = crypto.randomUUID();
+      await launchThread({
+        project: plan.project, account: plan.account, prompt, attachments: [], requestId, select: false,
+        options: { permission_mode: plan.permission_mode, worktree: plan.worktree, model: plan.model, effort: plan.effort, attachments: [], request_id: requestId },
+      });
+      await refresh();
+      return prompt.trim().split("\n")[0].slice(0, 100);
+    } finally { actionLock.current = false; setWorking(false); }
+  }
+  async function respondHome(thread: Session, allow: boolean, answers: Record<string, unknown>) {
+    await invoke("respond", { session: thread.id, requestId: JSON.stringify(thread.pending?.request_id ?? thread.pending?.id), allow, answers });
+    await refresh().catch(() => {});
+  }
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState("");
+  const appUpdate = useAppUpdate(native, () => saveDraftsForRestart(draft));
+  const appUpdateBanner = updateBanner(appUpdate.state);
+  const [interruptedDismissed, setInterruptedDismissed] = useState(false);
+  const interruptedList = interruptedThreads(db.sessions).filter(t => threadCapabilities(t, db.accounts.some(a => a.id === t.account)).resume);
+  useEffect(() => { if (interruptedList.length === 0) setInterruptedDismissed(false); }, [interruptedList.length]);
+  async function restartNow() {
+    setRestarting(true);
+    setRestartError("");
+    try {
+      const interrupted = await invoke<number>("restart_host_now");
+      console.info(JSON.stringify({ event: "host_upgrade.forced", interrupted }));
+      await refresh();
+    } catch (e) {
+      console.error(JSON.stringify({ event: "host_upgrade.force_failed", error: String(e) }));
+      setRestartError(`Restart failed: ${String(e)}`);
+    } finally {
+      setRestarting(false);
+    }
+  }
+  async function resumeThread(task: Session, prompt = "Continue where you left off.") {
+    if (db.queues?.some(q => q.session === task.id)) await invoke("queue_action", { session: task.id, action: "pause", message: null });
+    await invoke("launch", { project: task.project, account: null, existing: task.id, prompt, options: { request_id: crypto.randomUUID() } });
+  }
+  async function resumeAllInterrupted() {
+    await action(async () => {
+      const { failures } = await resumeAll(interruptedList, resumeThread);
+      await refresh();
+      if (failures.length) throw new Error(resumeFailureMessage(failures));
     });
   }
   async function send(task: Session, e?: FormEvent, steer = false) {
     e?.preventDefault();
     const taskAccount = db.accounts.find(a => a.id === task.account), reply = getDraft(task.id), attachments = replyAttachments[task.id] ?? [];
+    // "!command" runs in the thread's terminal panel instead of going to the agent ("!!" sends a literal "!" message).
+    const terminalCwd = task.working_dir || db.projects.find(p => p.id === task.project)?.path;
+    if (native && terminalCwd && !attachments.length && /^!(?!!)/.test(reply) && reply.slice(1).trim()) {
+      runInTerminal(terminalCwd, reply.slice(1).trim());
+      setThreadDraft(task.id, "");
+      return;
+    }
     if (!native || working || staging || !taskAccount || (task.status === "archived" || !!task.archived || task.deleted_at != null) || !reply.trim()) return;
     await action(async () => {
       const requestId = replyRequest(task.id);
@@ -989,7 +1138,6 @@ export function DesktopApp() {
           (filter === "done" && threadListStatus(t, read) === "done") ||
           (filter === "scheduled" && !!t.options?.scheduled)),
     );
-  const activeMatching = sorted.filter(t => threadInActiveList(t, read, selected, hideRead, filter, db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) || t.id === secondary);
   const defaultProjectOrder = [...new Set([
     ...sorted.map((t) => t.project),
     ...(!query && filter === "all" ? db.projects.filter(p =>
@@ -1010,11 +1158,18 @@ export function DesktopApp() {
     next.splice(index + (after ? 1 : 0), 0, id);
     setSavedProjectOrder(next);
   }
-  const collapsedVisible = activeMatching;
-  // Older rows (everything not in the active list, regardless of why it is hidden) are revealed OLDER_PAGE_SIZE at a time per project.
-  const olderFor = (pid: string) => sorted.filter(t => t.project === pid && !collapsedVisible.includes(t));
+  // Two buckets: active (live) rows, then an unlabeled continuation of the newest `recentFinished` read/finished rows (per project when grouped,
+  // across all projects when flat), then older rows revealed OLDER_PAGE_SIZE at a time. Selection never moves a row between buckets;
+  // only a selected row that would be hidden under "older" is appended to Recent so the open thread stays visible.
+  const recentFinished = sanitizeRecentCount(recentFinishedPref);
+  const buckets = bucketThreads(sorted, {
+    read, selected, recentCount: recentFinished, scope: grouped ? "grouped" : "flat", hideRead, filter, pinned: secondary,
+    queued: t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0,
+  });
+  const olderFor = (pid: string) => buckets.older.filter(t => t.project === pid);
   const shownOlder = (pid: string) => olderFor(pid).slice(0, (olderPages[pid] ?? 0) * OLDER_PAGE_SIZE);
-  const visible = collapsedVisible;
+  const recentFor = (pid: string) => buckets.recent.filter(t => t.project === pid);
+  const visible = buckets.active;
   async function renameThread(session: string, title: string) {
     if (native) await invoke("rename_session", { session, title });
     setDb(current => ({ ...current, sessions: current.sessions.map(t => t.id === session ? { ...t, title } : t) }));
@@ -1111,11 +1266,16 @@ export function DesktopApp() {
           <ContextMenuItem disabled={disabled || busy(t)} onSelect={() => void changeThread(t.id, "restore")}>Restore thread</ContextMenuItem> : <>
           <ContextMenuItem disabled={t.archived ? disabled || !capabilities.change : removalDisabled || !capabilities.archive} onSelect={() => void changeThread(t.id, t.archived ? "unarchive" : "archive")}>{t.archived ? "Unarchive" : "Archive"}</ContextMenuItem>
           <ContextMenuItem disabled={disabled || !capabilities.change || db.projects.length < 2} onSelect={() => openThreadDialog(t, "move")}>Change project…</ContextMenuItem>
+          <ContextMenuItem disabled={!native} onSelect={() => setDialog("import")}>Import sessions…</ContextMenuItem>
           <ContextMenuItem className="thread-menu-danger" disabled={removalDisabled || !capabilities.delete} onSelect={() => openThreadDialog(t, "delete")}>Delete…</ContextMenuItem>
         </>}
       </ContextMenuContent>
       </ContextMenu>
     );
+  }
+  function recentGroup(threads: Session[], key: string) {
+    if (!threads.length) return null;
+    return <ThreadList key={`${filter}:${query}:${hideRead}:${recentFinished}:recent:${key}`} threads={threads} renderRow={row} />;
   }
   function older(pid: string) {
     const total = olderFor(pid).length;
@@ -1187,7 +1347,7 @@ export function DesktopApp() {
         onSend={(e, steer) => send(thread, e, steer)}
         onQueueAction={(queueAction, message, prompt) => queueActionFor(thread, queueAction, message, prompt)}
         onAttach={() => void attach(thread.id)}
-        action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips}
+        action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips} resumeThread={resumeThread}
       />
     );
   }
@@ -1201,6 +1361,17 @@ export function DesktopApp() {
           <Button
             variant="ghost"
             size="icon"
+            className="titlebar-home"
+            aria-label="Home"
+            aria-pressed={home && dialog !== "new"}
+            title="Home (⌘ 1)"
+            onClick={goHome}
+          >
+            <House size={16} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
             className="titlebar-sidebar-toggle"
             aria-label={listHidden ? "Show thread list" : "Hide thread list"}
             aria-pressed={!listHidden}
@@ -1211,13 +1382,10 @@ export function DesktopApp() {
           </Button>
         </div>
         <div className="titlebar-heading" data-tauri-drag-region>
-          {settingsVisible ? <span className="titlebar-title" data-tauri-drag-region>Settings</span>
-            : dialog === "new" ? <span className="titlebar-title" data-tauri-drag-region>New thread</span>
-            : task && splitActive && <>
-              <span className="titlebar-title" data-tauri-drag-region>{task.title}</span>
-              {toolbarProject && <><span className="titlebar-divider" aria-hidden="true" data-tauri-drag-region /><span className="titlebar-project" data-tauri-drag-region>{toolbarProject.name}</span></>}
-              {otherTask && <span className="titlebar-secondary" data-tauri-drag-region>{otherTask.title}</span>}
-            </>}
+          <span className="titlebar-brand" role="img" aria-label="Freddai" data-tauri-drag-region>
+            <img src={brandMascotUrl} alt="" draggable={false} data-tauri-drag-region />
+            <span aria-hidden="true" data-tauri-drag-region>fredd<span className="titlebar-brand-a" data-tauri-drag-region>a</span>i</span>
+          </span>
         </div>
         <div className="titlebar-actions">
           <Button
@@ -1242,8 +1410,10 @@ export function DesktopApp() {
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuItem onSelect={() => setDialog("schedules")}>Schedules<DropdownMenuShortcut>⌘⇧S</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuItem disabled={!native} onSelect={() => setDialog("import")}>Import sessions…</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setDialog("settings")}>Settings<DropdownMenuShortcut>⌘,</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuItem disabled={!native || appUpdate.state.state === "checking" || appUpdate.state.state === "downloading"} onSelect={() => void appUpdate.check()}>Check for updates</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1254,7 +1424,24 @@ export function DesktopApp() {
           launch local sessions.
         </div>
       )}
-      {hostUpdateNotice(db) && <div role="status" className="native-banner host-update-notice">{hostUpdateNotice(db)}</div>}
+      {hostUpdateNotice(db) && <div role="status" className="native-banner host-update-notice">
+        <span>{hostUpdateNotice(db)}</span>
+        <Button type="button" size="sm" variant="outline" disabled={!native || restarting} onClick={() => void restartNow()}>{restarting ? "Restarting…" : RESTART_NOW_LABEL}</Button>
+      </div>}
+      {appUpdateBanner && <div role={appUpdateBanner.error ? "alert" : "status"} className={`native-banner host-update-notice app-update-banner${appUpdateBanner.error ? " native-error" : ""}`}>
+        <span>{appUpdateBanner.text}</span>
+        {appUpdateBanner.action && <Button type="button" size="sm" variant="outline" onClick={() => void appUpdate.run(appUpdateBanner.action!.kind)}>{appUpdateBanner.action.label}</Button>}
+      </div>}
+      {appUpdate.notice && <div role="status" className="native-banner host-update-notice">
+        <span>{appUpdate.notice}</span>
+        <Button type="button" size="icon" variant="ghost" aria-label="Dismiss" title="Dismiss" onClick={appUpdate.dismissNotice}><X size={12} /></Button>
+      </div>}
+      {restartError && <div role="alert" className="native-error">{restartError}</div>}
+      {interruptedList.length > 0 && !interruptedDismissed && <div role="status" className="native-banner interrupted-banner">
+        <span>{interruptedBannerText(interruptedList.length)}</span>
+        <Button type="button" size="sm" variant="outline" disabled={working || !native || !!db.host_update_pending} onClick={() => void resumeAllInterrupted()}>Resume all</Button>
+        <Button type="button" size="icon" variant="ghost" aria-label="Dismiss interrupted threads notice" title="Dismiss" onClick={() => setInterruptedDismissed(true)}><X size={12} /></Button>
+      </div>}
       {error && (
         <div role="alert" className="native-error">
           {error}
@@ -1270,7 +1457,7 @@ export function DesktopApp() {
       )}
       <div className="app-body">
         <main className="workbench">
-          <div className={`workbench-panes ${task || dialog === "new" ? "has-detail" : ""}`}>
+          <div className={`workbench-panes ${(task && !homeActive) || dialog === "new" ? "has-detail" : ""}`}>
             <ResizablePanelGroup orientation="horizontal" defaultLayout={threadPaneLayout.defaultLayout} onLayoutChanged={threadPaneLayout.onLayoutChanged}>
               <ResizablePanel id="thread-list" defaultSize="42%" minSize="25%" collapsible collapsedSize="0%" panelRef={listPanel} onResize={size => setListHidden(size.asPercentage === 0)}>
                 <section ref={projectNavigation} className="thread-browser project-navigation" aria-label="Threads" aria-busy={projectImportBusy}>
@@ -1346,6 +1533,8 @@ export function DesktopApp() {
                     {grouped ? (
                       projectOrder.map((pid) => {
                         const p = db.projects.find((p) => p.id === pid);
+                        const collapsed = collapsedProjects.includes(pid);
+                        const attention = collapsed ? attentionCount(sorted.filter(t => t.project === pid), read, t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) : 0;
                         return (
                           <section key={pid} data-project-id={pid} aria-label={`${p?.name} threads`}
                             className={projectDrag?.target === pid && projectDrag.id !== pid ? `project-reorder-${projectDrag.after ? "after" : "before"}` : undefined}>
@@ -1388,13 +1577,17 @@ export function DesktopApp() {
                                 onPointerCancel={() => setProjectDrag(null)}
                                 onLostPointerCapture={() => setProjectDrag(null)}
                               ><GripVertical size={13} /></button>
-                              <FolderGit2
-                                size={14}
-                                style={{ color: p?.color }}
-                              />
-                              <strong style={{ color: p?.color }}>
-                                {p?.name}
-                              </strong>
+                              <button type="button" className="project-toggle"
+                                aria-expanded={!collapsed}
+                                aria-label={`${collapsed ? "Expand" : "Collapse"} ${p?.name}`}
+                                title={`${collapsed ? "Expand" : "Collapse"} ${p?.name}`}
+                                onClick={() => setCollapsedProjects(c => c.includes(pid) ? c.filter(x => x !== pid) : [...c, pid])}>
+                                {collapsed ? <Folder size={14} style={{ color: p?.color }} /> : <FolderOpen size={14} style={{ color: p?.color }} />}
+                                <strong style={{ color: p?.color }}>{p?.name}</strong>
+                              </button>
+                              {collapsed && attention > 0 && <span className="project-attention" role="status" aria-label={`${attention} ${attention === 1 ? "thread needs" : "threads need"} attention in ${p?.name}`}>{attention}</span>}
+                              {native && p?.path && <ShipButton projectId={pid} projectName={p.name} path={p.path} client={tauriGitClient} onShip={pid2 => createHomeThread(pid2, SHIP_PROMPT)}
+                                activity={db.sessions.filter(t => t.project === pid).map(t => `${t.id}:${t.status}`).join("|")} />}
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1417,14 +1610,18 @@ export function DesktopApp() {
                                 <Plus size={13} />
                               </Button>
                             </div>
-                            <ThreadList key={`${filter}:${query}:${hideRead}`} threads={visible.filter((t) => t.project === pid)} renderRow={row} />
+                            {!collapsed && <>
+                            <ThreadList key={`${filter}:${query}:${hideRead}:${recentFinished}`} threads={visible.filter((t) => t.project === pid)} renderRow={row} />
+                            {recentGroup(recentFor(pid), pid)}
                             {older(pid)}
+                            </>}
                           </section>
                         );
                       })
                     ) : (
                       <>
-                        <ThreadList key={`${filter}:${query}:${hideRead}:${projectFilter}`} threads={visible} renderRow={row} />
+                        <ThreadList key={`${filter}:${query}:${hideRead}:${projectFilter}:${recentFinished}`} threads={visible} renderRow={row} />
+                        {recentGroup(buckets.recent, "all")}
                         {projectOrder.map(pid => older(pid))}
                       </>
                     )}
@@ -1469,7 +1666,7 @@ export function DesktopApp() {
                       {!db.projects.length && <p className="new-conversation-note">Add a project folder to start. <Button variant="ghost" size="sm" onClick={() => { addProject(); }}>Add project</Button></p>}
                       <form className="chat-composer" onSubmit={start}>
                         {fileChips(newAttachments, setNewAttachments)}
-                        <Textarea id="thread-composer" ref={newPrompt} autoFocus aria-label="Task prompt" placeholder="What should we work on?" disabled={!!launching} value={launching ? "" : draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => {
+                        <SuggestTextarea id="thread-composer" composerRef={newPrompt} autoFocus aria-label="Task prompt" placeholder="What should we work on?" disabled={!!launching} value={launching ? "" : draft} context={{ project: projectId, account: newAccount?.id }} onValueChange={setDraft} onKeyDown={e => {
                           if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) { e.preventDefault(); void start(); }
                         }}/>
                         <div className="new-conversation-options">
@@ -1480,8 +1677,14 @@ export function DesktopApp() {
                             if (native) void action(() => invoke("save_preferences", { preferences: { ...db.preferences, use_worktree: e.target.checked } }));
                           }}/>Separate worktree</label>
                         </div>
+                        <VoiceNotice target />
                         <div className="chat-composer-tools">
                           <Button type="button" variant="ghost" size="icon" className="composer-attach" aria-label="Attach files" title="Attach files (⌘ ⇧ U)" onClick={() => void attach()} disabled={!native}><Plus size={20}/></Button>
+                          <MicButton target onText={(text, button) => {
+                            setDraft(previous => joinDictation(previous, text));
+                            const box = button.closest("form")?.querySelector("textarea");
+                            setTimeout(() => focusEnd(box), 0);
+                          }} />
                           <PermissionSelect provider={newAccount?.provider} value={permissionMode} onChange={setPermissionMode} disabled={working}/>
                           <span className="composer-spacer"/>
                           {!!staging && <span className="attachment-status" role="status">Copying attachments…</span>}
@@ -1494,13 +1697,29 @@ export function DesktopApp() {
                   </section>
                 </ResizablePanel>
               </>}
-              {pane?.kind === "git" && !dialog && <>
+              {homeActive && <>
+                <ResizableHandle withHandle />
+                <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
+                  <div className="home-pane">
+                    <HomeView
+            sessions={db.sessions} projects={db.projects} accounts={db.accounts} schedules={db.schedules}
+            canCreate={native && !working && !launching}
+            onOpenThread={id => { setHome(false); setSelected(id); }}
+            onAddProject={addProject}
+            onCreateThread={createHomeThread}
+            resolveLaunch={resolveHomeTile}
+            onRespond={respondHome}
+          />
+                  </div>
+                </ResizablePanel>
+              </>}
+              {pane?.kind === "git" && !dialog && !homeActive && <>
                 <ResizableHandle withHandle />
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <GitHistoryPanel key={pane.projectId} project={db.projects.find(p => p.id === pane.projectId)} native={native} onClose={() => { setPane(null); setTimeout(focusList, 0); }} />
                 </ResizablePanel>
               </>}
-              {dialog !== "new" && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
+              {dialog !== "new" && !homeActive && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
@@ -1588,8 +1807,11 @@ export function DesktopApp() {
                   ? "Set up agents & accounts"
                   : dialog === "threads" ? "Thread display"
                   : dialog === "projects" ? "Projects"
+                  : dialog === "import" ? "Import sessions"
                   : dialog === "appearance" ? "Appearance"
                   : dialog === "companion" ? "Phone pairing"
+                  : dialog === "voice" ? "Voice"
+                  : dialog === "agentconfig" ? "Agent config"
                   : dialog === "background" ? "Background work"
                   : dialog === "settings"
                     ? "Agents & defaults"
@@ -1608,8 +1830,11 @@ export function DesktopApp() {
                   ? "Each agent’s accounts in one place. Sign in, then pick the default for new threads."
                   : dialog === "threads" ? "Choose how conversations appear in your workspace."
                   : dialog === "projects" ? "Manage local folders and each project’s agent defaults."
+                  : dialog === "import" ? "Bring Claude Code and Codex sessions started outside Freddai into your projects."
                   : dialog === "appearance" ? "Make Freddai feel at home with a workspace theme."
                   : dialog === "companion" ? "Generate a six-digit code, then approve your phone to connect to this Mac."
+                  : dialog === "voice" ? "Push-to-talk dictation, transcribed on this Mac."
+                  : dialog === "agentconfig" ? "MCP servers, hooks, plugins and memory files for Claude Code and Codex. Applies to new agent sessions."
                   : dialog === "background" ? "Control startup and work that continues when the window closes."
                   : dialog === "settings"
                     ? "Manage agents and accounts, then choose the default for new conversations."
@@ -1822,6 +2047,8 @@ export function DesktopApp() {
           )}
           {dialog === "companion" && <CompanionSettings native={native} />}
           {dialog === "appearance" && <AppearanceSettings appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
+          {dialog === "voice" && <VoiceSettings native={native}/>}
+          {dialog === "agentconfig" && <AgentConfigSettings native={native} accounts={db.accounts} projects={db.projects}/>}
           {dialog === "background" && <BackgroundSettings native={native}/>}
           {dialog === "threads" && (
             <FieldGroup>
@@ -1833,8 +2060,14 @@ export function DesktopApp() {
                 <FieldContent><FieldLabel htmlFor="hide-read-threads">Hide completed threads after reading</FieldLabel><FieldDescription>Completed conversations remain available in the Finished filter.</FieldDescription></FieldContent>
                 <Switch id="hide-read-threads" checked={hideRead} onCheckedChange={setHideRead} />
               </Field>
+              <Field orientation="horizontal">
+                <FieldContent><FieldLabel htmlFor="recent-finished-threads">Recent finished threads to keep visible</FieldLabel><FieldDescription>Read or finished threads stay visible under active ones. Set 0 to tuck them all under Show older threads.</FieldDescription></FieldContent>
+                <Input id="recent-finished-threads" type="number" inputMode="numeric" min={0} max={RECENT_FINISHED_MAX} step={1} className="w-20"
+                  value={recentFinished} onChange={(e) => setRecentFinished(e.target.value === "" ? 0 : sanitizeRecentCount(e.target.value))} />
+              </Field>
             </FieldGroup>
           )}
+          {dialog === "import" && <ImportSessions db={db} native={native} onImported={refresh} />}
           {dialog === "projects" && (
               <div className="settings-projects">
                 {!db.projects.length && <p className="capture-help">Add a local folder to organize threads and choose project defaults.</p>}
@@ -1858,6 +2091,9 @@ export function DesktopApp() {
                 <Button variant="outline" onClick={addProject}>
                   Add project
                 </Button>
+                <Button variant="outline" onClick={() => setDialog("import")}>
+                  Import sessions…
+                </Button>
               </div>
           )}
           {dialog === "help" && (
@@ -1870,7 +2106,7 @@ export function DesktopApp() {
                 onChange={(e) => setHelpQuery(e.target.value)}
               />
               <dl className="shortcut-list">
-                {[...shortcuts.map((s) => [s.keys, s.name]), ...navigation]
+                {[...shortcuts.map((s) => [s.keys, s.name]), ...(voiceShortcut ? [[`Hold ${shortcutLabel(voiceShortcut)}`, "Dictate into the composer"]] : []), ...navigation]
                   .filter(([keys, name]) =>
                     `${keys} ${name}`
                       .toLowerCase()

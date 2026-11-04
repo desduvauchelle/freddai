@@ -6,7 +6,8 @@ final class DrawerSurfaceView: UIView {
   override func accessibilityPerformEscape() -> Bool { onEscape?(); return onEscape != nil }
 }
 
-/// "Reveal" drawer: the drawer sits underneath; the content (navigation controller + web view) slides right
+/// Shared iPhone/iPad shell. Wide iPad landscape windows show the same drawer beside the content.
+/// Otherwise, the drawer sits underneath; the content (navigation controller + web view) slides right
 /// following the finger. `progress` is 0 (content in place) ... 1 (content 90% of the width to the right,
 /// leaving a dimmed 10% sliver of the thread). The drawer gets a parallax from -30% of its width to 0.
 final class DrawerContainerViewController: UIViewController, UIGestureRecognizerDelegate {
@@ -24,19 +25,24 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
   private let haptic = UIImpactFeedbackGenerator(style: .light)
   private var edgePan: UIScreenEdgePanGestureRecognizer!
   private var closePan: UIPanGestureRecognizer!
+  private(set) var usesSidebar = false
 
   /// Gestures and the drawer only work in conversation / new-thread modes.
   var drawerEnabled = false {
     didSet {
-      edgePan?.isEnabled = drawerEnabled
-      closePan?.isEnabled = drawerEnabled
-      if !drawerEnabled && isViewLoaded { setOpen(false, animated: false) }
+      guard drawerEnabled != oldValue, isViewLoaded else { return }
+      updatePresentation()
+      if !drawerEnabled { setOpen(false, animated: false) }
     }
   }
   var isOpen: Bool { progress > 0.5 }
   var onOpenChange: ((Bool) -> Void)?
+  var onPresentationChange: ((Bool, Bool) -> Void)?
 
-  private var drawerWidth: CGFloat { max(1, (view.bounds.width * widthFraction).rounded()) }
+  private var drawerWidth: CGFloat {
+    let overlayWidth = max(1, (view.bounds.width * widthFraction).rounded())
+    return usesSidebar ? 320 : traitCollection.userInterfaceIdiom == .pad ? min(400, overlayWidth) : overlayWidth
+  }
 
   init(content: UIViewController, drawer: UIViewController) {
     self.content = content
@@ -50,6 +56,7 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
     view.backgroundColor = .systemBackground
 
     drawerSurface.backgroundColor = .systemBackground
+    drawerSurface.accessibilityIdentifier = "thread-list-surface"
     drawerSurface.accessibilityViewIsModal = false
     drawerSurface.onEscape = { [weak self] in self?.setOpen(false, animated: true) }
     drawerSurface.isHidden = true
@@ -108,8 +115,32 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    updatePresentation()
     if animator == nil { applyProgress(progress) }
   }
+
+  private func updatePresentation() {
+    let sidebar = drawerEnabled && CompanionLayout.showsSidebar(
+      size: view.bounds.size, isPad: traitCollection.userInterfaceIdiom == .pad,
+      regularWidth: traitCollection.horizontalSizeClass == .regular)
+    if sidebar != usesSidebar {
+      interrupt()
+      usesSidebar = sidebar
+      // Entering landscape opens the sidebar; returning to a compact layout closes the overlay.
+      applyProgress(sidebar ? 1 : 0)
+      syncInteraction(open: sidebar)
+      onOpenChange?(sidebar)
+    }
+    edgePan?.isEnabled = drawerEnabled && !usesSidebar
+    closePan?.isEnabled = drawerEnabled && !usesSidebar
+  }
+
+  /// Selection keeps the landscape sidebar visible, but still dismisses its search keyboard.
+  func dismissAfterSelection() {
+    if !usesSidebar { setOpen(false, animated: true) }
+  }
+
+  func toggleThreadList() { setOpen(!isOpen, animated: true) }
 
   // MARK: Layout
 
@@ -121,8 +152,22 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
   private func applyProgress(_ value: CGFloat) {
     progress = value
     let w = drawerWidth, h = view.bounds.height
+    // Reset transforms before changing frames (UIKit frames are undefined under a transform).
+    content.view.transform = .identity
+    dimView.transform = .identity
+    let inset = usesSidebar && value > 0.5 ? w : 0
+    content.view.frame = CGRect(x: inset, y: 0, width: view.bounds.width - inset, height: h)
+    dimView.frame = view.bounds
     drawerSurface.bounds = CGRect(x: 0, y: 0, width: w, height: h)
     drawerSurface.center = CGPoint(x: w / 2, y: h / 2)
+    if usesSidebar {
+      drawerSurface.transform = .identity
+      drawerSurface.isHidden = value <= 0.5
+      dimView.alpha = 0
+      content.view.layer.shadowOpacity = 0
+      return
+    }
+    content.view.layer.shadowOpacity = 0.25
     drawerSurface.transform = drawerTransform(value)
     content.view.transform = contentTransform(value)
     dimView.transform = contentTransform(value)
@@ -130,11 +175,13 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
   }
 
   private func syncInteraction(open: Bool) {
-    dimView.isUserInteractionEnabled = open
+    let modal = open && !usesSidebar
+    dimView.isUserInteractionEnabled = modal
     drawerSurface.isHidden = !open && progress <= 0.001
-    drawerSurface.accessibilityViewIsModal = open
-    content.view.accessibilityElementsHidden = open
-    UIAccessibility.post(notification: .screenChanged, argument: open ? drawerSurface : nil)
+    drawerSurface.accessibilityViewIsModal = modal
+    content.view.accessibilityElementsHidden = modal
+    onPresentationChange?(usesSidebar, open)
+    UIAccessibility.post(notification: .screenChanged, argument: modal ? drawerSurface : nil)
   }
 
   // MARK: State changes
@@ -156,6 +203,15 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
   }
 
   func setOpen(_ open: Bool, animated: Bool, velocity: CGFloat = 0) {
+    loadViewIfNeeded()
+    guard drawerEnabled || !open else { return }
+    if usesSidebar {
+      interrupt()
+      applyProgress(open ? 1 : 0)
+      syncInteraction(open: open)
+      onOpenChange?(open)
+      return
+    }
     if open { view.endEditing(true) }
     interrupt()
     let target: CGFloat = open ? 1 : 0
@@ -164,13 +220,14 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
     guard animated, abs(target - progress) > 0.001 else {
       applyProgress(target)
       syncInteraction(open: open)
+      onOpenChange?(open)
       return
     }
     let distance = (target - progress) * drawerWidth
     // UIKit wants the velocity as a fraction of the remaining distance per second.
     let relative = abs(distance) > 1 ? max(-30, min(30, velocity / distance)) : 0
     let timing = UISpringTimingParameters(dampingRatio: 0.9, initialVelocity: CGVector(dx: relative, dy: 0))
-    let anim = UIViewPropertyAnimator(duration: 0.5, timingParameters: timing)
+    let anim = Motion.reduced ? UIViewPropertyAnimator(duration: 0.2, curve: .easeInOut) : UIViewPropertyAnimator(duration: 0.5, timingParameters: timing)
     anim.addAnimations { [weak self] in
       guard let self = self else { return }
       self.content.view.transform = self.contentTransform(target)
@@ -230,7 +287,7 @@ final class DrawerContainerViewController: UIViewController, UIGestureRecognizer
   // MARK: UIGestureRecognizerDelegate
 
   func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-    guard drawerEnabled else { return false }
+    guard drawerEnabled, !usesSidebar else { return false }
     if g === edgePan { return true }
     guard let pan = g as? UIPanGestureRecognizer else { return true }
     // Only a mostly-horizontal drag grabs the open drawer; vertical drags scroll the list.

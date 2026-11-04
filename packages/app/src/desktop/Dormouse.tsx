@@ -1,3 +1,4 @@
+import "./dormouse.css";
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { Pause, Play } from "lucide-react";
 import { Alignment, Fit, Layout, RuntimeLoader, useRive, useViewModelInstanceNumber, useViewModelInstanceTrigger } from "@rive-app/react-canvas";

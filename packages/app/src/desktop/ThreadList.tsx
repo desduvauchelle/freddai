@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Session } from "./types";
 
 /** Keep departing rows just long enough to fade and close their space. */
@@ -16,6 +16,10 @@ export function ThreadList({ threads, renderRow }: {
     });
     setPresence({ signature, rows });
   }
+  // Rows that appear after the first render slide/fade in; the initial list and re-orderings do not animate.
+  const seen = useRef<Set<string> | null>(null);
+  const prior = seen.current;
+  useEffect(() => { seen.current = new Set(threads.map(t => t.id)); });
   const current = new Map(threads.map(t => [t.id, t]));
   const departing = JSON.stringify(presence.rows.filter(t => !current.has(t.id)).map(t => t.id));
   useEffect(() => {
@@ -30,7 +34,7 @@ export function ThreadList({ threads, renderRow }: {
 
   return presence.rows.map(thread => {
     const leaving = !current.has(thread.id);
-    return <div key={thread.id} className={`thread-presence${leaving ? " thread-departing" : ""}`}
+    return <div key={thread.id} className={`thread-presence${leaving ? " thread-departing" : ""}${prior && !prior.has(thread.id) && !leaving ? " thread-arriving" : ""}`}
       inert={leaving} aria-hidden={leaving || undefined}>
       <div className="thread-presence-content">{renderRow(current.get(thread.id) ?? thread)}</div>
     </div>;

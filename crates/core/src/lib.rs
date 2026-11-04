@@ -1,5 +1,7 @@
-pub mod protocol;
+pub mod background_tasks;
 mod claude_stream;
+pub mod protocol;
+mod reasoning;
 pub mod runtime;
 
 pub mod login;
@@ -19,6 +21,14 @@ pub mod models;
 
 pub mod conversation_usage;
 
+pub mod commit_message;
+pub mod day_summary;
 mod thread_title;
 
 pub mod timing;
+
+pub mod commands;
+
+pub mod agent_config;
+
+pub mod import;

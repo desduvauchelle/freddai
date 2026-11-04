@@ -1,5 +1,5 @@
-#![cfg(target_os = "ios")]
-//! iOS-only native shell (UINavigationController + native composer) around the Tauri WKWebView.
+#![cfg(any(target_os = "ios", target_os = "android"))]
+//! Native mobile navigation and composer around the shared Tauri WebView.
 use serde::{Deserialize, Serialize};
 use tauri::{
     ipc::Channel,
@@ -55,9 +55,36 @@ async fn set_thread_meta<R: Runtime>(app: AppHandle<R>, meta: serde_json::Value)
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn set_composer_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
+async fn set_composer_text<R: Runtime>(app: AppHandle<R>, text: String, files: Option<serde_json::Value>) -> Result<(), String> {
     app.state::<NativeShell<R>>().0
-        .run_mobile_plugin("setComposerText", serde_json::json!({"text": text}))
+        .run_mobile_plugin("setComposerText", serde_json::json!({"text": text, "files": files}))
+        .map_err(|e| e.to_string())
+}
+/// Voice dictation UI: `enabled` shows the mic button, `state` is "idle" or "transcribing".
+#[tauri::command]
+async fn set_voice<R: Runtime>(app: AppHandle<R>, enabled: bool, state: Option<String>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("setVoice", serde_json::json!({"enabled": enabled, "state": state}))
+        .map_err(|e| e.to_string())
+}
+/// Appends dictated text to whatever is currently in the native composer; `submit` then sends it exactly like tapping Send.
+#[tauri::command]
+async fn append_composer_text<R: Runtime>(app: AppHandle<R>, text: String, submit: Option<bool>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("appendComposerText", serde_json::json!({"text": text, "submit": submit.unwrap_or(false)}))
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn discard_files<R: Runtime>(app: AppHandle<R>, paths: Vec<String>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("discardFiles", serde_json::json!({"paths": paths}))
+        .map_err(|e| e.to_string())
+}
+/// Native action sheet; resolves `{picked, id}` once the user chooses or dismisses it.
+#[tauri::command]
+async fn pick_option<R: Runtime>(app: AppHandle<R>, title: String, options: serde_json::Value, selected: Option<String>) -> Result<serde_json::Value, String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("pickOption", serde_json::json!({"title": title, "options": options, "selected": selected}))
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
@@ -75,18 +102,32 @@ async fn remove_listener<R: Runtime>(app: AppHandle<R>, event: String, channel_i
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("native-shell")
-        .invoke_handler(tauri::generate_handler![ping, set_mode, set_connection, set_composer_text, set_threads, set_thread_meta, register_listener, remove_listener])
+        .invoke_handler(tauri::generate_handler![ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
         .setup(|app, api| {
             #[cfg(target_os = "ios")]
             {
                 let handle = api.register_ios_plugin(init_plugin_native_shell)?;
                 app.manage(NativeShell(handle));
             }
-            #[cfg(not(target_os = "ios"))]
+            #[cfg(target_os = "android")]
             {
-                let _ = (app, api);
+                let handle = api.register_android_plugin("com.freddai.shell", "NativeShellPlugin")?;
+                app.manage(NativeShell(handle));
             }
             Ok(())
         })
         .build()
+}
+
+/// Rust-only credential storage bridge. Never exposed in the WebView invoke handler.
+#[cfg(target_os = "android")]
+pub fn read_credential<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>, String> {
+    #[derive(Deserialize)] struct Stored { value: Option<String> }
+    app.state::<NativeShell<R>>().0.run_mobile_plugin::<Stored>("readCredential", Empty {})
+        .map(|stored| stored.value).map_err(|_| "Cannot read Android pairing credentials".into())
+}
+#[cfg(target_os = "android")]
+pub fn write_credential<R: Runtime>(app: &AppHandle<R>, value: &str) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("writeCredential", serde_json::json!({"value": value}))
+        .map_err(|_| "Cannot save Android pairing credentials".into())
 }

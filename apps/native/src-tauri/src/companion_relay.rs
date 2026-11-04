@@ -40,7 +40,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
     let expires=value["expires"].as_u64().ok_or("Missing expiry")?;
     if expires<crypto::now() || expires>crypto::now()+120 || value["id"].as_str()!=Some(id) {return Err("Request expired".into());}
     let route=value["route"].as_str().ok_or("Missing route")?;
-    if !["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read"].contains(&route) {return Err("Unknown companion operation".into());}
+    if !["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake"].contains(&route) {return Err("Unknown companion operation".into());}
     let _guard=gate.lock().map_err(|_|"Companion busy")?;
     // Recheck revocation immediately before dispatch, including queued messages.
     if !pairing::edit(root,|r|Ok(r.devices.iter().any(|d|d.id==device.id && d.key==device.key)))? {return Err("Device revoked".into());}

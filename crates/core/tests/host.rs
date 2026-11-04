@@ -80,11 +80,30 @@ mod unix {
         );
         let folder = root.join("Dropped project");
         std::fs::create_dir_all(&folder).unwrap();
-        let imported = call(&root, "import_project", json!({"path":folder,"color":"blue"})).unwrap();
+        let imported = call(
+            &root,
+            "import_project",
+            json!({"path":folder,"color":"blue"}),
+        )
+        .unwrap();
         assert_eq!(imported["name"], "Dropped project");
         assert_eq!(imported["policy"], "inherit");
-        assert_eq!(call(&root, "import_project", json!({"path":folder,"color":"red"})).unwrap()["id"], imported["id"]);
-        assert_eq!(call(&root, "snapshot", json!({})).unwrap()["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            call(
+                &root,
+                "import_project",
+                json!({"path":folder,"color":"red"})
+            )
+            .unwrap()["id"],
+            imported["id"]
+        );
+        assert_eq!(
+            call(&root, "snapshot", json!({})).unwrap()["projects"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         call(&root,"save_preferences",json!({"preferences":{"prefer_last":false,"fallback":null,"last":null,"use_worktree":true}})).unwrap();
         let mut socket = UnixStream::connect(root.join("host.sock")).unwrap();
         writeln!(
@@ -107,8 +126,12 @@ mod unix {
             call(&root, "snapshot", json!({})).unwrap()["preferences"]["use_worktree"],
             true
         );
-        assert_eq!(call(&root, "snapshot", json!({})).unwrap()["projects"][0]["id"], imported["id"]);
-        call(&root, "upgrade_idle", json!({})).unwrap();
+        assert_eq!(
+            call(&root, "snapshot", json!({})).unwrap()["projects"][0]["id"],
+            imported["id"]
+        );
+        let forced = call(&root, "upgrade_force", json!({})).unwrap();
+        assert_eq!(forced["interrupted"], 0);
         assert!(restarted.wait().unwrap().success());
         std::fs::remove_dir_all(root).unwrap();
     }

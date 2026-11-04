@@ -1,0 +1,21 @@
+{
+  "identifier": "com.freddai.companion",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Freddai"
+      }
+    ]
+  },
+  "build": {
+    "beforeBuildCommand": "pnpm build:android",
+    "frontendDist": "../dist-android",
+    "beforeDevCommand": "pnpm dev:android"
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}

@@ -21,7 +21,20 @@ macOS builds one signed and notarized universal DMG for Apple Silicon and Intel.
 
 Download the draft installers and verify clean installation, launch, provider discovery and normal application behavior on each claimed platform. Review release notes, then publish the draft as the latest stable release. Publishing is deliberately manual. The website reads GitHub's latest stable release metadata with five-minute revalidation and offers the exact `Freddai-macos-universal.dmg` asset. Drafts, prereleases, missing assets, invalid repository settings and API failures show the existing coming-soon state. Initial configuration requires a website deployment; subsequent published releases require no website rebuild. Run Next.js as a server, not a static export.
 
-Linux downloads are published and recognized by the website. Debian installation and GUI-process startup are verified; interactive Linux behavior and AppImage execution remain unverified. Windows is validation-only: use the manual workflow's enabled-by-default checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Automatic in-app updates remain outside this workflow. Vercel handles web deployment independently on pushes to `main`. Changes to the packaging workflow also trigger installer validation. The separate Checks workflow runs typechecking, web/native frontend builds, web/relay tests and core Rust tests on pushes and pull requests.
+Linux downloads are published and recognized by the website. Debian installation and GUI-process startup are verified; interactive Linux behavior and AppImage execution remain unverified. Windows is validation-only: use the manual workflow's enabled-by-default checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Vercel handles web deployment independently on pushes to `main`. Changes to the packaging workflow also trigger installer validation. The separate Checks workflow runs typechecking, web/native frontend builds, web/relay tests and core Rust tests on pushes and pull requests.
+
+## In-app updater artifacts
+
+Each release also publishes Tauri v2 updater artifacts and a `latest.json` manifest, built by the same workflow (`--config '{"bundle":{"createUpdaterArtifacts":true}}'`; `tauri.conf.json` does not enable it locally, so `pnpm native:install` is unchanged).
+
+- Secrets: `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Set them with `gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/freddai-updater.key` and `security find-generic-password -s freddai-updater-key -w | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The matching public key is `plugins.updater.pubkey` in `tauri.conf.json`. The package job fails immediately with a named error if either secret is missing. Windows validation receives the secrets but does not build updater artifacts.
+- Extra assets (besides the unchanged DMG/deb/AppImage names): `Freddai-macos-universal.app.tar.gz` and `.sig` (macOS), `Freddai-linux-x64.AppImage.sig` (Tauri v2 signs the AppImage itself; there is no separate Linux tarball), and `latest.json`.
+- `latest.json` is generated in the draft job by `scripts/generate-updater-manifest.mjs` (test: `node --test scripts/tests/updater-manifest/`). `darwin-aarch64` and `darwin-x86_64` both point at the universal tar.gz, `linux-x86_64` at the AppImage; URLs are `https://github.com/desduvauchelle/freddai/releases/download/<tag>/<asset>`.
+- Clients fetch `https://github.com/desduvauchelle/freddai/releases/latest/download/latest.json`. GitHub's `/releases/latest` only resolves a published, non-draft, non-prerelease release, so users receive an update only after you publish it.
+- Linux `.deb` installs cannot self-update; they are shown a link to the release instead. Only the AppImage updates in place.
+- The initial `desktop-0.1.0` release has no `latest.json` or signed updater assets; the feed returns HTTP 404 until an updater-enabled release is published. Local builds log automatic check failures quietly; manual checks and distributed builds still report failures.
+- v0.1.0 has no updater: users must install the first updater-enabled version manually.
+- Not verified without a real tag run: the exact bundle output paths and the quoting of the `--config` JSON through tauri-action.
 
 ## Local checks
 
@@ -38,8 +51,29 @@ The download section recognizes these uploaded assets in the latest published st
 
 The current iOS build uses this developer Mac's compile-time endpoint and certificate. Do not distribute it as a general external beta. A generic secure pairing/enrollment flow must precede external testing. App Store Connect beta review and tester setup remain pending.
 
+## iOS and iPadOS internal TestFlight
+
+The companion is one universal iOS app (`com.freddai.companion`, team `BSH2UEDLU5`) for both iPhone and iPad. There is no separate iPad bundle, listing or release stream. The existing shared native shell adapts to the app window; iPad supports all four orientations and multitasking.
+
+On this Mac's Xcode 27 toolchain, optimized Swift plugin linking also requires Rust's LLVM tools (`rustup component add llvm-tools`). The debug simulator build alone does not verify release linking.
+
+- `pnpm ios:archive` builds a **release**, non-fixture archive into `output/ios-distribution/<build-number>/Freddai.xcarchive`. It uses the existing Mac TLS provisioning without including device authentication secrets. The build number defaults to days since 2020, UTC hour and minute, satisfying Apple's 4.2.2 digit limits. To build twice in one minute, set an explicit greater `FREDDAI_IOS_BUILD_NUMBER`. Existing archive directories are never overwritten.
+- Archive validation checks the bundle ID, iPhone/iPad device families, iPad orientations, multitasking, opaque App Store icons, and production frontend assets. The icon preparation step encodes the existing artwork into opaque RGB in the generated Xcode catalog; source artwork is retained. `Freddai-build.json` records asset hashes and binds production validation to the archived executable hash. Tauri embeds compressed web assets in that binary. Fixture mode is rejected for distribution; the production flag is also set explicitly to override local Vite environment files.
+- `pnpm ios:upload` uploads the latest validated archive using Xcode automatic distribution signing and the existing Xcode account. Set `FREDDAI_IOS_ARCHIVE` to select a specific archive. Xcode may create distribution signing material with that account. No passwords, API keys or certificates are stored in source. This upload uses `testFlightInternalTestingOnly=true`: it cannot be released to external testers or the App Store.
+
+Use the existing iOS App Store Connect record for `com.freddai.companion` under the same developer team; do not create a separate iPad record or change the bundle ID of an installed companion. The existing account/record accepted the universal upload on 2026-11-04. If the command reports a missing account/session in another environment, sign in to **Xcode → Settings → Accounts** with the existing developer account. After a successful upload, wait for Apple processing, resolve any build-specific compliance requirements, then assign the build to an internal testing group. Upload alone does not assign testers or establish a public TestFlight invitation. Apple processing, tester assignment and actual installation must each be verified separately.
+
+Verified upload: **0.1.0 (2499.18.4)**, universal iPhone/iPad, internal testing only. Xcode reported `Upload succeeded` and `EXPORT SUCCEEDED`; App Store Connect reported the package had begun processing. Archive: `output/ios-distribution/2499.18.4/Freddai.xcarchive`. The first attempted upload was rejected for the original PNG icon alpha channel; the final upload includes opaque generated icons and passed that validation. Completion of Apple processing, internal testing-group assignment, physical-device TestFlight installation and public availability have not been verified.
+
+External distribution still requires generic secure Mac enrollment (the current build trusts this developer Mac), production acceptance and store metadata/review, including iPad screenshots. The website's public TestFlight link stays unset until external testing is actually available. Distribution follows [Apple's upload workflow](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds) and [Tauri's App Store workflow](https://tauri.app/distribute/app-store/).
+
 ## Apple setup status (2026-11-04)
 
 App Store Connect contains Freddai, Apple ID `6830788346`, bundle ID `com.freddai.companion`. The Internal Testing group exists with manual distribution and no testers or builds. External testing is not yet available on this empty build record. Apple Developer account shows the updated Program License Agreement accepted November 4, 2026; no acceptance action remains pending.
 
 All three published installer files were downloaded from their public GitHub release URLs and matched the CI artifacts by SHA-256. The production website was redeployed and its Mac, Linux AppImage and Debian links verified against those URLs.
+
+
+## Android APK beta
+
+See [Android installation and release signing](android.md). Android uses the separate `android-beta-0.1.0` prerelease, with `Freddai-android-arm64.apk` and a SHA-256 checksum; it never replaces desktop’s latest stable release. Vercel’s production `ANDROID_DOWNLOAD_URL` enables the landing-page Android beta button only after the asset is published and checked. The Android app enrolls each user’s own Mac at runtime. Existing public Mac builds can use the documented public provisioning helper; current Mac source exposes setup directly in Pair phone. Physical-device pairing, relay and live-provider verification remain pending.

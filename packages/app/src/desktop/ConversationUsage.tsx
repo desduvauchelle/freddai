@@ -11,8 +11,8 @@ export function ConversationUsage({ usage }: { usage?: Usage | null }) {
     <div className="conversation-usage-details">
       <strong>Last reported request</strong>
       {labels.context && <p>{usage?.context_tokens?.toLocaleString()} tokens / {usage?.context_window?.toLocaleString()} context window</p>}
-      {labels.cache && <p>{usage?.cached_input_tokens?.toLocaleString()} cached input tokens</p>}
-      <p>The provider does not report when cached input expires, so time remaining is unknown. Cached tokens describe reuse by the last request, not how long the cache will remain available. Your unsent draft is excluded.</p>
+      {typeof usage?.cached_input_tokens === "number" && Number.isFinite(usage.cached_input_tokens) && usage.cached_input_tokens >= 0 && <p>{usage?.cached_input_tokens?.toLocaleString()} cached input tokens</p>}
+      <p>Cached tokens describe reuse by the last request. Your unsent draft is excluded.</p>
     </div>
   </PopoverDetails>;
 }

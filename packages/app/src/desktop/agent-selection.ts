@@ -8,3 +8,9 @@ export function effortChoices(provider: string, model: string, models: Model[]):
   return selected ? selected.supportedReasoningEfforts.map(e => e.reasoningEffort) : ["low", "medium", "high", "xhigh"];
 }
 
+export const effortLabel = (effort: string) => (effort === "xhigh" ? "Extra high" : effort[0].toUpperCase() + effort.slice(1));
+/** Model choices shown for a provider: the catalog when loaded, else Claude's aliases. Shared by the desktop and iPhone pickers. */
+export function modelChoices(provider: string | undefined, models: Model[]): { value: string; label: string }[] {
+  const aliases = provider === "claude" ? ["sonnet", "opus", "haiku"] : [];
+  return models.length ? models.map(m => ({ value: m.model, label: m.displayName || m.model })) : aliases.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
+}

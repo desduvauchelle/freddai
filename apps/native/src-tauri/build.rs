@@ -1,6 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=FREDDAI_COMPANION_PROVISION");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
+    if matches!(std::env::var("CARGO_CFG_TARGET_OS").as_deref(), Ok("ios")) {
         // Xcode filters custom environment variables from script build phases.
         let path = std::env::var("FREDDAI_COMPANION_PROVISION").unwrap_or_else(|_| {
             std::path::PathBuf::from(std::env::var("HOME").expect("Missing build home"))

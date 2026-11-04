@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-append-composer-text"
+description = "Enables the append_composer_text command without any pre-configured scope."
+commands.allow = ["append_composer_text"]
+
+[[permission]]
+identifier = "deny-append-composer-text"
+description = "Denies the append_composer_text command without any pre-configured scope."
+commands.deny = ["append_composer_text"]

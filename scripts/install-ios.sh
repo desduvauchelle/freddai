@@ -13,8 +13,8 @@ if [ -z "$device" ]; then
   device="$(python3 - <<'PY'
 import json,subprocess
 p=subprocess.run(['xcrun','devicectl','list','devices','--json-output','-'],capture_output=True,text=True,check=True)
-devices=[d for d in json.loads(p.stdout)['result']['devices'] if d.get('hardwareProperties',{}).get('reality')=='physical' and d.get('hardwareProperties',{}).get('deviceType')=='iPhone' and d.get('connectionProperties',{}).get('pairingState')=='paired']
-if len(devices)!=1: raise SystemExit('Set FREDDAI_IOS_DEVICE to the intended paired iPhone identifier.')
+devices=[d for d in json.loads(p.stdout)['result']['devices'] if d.get('hardwareProperties',{}).get('reality')=='physical' and d.get('hardwareProperties',{}).get('deviceType') in ('iPhone','iPad') and d.get('connectionProperties',{}).get('pairingState')=='paired' and d.get('connectionProperties',{}).get('tunnelState')=='connected']
+if len(devices)!=1: raise SystemExit('Set FREDDAI_IOS_DEVICE to the intended connected, paired iPhone or iPad identifier.')
 print(devices[0]['identifier'])
 PY
 )"

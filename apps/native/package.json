@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "build:ios": "vite build --config vite.ios.config.ts",
-    "ios:sim:fixture": "bash ../../scripts/ios-sim-fixture.sh"
+    "ios:sim:fixture": "bash ../../scripts/ios-sim-fixture.sh",
+    "build:android": "vite build --config vite.android.config.ts",
+    "dev:android": "vite --config vite.android.config.ts --host 0.0.0.0"
   },
   "dependencies": {
     "@freddai/app": "workspace:*",

@@ -1,31 +1,51 @@
-#[cfg(not(target_os = "ios"))]
+#[cfg(target_os = "macos")]
+mod writing_tools;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod window_state;
 mod companion_crypto;
+mod companion_enrollment;
+mod wake;
+#[cfg(target_os = "macos")]
+mod awake;
 #[cfg(target_os = "macos")]
 mod companion_pairing;
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
 #[path = "companion_pairing_unsupported.rs"]
 mod companion_pairing;
 #[cfg(target_os = "macos")]
 mod companion_relay;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod desktop;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod git_history;
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod git_actions;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod terminal;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod updater;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod screen_grab;
 #[cfg(target_os = "macos")]
 mod companion_server;
-#[cfg(target_os = "ios")]
+#[cfg(target_os = "macos")]
+mod voice;
+#[cfg_attr(not(any(target_os = "ios", target_os = "android")), allow(dead_code))]
+mod client_diag;
+#[cfg(any(target_os = "ios", target_os = "android"))]
 mod mobile;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     mobile::run();
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     desktop::run();
 }
+
+/// Starts the keep-awake monitor; called by the long-lived `--host` process.
+#[cfg(target_os = "macos")]
+pub fn start_awake_monitor(root: std::path::PathBuf) { awake::spawn_monitor(root) }
 
 #[cfg(target_os = "macos")]
 pub fn serve_companion(root: std::path::PathBuf) -> Result<(), String> {

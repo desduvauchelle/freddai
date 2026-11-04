@@ -40,11 +40,20 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            args: --target universal-apple-darwin --bundles dmg
+            args: --target universal-apple-darwin --bundles dmg,app --config '{"bundle":{"createUpdaterArtifacts":true}}'
           - os: ubuntu-22.04
-            args: --bundles deb,appimage
+            args: --bundles deb,appimage --config '{"bundle":{"createUpdaterArtifacts":true}}'
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Require updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for key in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            test -n "${!key}" || { echo "::error::Missing secret $key: updater artifacts cannot be signed. See docs/releases.md."; exit 1; }
+          done
+        shell: bash
       - name: Require macOS distribution credentials
         if: runner.os == 'macOS'
         env:
@@ -84,6 +93,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/native
           args: ${{ matrix.args }}
@@ -94,12 +105,24 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import shutil
-          for extension in ('dmg', 'deb', 'AppImage'):
+          names = {
+              'dmg': 'Freddai-macos-universal.dmg',
+              'deb': 'Freddai-linux-x64.deb',
+              'AppImage': 'Freddai-linux-x64.AppImage',
+              'AppImage.sig': 'Freddai-linux-x64.AppImage.sig',
+              'app.tar.gz': 'Freddai-macos-universal.app.tar.gz',
+              'app.tar.gz.sig': 'Freddai-macos-universal.app.tar.gz.sig',
+          }
+          for extension, name in names.items():
               for path in Path('target').glob(f'**/release/bundle/*/*.{extension}'):
-                  name = {'dmg': 'Freddai-macos-universal.dmg', 'deb': 'Freddai-linux-x64.deb', 'AppImage': 'Freddai-linux-x64.AppImage'}[extension]
                   shutil.copy2(path, Path('release-assets') / name)
-          if not list(Path('release-assets').iterdir()):
-              raise SystemExit('No installers produced')
+          produced = {path.name for path in Path('release-assets').iterdir()}
+          expected = {
+              'macOS': {names[k] for k in ('dmg', 'app.tar.gz', 'app.tar.gz.sig')},
+              'Linux': {names[k] for k in ('deb', 'AppImage', 'AppImage.sig')},
+          }['${{ runner.os }}']
+          if not expected <= produced:
+              raise SystemExit(f'Missing expected assets: {sorted(expected - produced)}')
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -113,11 +136,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/download-artifact@v4
         with:
           pattern: installers-*
           merge-multiple: true
           path: installers
+      - name: Generate updater manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/generate-updater-manifest.mjs installers installers/latest.json
       - name: Create draft after all builds pass
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,6 +175,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
       - uses: tauri-apps/tauri-action@v1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/native
           args: --bundles nsis

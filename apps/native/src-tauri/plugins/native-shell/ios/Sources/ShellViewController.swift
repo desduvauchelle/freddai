@@ -5,8 +5,18 @@ import WebKit
 /// UINavigationController) and an optional native composer that tracks the keyboard.
 enum ShellMode { case conversation, new, other }
 
+struct PickerOption: Decodable {
+  let id: String
+  let label: String
+  var detail: String?
+  var disabled: Bool?
+}
+
 /// Per-thread header metadata pushed from JS (`set_thread_meta`).
 struct ThreadMeta: Decodable {
+  var model: String?
+  var access: String?
+  var controlsDisabled: Bool?
   var project: String = ""
   var runState: String = ""   // "running" | "waiting" | "failed" | ""
   var canStop: Bool = false
@@ -20,11 +30,12 @@ final class NavTitleView: UIView {
   override var intrinsicContentSize: CGSize { CGSize(width: 10_000, height: 40) }
 }
 
-final class ShellViewController: UIViewController, UITextViewDelegate {
+final class ShellViewController: UIViewController, UITextViewDelegate, UIPopoverPresentationControllerDelegate {
   private let webView: WKWebView
   private let composer = ComposerView()
   private var mode: ShellMode = .other
   private var conversation: Bool { mode == .conversation }
+  private var composerVisible: Bool { mode != .other }
   private var barVisible: Bool { mode != .other }
 
   private var webTopSafe: NSLayoutConstraint!
@@ -32,7 +43,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
   private var webBottomComposer: NSLayoutConstraint!
   private var webBottomEdge: NSLayoutConstraint!
 
-  var onSend: ((String) -> Void)?
+  var onSend: ((String, [AttachedFile]) -> Void)?
+  var onVoiceRecorded: ((String, Int) -> Void)?
+  var onVoiceError: ((String) -> Void)?
   var onMenu: (() -> Void)?
   var onConnectionTap: (() -> Void)?
   var onNewThread: (() -> Void)?
@@ -44,6 +57,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
   private let actionsItem = UIBarButtonItem()
   private let newItem = UIBarButtonItem()
   private var meta = ThreadMeta()
+  private var pickerCompletion: ((String?) -> Void)?
 
   init(webView: WKWebView) {
     self.webView = webView
@@ -54,7 +68,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    view.backgroundColor = .systemBackground
+    view.backgroundColor = ComposerView.threadBackground
 
     webView.removeFromSuperview()
     webView.translatesAutoresizingMaskIntoConstraints = false
@@ -63,7 +77,11 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
 
     composer.translatesAutoresizingMaskIntoConstraints = false
     composer.isHidden = true
-    composer.onSend = { [weak self] text in self?.onSend?(text) }
+    composer.presenter = self
+    composer.onSetting = { [weak self] action in self?.onThreadAction?(action) }
+    composer.onSend = { [weak self] text, files in self?.onSend?(text, files) }
+    composer.onVoiceRecorded = { [weak self] path, ms in self?.onVoiceRecorded?(path, ms) }
+    composer.onVoiceError = { [weak self] message in self?.onVoiceError?(message) }
     view.addSubview(composer)
 
     webTopSafe = webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
@@ -79,7 +97,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
       composer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
     ])
     // The field sits above the keyboard (or the home indicator when it is hidden);
-    // the material extends to the screen edge behind them.
+    // the thread background extends to the screen edge behind them.
     composer.bindKeyboard(to: view.keyboardLayoutGuide)
     updateLayout()
 
@@ -109,6 +127,11 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
   @objc private func menuTapped() { onMenu?() }
   @objc private func connectionTapped() { onConnectionTap?() }
   @objc private func newThreadTapped() { onNewThread?() }
+
+  func setThreadListPresentation(sidebar: Bool, open: Bool) {
+    navigationItem.leftBarButtonItem?.image = UIImage(systemName: sidebar ? "sidebar.left" : "line.3.horizontal")
+    navigationItem.leftBarButtonItem?.accessibilityHint = open ? "Hides the thread list" : "Opens the thread list"
+  }
 
   /// Mascot as a circular avatar (square, aspect-fill, clipped, hairline border).
   static func avatarView(size: CGFloat) -> UIImageView {
@@ -182,16 +205,14 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
   func setConnection(state: String, message: String?) {
     connectionState = state
     connectionMessage = message
-    switch state {
-    case "ok": connectionGlyph.tintColor = .systemGreen
-    case "down": connectionGlyph.tintColor = .systemRed
-    default: connectionGlyph.tintColor = .systemGray
-    }
+    let tint: UIColor = state == "ok" ? .systemGreen : state == "down" ? .systemRed : .systemGray
+    if connectionGlyph.tintColor != tint { Motion.crossfade(connectionGlyph) { self.connectionGlyph.tintColor = tint } }
     refreshAccessibility()
   }
 
   func setThreadMeta(_ new: ThreadMeta) {
     meta = new
+    composer.setSettings(model: new.model, access: new.access, disabled: new.controlsDisabled ?? false)
     refreshSubtitle()
     rebuildActions()
   }
@@ -211,7 +232,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
       if !meta.project.isEmpty { text.append(NSAttributedString(string: " · ", attributes: [.foregroundColor: UIColor.secondaryLabel])) }
     }
     text.append(NSAttributedString(string: meta.project, attributes: [.foregroundColor: UIColor.secondaryLabel]))
-    subtitleLabel.attributedText = text
+    if subtitleLabel.attributedText?.string != text.string || subtitleLabel.attributedText != text { Motion.crossfade(subtitleLabel) { self.subtitleLabel.attributedText = text } }
     refreshAccessibility()
   }
 
@@ -241,159 +262,63 @@ final class ShellViewController: UIViewController, UITextViewDelegate {
 
   private func updateLayout() {
     // 'other' mode: the web UI draws under the status bar and handles env(safe-area-inset-*) itself, as before.
-    // 'conversation' and 'new': the web content starts below the native navigation bar; only conversation has the native composer.
+    // 'conversation' and 'new': the web content starts below the native navigation bar and above the native composer.
     webTopEdge.isActive = !barVisible
     webTopSafe.isActive = barVisible
-    webBottomEdge.isActive = !conversation
-    webBottomComposer.isActive = conversation
-    composer.isHidden = !conversation
+    webBottomEdge.isActive = !composerVisible
+    webBottomComposer.isActive = composerVisible
+    composer.isHidden = !composerVisible
   }
 
   func apply(mode newMode: ShellMode, title: String?, placeholder: String?) {
     let modeChanged = mode != newMode
     mode = newMode
-    if let title = title { titleLabel.text = title; navigationItem.title = title; refreshAccessibility() }
-    navigationItem.rightBarButtonItems = newMode == .conversation ? [actionsItem, newItem] : [newItem]
+    if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
+    // The New thread home has no thread actions, and its own compose button would be a no-op.
+    navigationItem.rightBarButtonItems = newMode == .conversation ? [actionsItem, newItem] : []
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {
       updateLayout()
       navigationController?.setNavigationBarHidden(!barVisible, animated: false)
-      if !conversation { _ = composer.resignFirstResponder() }
+      if mode == .other { _ = composer.resignFirstResponder() }
       view.layoutIfNeeded()
     }
   }
 
-  func setComposerText(_ text: String) { composer.setText(text) }
-}
+  func setComposerText(_ text: String, files: [AttachedFile]?) { composer.setText(text, files: files) }
+  func appendComposerText(_ text: String, submit: Bool = false) { composer.appendText(text, submit: submit) }
+  func setVoice(enabled: Bool, state: String?) { composer.setVoice(enabled: enabled, state: state) }
 
-/// Material-backed bar with an auto-growing text field and a send button.
-final class ComposerView: UIVisualEffectView, UITextViewDelegate {
-  private let field = UIView()
-  private let textView = UITextView()
-  private let placeholderLabel = UILabel()
-  private let sendButton = UIButton(type: .system)
-  private var heightConstraint: NSLayoutConstraint!
-  private let maxLines: CGFloat = 6
-
-  var onSend: ((String) -> Void)?
-
-  var placeholder: String {
-    get { placeholderLabel.text ?? "" }
-    set { placeholderLabel.text = newValue }
+  /// Native action sheet used by the web pills (project, coding agent, model, effort, permissions).
+  func presentPicker(title: String, options: [PickerOption], selected: String?, completion: @escaping (String?) -> Void) {
+    guard presentedViewController == nil else { completion(nil); return }
+    pickerCompletion = completion
+    let current = options.first { $0.id == selected }?.label
+    let sheet = UIAlertController(title: title, message: current.map { "Current: \($0)" }, preferredStyle: .actionSheet)
+    for option in options {
+      let label = option.detail.map { "\(option.label) (\($0))" } ?? option.label
+      let action = UIAlertAction(title: label, style: .default) { [weak self] _ in self?.finishPicker(option.id) }
+      action.isEnabled = !(option.disabled ?? false)
+      sheet.addAction(action)
+    }
+    sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.finishPicker(nil) })
+    sheet.presentationController?.delegate = self
+    if let popover = sheet.popoverPresentationController {
+      popover.sourceView = view
+      popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+      popover.permittedArrowDirections = []
+      popover.delegate = self
+    }
+    present(sheet, animated: true)
   }
 
-  init() {
-    super.init(effect: UIBlurEffect(style: .systemChromeMaterial))
-    setup()
+  private func finishPicker(_ id: String?) {
+    let completion = pickerCompletion
+    pickerCompletion = nil
+    completion?(id)
   }
 
-  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-  private func setup() {
-    let separator = UIView()
-    separator.backgroundColor = .separator
-    separator.translatesAutoresizingMaskIntoConstraints = false
-    contentView.addSubview(separator)
-
-    field.translatesAutoresizingMaskIntoConstraints = false
-    field.backgroundColor = .secondarySystemFill
-    field.layer.cornerRadius = 19
-    field.layer.cornerCurve = .continuous
-    contentView.addSubview(field)
-
-    textView.translatesAutoresizingMaskIntoConstraints = false
-    textView.font = .preferredFont(forTextStyle: .body)
-    textView.adjustsFontForContentSizeCategory = true
-    textView.backgroundColor = .clear
-    textView.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
-    textView.isScrollEnabled = false
-    textView.returnKeyType = .default
-    textView.delegate = self
-    field.addSubview(textView)
-
-    placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-    placeholderLabel.font = textView.font
-    placeholderLabel.adjustsFontForContentSizeCategory = true
-    placeholderLabel.textColor = .placeholderText
-    placeholderLabel.text = "Message"
-    placeholderLabel.isUserInteractionEnabled = false
-    field.addSubview(placeholderLabel)
-
-    var config = UIButton.Configuration.plain()
-    config.image = UIImage(systemName: "arrow.up.circle.fill")
-    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 30)
-    config.contentInsets = .zero
-    sendButton.configuration = config
-    sendButton.translatesAutoresizingMaskIntoConstraints = false
-    sendButton.accessibilityLabel = "Send"
-    sendButton.addTarget(self, action: #selector(send), for: .touchUpInside)
-    contentView.addSubview(sendButton)
-
-    heightConstraint = textView.heightAnchor.constraint(equalToConstant: 36)
-    NSLayoutConstraint.activate([
-      separator.topAnchor.constraint(equalTo: contentView.topAnchor),
-      separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-      separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-      separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
-
-      field.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-      field.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-      field.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8),
-
-      textView.topAnchor.constraint(equalTo: field.topAnchor),
-      textView.bottomAnchor.constraint(equalTo: field.bottomAnchor),
-      textView.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 8),
-      textView.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -8),
-      heightConstraint,
-
-      placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 11),
-      placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -6),
-      placeholderLabel.centerYAnchor.constraint(equalTo: field.topAnchor, constant: 18),
-
-      sendButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
-      sendButton.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: -1),
-      sendButton.widthAnchor.constraint(equalToConstant: 36),
-      sendButton.heightAnchor.constraint(equalToConstant: 36),
-    ])
-    refresh()
-  }
-
-  func bindKeyboard(to guide: UILayoutGuide) {
-    field.bottomAnchor.constraint(equalTo: guide.topAnchor, constant: -8).isActive = true
-  }
-
-  private var lastWidth: CGFloat = 0
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    if textView.bounds.width != lastWidth { lastWidth = textView.bounds.width; refresh() }
-  }
-
-  @objc private func send() {
-    let text = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return }
-    textView.text = ""
-    refresh()
-    onSend?(text)
-  }
-
-  func setText(_ text: String) {
-    textView.text = text
-    refresh()
-  }
-
-  override func resignFirstResponder() -> Bool { textView.resignFirstResponder() }
-
-  func textViewDidChange(_ textView: UITextView) { refresh() }
-
-  private func refresh() {
-    placeholderLabel.isHidden = !textView.text.isEmpty
-    sendButton.isEnabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let lineHeight = (textView.font?.lineHeight ?? 17)
-    let insets = textView.textContainerInset.top + textView.textContainerInset.bottom
-    let minHeight = ceil(lineHeight + insets)
-    let maxHeight = ceil(lineHeight * maxLines + insets)
-    let fitting = textView.sizeThatFits(CGSize(width: max(textView.bounds.width, 200), height: .greatestFiniteMagnitude)).height
-    heightConstraint.constant = min(max(fitting, minHeight), maxHeight)
-    textView.isScrollEnabled = fitting > maxHeight
-  }
+  // iPad popovers hide the Cancel action and dismiss when tapped outside. Resolve the JS request too.
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { finishPicker(nil) }
+  func popoverPresentationControllerDidDismissPopover(_ popoverPresentationController: UIPopoverPresentationController) { finishPicker(nil) }
 }

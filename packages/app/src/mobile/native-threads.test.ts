@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { buildThreadsModel, bumpOlderPage, createChangeSender, createThreadEventHandlers, resolveLaunchThread, createThreadActionHandler, nativeRunState } from './native-threads';
+import { buildThreadsModel, bumpOlderPage, createChangeSender, createThreadEventHandlers, createThreadActionHandler, nativeRunState } from './native-threads';
 import type { CompanionSnapshot, CompanionThread } from './companion';
 
 const thread = (id: string, project: string, status: string, updated: number, extra: Partial<CompanionThread> = {}): CompanionThread =>
@@ -10,6 +10,10 @@ const snapshot = (threads: CompanionThread[]): CompanionSnapshot => ({
 });
 const base = { read: {}, selected: '', project: '', query: '', filter: 'all' as const, olderPages: {} };
 
+// The newest 5 finished threads stay visible after the live ones; these fill that quota so older paging is exercised.
+const recent = (read: Record<string, number>) => ['r1', 'r2', 'r3', 'r4', 'r5'].map((id, i) => { read[id] = 30 - i; return thread(id, 'a', 'done', 30 - i); });
+const recentIds = ['r1', 'r2', 'r3', 'r4', 'r5'];
+
 it('builds groups with live threads, status flags and older paging counts', () => {
   const threads = [
     thread('run', 'a', 'running', 50),
@@ -18,11 +22,13 @@ it('builds groups with live threads, status flags and older paging counts', () =
     thread('old2', 'a', 'done', 9),
     thread('pend', 'b', 'running', 60, { pending: { id: 1 } as never }),
   ];
-  const model = buildThreadsModel({ ...base, data: snapshot(threads), read: { old1: 10, old2: 9 } });
+  const read: Record<string, number> = { old1: 10, old2: 9 };
+  threads.push(...recent(read));
+  const model = buildThreadsModel({ ...base, data: snapshot(threads), read });
   const alpha = model.groups.find(g => g.project === 'a')!;
   expect(alpha.label).toBe('Alpha');
   expect(alpha.canStart).toBe(true);
-  expect(alpha.threads.map(t => t.id)).toEqual(['run', 'unread']);
+  expect(alpha.threads.map(t => t.id)).toEqual(['run', 'unread', ...recentIds]);
   expect(alpha.threads[1]).toMatchObject({ unread: true, status: 'done', updatedAt: 40 });
   expect(alpha.olderRemaining).toBe(2);
   expect(alpha.olderLabel).toBe('Show older threads (2)');
@@ -32,14 +38,14 @@ it('builds groups with live threads, status flags and older paging counts', () =
 });
 
 it('expands older threads per project and keeps the selected thread live', () => {
-  const threads = [thread('old1', 'a', 'done', 10), thread('old2', 'a', 'done', 9)];
-  const read = { old1: 10, old2: 9 };
+  const read: Record<string, number> = { old1: 10, old2: 9 };
+  const threads = [...recent(read), thread('old1', 'a', 'done', 10), thread('old2', 'a', 'done', 9)];
   const expanded = buildThreadsModel({ ...base, data: snapshot(threads), read, olderPages: bumpOlderPage({}, 'a') });
-  expect(expanded.groups[0].threads.map(t => t.id)).toEqual(['old1', 'old2']);
+  expect(expanded.groups[0].threads.map(t => t.id)).toEqual([...recentIds, 'old1', 'old2']);
   expect(expanded.groups[0].olderRemaining).toBe(0);
   const selected = buildThreadsModel({ ...base, data: snapshot(threads), read, selected: 'old2' });
   expect(selected.selectedId).toBe('old2');
-  expect(selected.groups[0].threads.map(t => t.id)).toEqual(['old2']);
+  expect(selected.groups[0].threads.map(t => t.id)).toEqual(['old2', ...recentIds]);
   expect(selected.groups[0].olderRemaining).toBe(1);
 });
 
@@ -82,14 +88,6 @@ it('maps native events onto the right state changes', () => {
   expect(actions.showOlder).toHaveBeenCalledTimes(1);
   expect(actions.showOlder).toHaveBeenCalledWith('a');
   expect(bumpOlderPage({ a: 1 }, 'a')).toEqual({ a: 2 });
-});
-
-it('resolves the launch thread: last viewed, else most recent, else none', () => {
-  const threads = [thread('old', 'a', 'done', 1), thread('new', 'a', 'done', 9)];
-  expect(resolveLaunchThread(threads, 'old')).toBe('old');
-  expect(resolveLaunchThread(threads, 'gone')).toBe('new');
-  expect(resolveLaunchThread(threads, '')).toBe('new');
-  expect(resolveLaunchThread([], 'old')).toBeNull();
 });
 
 it('routes native thread actions to the matching handlers and ignores unknown ones', () => {

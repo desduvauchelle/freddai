@@ -16,7 +16,15 @@
     "check": "pnpm typecheck && pnpm build && cargo check --workspace",
     "dev:app": "pnpm --filter @freddai/native dev",
     "native:install": "bash scripts/install-macos.sh",
-    "ios:install": "bash scripts/install-ios.sh"
+    "ios:install": "bash scripts/install-ios.sh",
+    "ios:test:layout": "bash scripts/test-ios-layout.sh",
+    "ios:test:ui": "bash scripts/test-ios-layout.sh --ui",
+    "ios:archive": "bash scripts/distribute-ios.sh archive",
+    "ios:upload": "bash scripts/distribute-ios.sh upload",
+    "android:init": "pnpm --filter @freddai/native tauri android init",
+    "android:build": "bash scripts/build-android.sh",
+    "android:release": "python3 scripts/release-android.py",
+    "android:install": "bash scripts/install-android.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

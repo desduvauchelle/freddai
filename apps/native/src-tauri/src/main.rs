@@ -11,6 +11,8 @@ fn main() {
     }
     if args.get(1).map(String::as_str) == Some("--host") {
         let root = std::path::PathBuf::from(args.get(2).expect("Missing host workspace"));
+        #[cfg(target_os = "macos")]
+        freddai_native_lib::start_awake_monitor(root.clone());
         if let Err(e) = freddai_core::host::serve(root) {
             eprintln!("{e}");
             std::process::exit(1)

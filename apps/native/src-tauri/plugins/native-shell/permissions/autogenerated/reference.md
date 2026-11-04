@@ -8,8 +8,12 @@ Allows the Freddai webview to drive the native iPhone shell.
 - `allow-set-mode`
 - `allow-set-connection`
 - `allow-set-composer-text`
+- `allow-discard-files`
+- `allow-pick-option`
 - `allow-set-threads`
 - `allow-set-thread-meta`
+- `allow-set-voice`
+- `allow-append-composer-text`
 - `allow-register-listener`
 - `allow-remove-listener`
 
@@ -21,6 +25,84 @@ Allows the Freddai webview to drive the native iPhone shell.
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`native-shell:allow-append-composer-text`
+
+</td>
+<td>
+
+Enables the append_composer_text command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-append-composer-text`
+
+</td>
+<td>
+
+Denies the append_composer_text command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-discard-files`
+
+</td>
+<td>
+
+Enables the discard_files command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-discard-files`
+
+</td>
+<td>
+
+Denies the discard_files command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-pick-option`
+
+</td>
+<td>
+
+Enables the pick_option command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-pick-option`
+
+</td>
+<td>
+
+Denies the pick_option command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -226,6 +308,32 @@ Enables the set_threads command without any pre-configured scope.
 <td>
 
 Denies the set_threads command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-set-voice`
+
+</td>
+<td>
+
+Enables the set_voice command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-set-voice`
+
+</td>
+<td>
+
+Denies the set_voice command without any pre-configured scope.
 
 </td>
 </tr>

@@ -142,10 +142,17 @@ mod tests {
 /// Preview only stored raster images, using the same integrity check as delivery.
 pub fn preview(root: &Path, id: &str) -> Result<String, String> {
     let (attachment, data, _) = load(root, id)?;
-    if !matches!(attachment.mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+    if !matches!(
+        attachment.mime.as_str(),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    ) {
         return Err("This attachment is not a supported image".into());
     }
-    Ok(format!("data:{};base64,{}", attachment.mime, base64::engine::general_purpose::STANDARD.encode(data)))
+    Ok(format!(
+        "data:{};base64,{}",
+        attachment.mime,
+        base64::engine::general_purpose::STANDARD.encode(data)
+    ))
 }
 
 #[cfg(test)]
@@ -158,15 +165,33 @@ mod preview_tests {
         let image = root.join("capture.png");
         let bytes = b"\x89PNG\r\n\x1a\nfixture";
         fs::write(&image, bytes).unwrap();
-        let attachment = import(&root, &[image.to_string_lossy().into_owned()]).unwrap().remove(0);
+        let attachment = import(&root, &[image.to_string_lossy().into_owned()])
+            .unwrap()
+            .remove(0);
         fs::remove_file(&image).unwrap();
-        assert_eq!(preview(&root, &attachment.id).unwrap(), format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)));
-        fs::write(folder(&root, &attachment.id).unwrap().join("content"), b"changed").unwrap();
-        assert!(preview(&root, &attachment.id).unwrap_err().contains("changed"));
+        assert_eq!(
+            preview(&root, &attachment.id).unwrap(),
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            )
+        );
+        fs::write(
+            folder(&root, &attachment.id).unwrap().join("content"),
+            b"changed",
+        )
+        .unwrap();
+        assert!(preview(&root, &attachment.id)
+            .unwrap_err()
+            .contains("changed"));
         let text = root.join("note.txt");
         fs::write(&text, b"hello").unwrap();
-        let attachment = import(&root, &[text.to_string_lossy().into_owned()]).unwrap().remove(0);
-        assert!(preview(&root, &attachment.id).unwrap_err().contains("not a supported image"));
+        let attachment = import(&root, &[text.to_string_lossy().into_owned()])
+            .unwrap()
+            .remove(0);
+        assert!(preview(&root, &attachment.id)
+            .unwrap_err()
+            .contains("not a supported image"));
         assert!(preview(&root, "../outside").is_err());
         fs::remove_dir_all(root).unwrap();
     }

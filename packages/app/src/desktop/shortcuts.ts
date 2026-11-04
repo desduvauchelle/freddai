@@ -12,8 +12,9 @@ export const shortcuts = [
   { id: "settings", keys: "⌘ ,", name: "Settings", key: "," },
   { id: "accounts", keys: "⌘ ⇧ A", name: "Accounts", key: "a", shift: true },
   { id: "projects", keys: "⌘ ⇧ P", name: "Add project", key: "p", shift: true },
-  { id: "list", keys: "⌘ 1", name: "Focus thread list", key: "1" },
-  { id: "composer", keys: "⌘ 2", name: "Focus message composer", key: "2" },
+  { id: "home", keys: "⌘ 1", name: "Home", key: "1" },
+  { id: "list", keys: "⌘ 2", name: "Focus thread list", key: "2" },
+  { id: "composer", keys: "⌘ 3", name: "Focus message composer", key: "3" },
   {
     id: "attention",
     keys: "⌘ ⇧ I",
@@ -36,6 +37,7 @@ export const shortcuts = [
     shift: true,
   },
   { id: "split", keys: "⌘ \\", name: "Toggle split view", key: "\\" },
+  { id: "terminal", keys: "⌃ `", name: "Toggle terminal panel", key: "`" },
   { id: "help", keys: "⌘ /", name: "Keyboard shortcuts", key: "/" },
 ] as const;
 export const navigation = [

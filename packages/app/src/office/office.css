@@ -1,0 +1,67 @@
+/* Office: self-contained palette so the module works anywhere (including inside the fixed overlay). The scene is one SVG that scales to its box. */
+.office-mini, .office-overlay {
+  --o-bg: #1b1a24; --o-panel: #26232f; --o-ink: #ece8f4; --o-muted: #a39db3; --o-line: #4a4560; --o-focus: #9ab6ff;
+  color: var(--o-ink); font: 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.office-mini { position: relative; flex-shrink: 0; display: flex; flex-direction: column; width: 100%; height: 240px; border: 1px solid var(--border, #303137); border-radius: 6px; background: var(--o-bg); overflow: hidden; }
+.office-overlay { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; background: var(--o-bg); }
+
+.office-stage { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.office-mini .office-stage { cursor: pointer; padding: 6px 8px 2px; box-sizing: border-box; }
+.office-overlay .office-stage { padding: 14px 18px 8px; box-sizing: border-box; }
+.office-svg { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; image-rendering: pixelated; }
+.office-svg text { shape-rendering: auto; user-select: none; }
+
+.office-agent { outline: none; }
+.office-agent .office-hit { cursor: pointer; }
+.office-agent .office-focus { stroke: transparent; }
+.office-agent:hover .office-focus { stroke: rgba(255, 255, 255, .45); }
+.office-agent:focus-visible .office-focus { stroke: var(--o-focus); }
+.office-chip-tag { cursor: pointer; }
+
+.office-bar { display: flex; align-items: center; gap: 12px; flex-shrink: 0; min-height: 30px; padding: 0 8px 0 12px; border-top: 2px solid var(--o-line); background: var(--o-panel); overflow: hidden; }
+.office-bar strong { font: 700 10px/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: .8px; text-transform: uppercase; }
+.office-summary { color: var(--o-muted); font-size: 11px; white-space: nowrap; }
+.office-more { color: var(--o-muted); font-size: 11px; white-space: nowrap; }
+.office-legend { display: flex; align-items: center; gap: 12px; margin: 0 0 0 auto; padding: 0; list-style: none; min-width: 0; overflow: hidden; }
+.office-legend li { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px; }
+.office-legend i { display: grid; place-items: center; min-width: 15px; height: 15px; padding: 0 2px; box-sizing: border-box; font: 800 10px/1 ui-monospace, SFMono-Regular, monospace; font-style: normal; color: #1b1a24; box-shadow: 0 0 0 1px #0f0e14; }
+.office-legend b { font-weight: 650; }
+.office-legend li[data-zero] { opacity: .45; }
+.office-mini .office-legend li[data-zero] { display: none; }
+.office-legend .office-chip-clock { background: #cfc8e0; }
+.office-btn { margin-left: 4px; display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 2px solid var(--o-line); background: var(--o-bg); color: var(--o-ink); border-radius: 0; cursor: pointer; }
+.office-btn:hover { background: #33303f; }
+.office-btn:focus-visible { outline: 2px solid var(--o-focus); outline-offset: 1px; }
+.office-overlay .office-bar { min-height: 36px; padding: 0 12px 0 16px; }
+.office-overlay .office-btn { width: 28px; height: 28px; }
+
+.office-tip { position: absolute; z-index: 5; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 7px; width: max-content; max-width: min(360px, 90%); padding: 5px 9px 5px 5px; background: #0f0e14; color: var(--o-ink); border: 2px solid var(--o-line); font-size: 12px; pointer-events: none; }
+.office-tip[data-below] { transform: translate(-50%, 0); }
+.office-tip i { display: grid; place-items: center; flex-shrink: 0; width: 18px; height: 18px; font: 800 12px/1 ui-monospace, monospace; font-style: normal; color: #1b1a24; }
+.office-tip b { font-weight: 650; }
+
+/* Animation: all off under reduced motion; static frames stay readable through glyphs, bubbles and labels. */
+.office-svg g, .office-svg rect { transform-box: fill-box; }
+@keyframes office-scroll { from { transform: translateY(0); } to { transform: translateY(-24px); } }
+@keyframes office-type-l { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(1px); } }
+@keyframes office-type-r { 0%, 100% { transform: translateY(1px); } 50% { transform: translateY(0); } }
+@keyframes office-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes office-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@keyframes office-rise { 0% { transform: translateY(0); opacity: .9; } 100% { transform: translateY(-12px); opacity: 0; } }
+@keyframes office-zz { 0%, 100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-2px); opacity: .55; } }
+@media (prefers-reduced-motion: no-preference) {
+  .office-agent[data-state="working"] .office-scroll { animation: office-scroll 2s steps(8) infinite; }
+  .office-agent[data-state="working"] .office-paw-l { animation: office-type-l .5s steps(1) infinite; }
+  .office-agent[data-state="working"] .office-paw-r { animation: office-type-r .5s steps(1) infinite; }
+  .office-agent[data-state="needs-you"] .office-cursor { animation: office-blink 1s steps(1) infinite; }
+  .office-attn { transform-origin: 50% 100%; animation: office-pulse 1s steps(2) infinite; }
+  .office-agent[data-state="needs-you"] .office-attn { transform-origin: 50% 100%; }
+  .office-puff { animation: office-rise 1.6s steps(6) infinite; }
+  .office-puff-1 { animation-delay: .5s; } .office-puff-2 { animation-delay: 1s; }
+  .office-z { animation: office-zz 1.6s steps(2) infinite; }
+}
+
+/* Narrow cards: drop the redundant summary, then the legend labels, so nothing is clipped. */
+@media all { .office-mini[data-narrow] .office-summary { display: none; } .office-mini[data-narrow] .office-legend { gap: 9px; } }
+.office-mini[data-narrow="2"] .office-legend li span { display: none; }

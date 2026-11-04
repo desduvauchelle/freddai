@@ -12,6 +12,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "Freddai",
         "visible": false,
         "width": 1100,
@@ -19,7 +21,7 @@
         "minWidth": 640,
         "minHeight": 480,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 20, "y": 19 },
+        "trafficLightPosition": { "x": 20, "y": 28 },
         "hiddenTitle": true
       }
     ],
@@ -38,6 +40,15 @@
     ],
     "targets": [
       "app"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/desduvauchelle/freddai/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY4QjE3RDc3RUJFNDVCRTAKUldUZ1crVHJkMzJ4K0FSRDRiaHFFVEZlakpoUTJkWG1yNlpDV3F6VzBYUHB0UnJNWGVqNE9Od1cK"
+    }
   }
 }

@@ -197,6 +197,37 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
     });
     Err("Background host did not start. An older active host may need stopping before this upgrade.".into())
 }
+/// Apply a pending host update now, interrupting running threads. The host stops and persists its
+/// sessions (resumable by a new message), exits, and the installed binary is started in its place.
+fn force_upgrade_host(host: &Host) -> Result<usize, String> {
+    let result = (|| {
+        let reply = freddai_core::host::call(&host.root, "upgrade_force", json!({})).map_err(|e| {
+            if e.contains("Unknown host command") {
+                "The running background host predates forced restart. Quit Freddai (⌘Q) and reopen it from Applications.".to_string()
+            } else { e }
+        })?;
+        let interrupted = reply["interrupted"].as_u64().unwrap_or(0) as usize;
+        // Wait for the old host to release its socket before starting the installed one.
+        for _ in 0..50 {
+            if freddai_core::host::call(&host.root, "hello", json!({})).is_err() { break; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        ensure_host_inner(host, None)?;
+        Ok(interrupted)
+    })();
+    match &result {
+        Ok(n) => eprintln!("{}", json!({"event": "host_upgrade.forced", "interrupted": n})),
+        Err(e) => eprintln!("{}", json!({"event": "host_upgrade.force_failed", "reason": e})),
+    }
+    result
+}
+#[tauri::command]
+async fn restart_host_now(h: State<'_, Host>) -> Result<usize, String> {
+    let host = h.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || force_upgrade_host(&host))
+        .await
+        .map_err(|e| e.to_string())?
+}
 /// One socket round trip per call. A hello is only needed to (re)start an unreachable host, so it
 /// runs on the error path, never per poll.
 fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, String> {
@@ -290,10 +321,82 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn agent_config(h: State<'_, Host>, request: Value) -> Result<Value, String> {
+    let request: freddai_core::agent_config::Request = serde_json::from_value(request).map_err(|e| format!("agent config request: {e}"))?;
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || freddai_core::agent_config::handle(&root, request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn git_history(path: String) -> Result<crate::git_history::GitHistory, String> {
     tauri::async_runtime::spawn_blocking(move || crate::git_history::read(&path))
         .await
         .map_err(|e| e.to_string())?
+}
+async fn git_blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_status(path: String) -> Result<crate::git_actions::GitStatusSummary, String> {
+    git_blocking(move || crate::git_actions::status(&path)).await
+}
+#[tauri::command]
+async fn git_diff_file(path: String, file: String, group: String) -> Result<String, String> {
+    git_blocking(move || crate::git_actions::diff_file(&path, &file, &group)).await
+}
+#[tauri::command]
+async fn git_stage(path: String, files: Option<Vec<String>>) -> Result<(), String> {
+    git_blocking(move || match files { Some(f) => crate::git_actions::stage(&path, &f), None => crate::git_actions::stage_all(&path) }).await
+}
+#[tauri::command]
+async fn git_unstage(path: String, files: Option<Vec<String>>) -> Result<(), String> {
+    git_blocking(move || match files { Some(f) => crate::git_actions::unstage(&path, &f), None => crate::git_actions::unstage_all(&path) }).await
+}
+#[tauri::command]
+async fn git_discard(path: String, file: String, group: String, code: String) -> Result<(), String> {
+    git_blocking(move || crate::git_actions::discard(&path, &file, &group, &code)).await
+}
+#[tauri::command]
+async fn git_commit(path: String, message: String, all: Option<bool>) -> Result<String, String> {
+    git_blocking(move || crate::git_actions::commit(&path, &message, all.unwrap_or(false))).await
+}
+#[tauri::command]
+async fn git_push(path: String) -> Result<String, String> {
+    git_blocking(move || crate::git_actions::push(&path)).await
+}
+#[tauri::command]
+async fn git_pull(path: String) -> Result<String, String> {
+    git_blocking(move || crate::git_actions::pull(&path)).await
+}
+#[tauri::command]
+async fn git_branches(path: String) -> Result<crate::git_actions::BranchList, String> {
+    git_blocking(move || crate::git_actions::branches(&path)).await
+}
+#[tauri::command]
+async fn git_switch_branch(path: String, name: String, create: Option<bool>) -> Result<(), String> {
+    git_blocking(move || crate::git_actions::switch_branch(&path, &name, create.unwrap_or(false))).await
+}
+#[tauri::command]
+async fn git_pr_status(path: String) -> Result<crate::git_actions::PrStatus, String> {
+    git_blocking(move || Ok(crate::git_actions::pr_status(&path))).await
+}
+#[tauri::command]
+async fn git_create_pr(path: String, title: String, body: String) -> Result<String, String> {
+    git_blocking(move || crate::git_actions::create_pr(&path, &title, &body)).await
+}
+#[tauri::command]
+async fn git_ship_preview(path: String) -> Result<crate::git_actions::ShipPreview, String> {
+    git_blocking(move || crate::git_actions::ship_preview(&path)).await
+}
+/// Starts an AI commit-message suggestion (project's default agent, side request); poll the state.
+#[tauri::command]
+async fn git_commit_message_start(h: State<'_, Host>, project: String, stat: String, diff: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commit_message_start", json!({"project":project,"stat":stat,"diff":diff})).await
+}
+#[tauri::command]
+async fn git_commit_message_state(h: State<'_, Host>, project: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commit_message_state", json!({"project":project})).await
 }
 #[tauri::command]
 async fn snapshot(h: State<'_, Host>) -> Result<Value, String> {
@@ -350,6 +453,14 @@ async fn add_account(
 #[tauri::command]
 async fn import_project(h: State<'_, Host>, path: String, color: String) -> Result<Value, String> {
     rpc(h.inner().clone(), "import_project", json!({"path":path,"color":color})).await
+}
+#[tauri::command]
+async fn import_candidates(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "import_candidates", json!({})).await
+}
+#[tauri::command]
+async fn import_sessions(h: State<'_, Host>, sessions: Value) -> Result<Value, String> {
+    rpc(h.inner().clone(), "import_sessions", json!({"sessions":sessions})).await
 }
 #[tauri::command]
 async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, String> {
@@ -423,6 +534,14 @@ async fn account_usage(h: State<'_, Host>, account: String) -> Result<Value, Str
     .await
 }
 #[tauri::command]
+async fn day_summary(h: State<'_, Host>, date: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "day_summary", json!({"date":date})).await
+}
+#[tauri::command]
+async fn summarize_day(h: State<'_, Host>, date: String, force: Option<bool>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "summarize_day", json!({"date":date,"force":force.unwrap_or(false)})).await
+}
+#[tauri::command]
 async fn launch(
     h: State<'_, Host>,
     project: String,
@@ -432,6 +551,14 @@ async fn launch(
     options: Option<Value>,
 ) -> Result<Value, String> {
     rpc(h.inner().clone(),"launch",json!({"project":project,"account":account,"prompt":prompt,"existing":existing,"options":options})).await
+}
+#[tauri::command]
+async fn list_slash_commands(h: State<'_, Host>, session: Option<String>, project: Option<String>, account: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "list_slash_commands", json!({"session":session,"project":project,"account":account})).await
+}
+#[tauri::command]
+async fn list_project_files(h: State<'_, Host>, session: Option<String>, project: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "list_project_files", json!({"session":session,"project":project})).await
 }
 #[tauri::command]
 async fn queue_message(h: State<'_, Host>, session: String, prompt: String, options: Value) -> Result<Value, String> {
@@ -554,6 +681,66 @@ async fn schedule_action(
 async fn stop_all(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "stop_all", json!({})).await
 }
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_status(h: State<'_, Host>) -> Result<crate::voice::VoiceStatus, String> {
+    Ok(crate::voice::status(&h.root))
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_update_settings(h: State<'_, Host>, settings: crate::voice::settings::SettingsPatch) -> Result<crate::voice::VoiceStatus, String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::update_settings(&root, settings))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_download_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::download_model(&root, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_cancel_download(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::cancel_download(&root, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_delete_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::delete_model(&root, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_start_recording(h: State<'_, Host>) -> Result<(), String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::start_recording(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_stop_recording(h: State<'_, Host>) -> Result<crate::voice::Transcript, String> {
+    let root = h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::stop_recording(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_cancel_recording() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(crate::voice::cancel_recording)
+        .await
+        .map_err(|e| e.to_string())
+}
 #[tauri::command]
 fn startup_status() -> bool {
     std::env::var_os("HOME")
@@ -596,11 +783,30 @@ fn platform() -> &'static str { "desktop" }
 #[tauri::command]
 fn companion_devices(h: State<'_,Host>) -> Result<Value,String> {crate::companion_pairing::status(&h.root)}
 #[tauri::command]
-fn companion_device_action(h: State<'_,Host>, action:String, id:String) -> Result<Value,String> {crate::companion_pairing::control(&h.root,&action,&id)}
+fn companion_device_action(h: State<'_,Host>, action:String, id:String) -> Result<Value,String> {
+    if action=="begin" {
+        crate::companion_pairing::provision(&h.root)?;
+        crate::companion_server::ensure(h.root.clone(),h.binary.clone())?;
+    }
+    crate::companion_pairing::control(&h.root,&action,&id)
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn awake_status(h: State<'_,Host>) -> Result<Value,String> {crate::awake::status(&h.root)}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn awake_set_settings(h: State<'_,Host>, while_working:bool, while_paired:bool) -> Result<Value,String> {
+    crate::awake::save_settings(&h.root,&crate::awake::AwakeSettings{while_working,while_paired})?;
+    crate::awake::status(&h.root)
+}
+
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             fs::create_dir_all(&root)?;
@@ -612,17 +818,46 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             crate::companion_server::ensure(host.root.clone(), host.binary.clone()).map_err(std::io::Error::other)?;
-            if let Some(window) = app.get_webview_window("main") {
-                crate::window_state::install(window, host.root.clone());
-            }
+            let window_config = app.config().app.windows.first().cloned().ok_or_else(|| std::io::Error::other("tauri.conf.json defines no window"))?;
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?;
+            #[cfg(target_os = "macos")]
+            let builder = builder.with_webview_configuration(crate::writing_tools::configuration());
+            let window = builder.build()?;
+            crate::window_state::install(window, host.root.clone());
             app.manage(host);
+            app.manage(crate::terminal::Terminals::default());
+            crate::updater::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             platform,
             companion_devices,
             companion_device_action,
+            #[cfg(target_os = "macos")]
+            awake_status,
+            #[cfg(target_os = "macos")]
+            awake_set_settings,
             git_history,
+            agent_config,
+            git_status,
+            git_diff_file,
+            git_stage,
+            git_unstage,
+            git_discard,
+            git_commit,
+            git_push,
+            git_pull,
+            git_branches,
+            git_switch_branch,
+            git_pr_status,
+            git_create_pr,
+            git_ship_preview,
+            git_commit_message_start,
+            git_commit_message_state,
+            crate::terminal::terminal_open,
+            crate::terminal::terminal_write,
+            crate::terminal::terminal_resize,
+            crate::terminal::terminal_close,
             snapshot,
             snapshot_since,
             detect_agents,
@@ -633,6 +868,8 @@ pub fn run() {
             rename_account,
             save_project,
             import_project,
+            import_candidates,
+            import_sessions,
             save_preferences,
             login,
             login_state,
@@ -641,8 +878,12 @@ pub fn run() {
             account_usage,
             consume_reset,
             account_models,
+            day_summary,
+            summarize_day,
             launch,
             queue_message,
+            list_slash_commands,
+            list_project_files,
             steer_message,
             queue_action,
             stop,
@@ -658,11 +899,44 @@ pub fn run() {
             save_schedule,
             schedule_action,
             stop_all,
+            restart_host_now,
             startup_status,
-            set_start_at_login
+            set_start_at_login,
+            crate::updater::updater_state,
+            crate::updater::check_for_updates,
+            crate::updater::install_update,
+            crate::updater::restart_app,
+            crate::updater::open_release_page,
+            #[cfg(target_os = "macos")]
+            voice_status,
+            #[cfg(target_os = "macos")]
+            voice_update_settings,
+            #[cfg(target_os = "macos")]
+            voice_download_model,
+            #[cfg(target_os = "macos")]
+            voice_cancel_download,
+            #[cfg(target_os = "macos")]
+            voice_delete_model,
+            #[cfg(target_os = "macos")]
+            voice_start_recording,
+            #[cfg(target_os = "macos")]
+            voice_stop_recording,
+            #[cfg(target_os = "macos")]
+            voice_cancel_recording
         ])
-        .run(tauri::generate_context!())
-        .expect("error running Freddai");
+        .build(tauri::generate_context!())
+        .expect("error building Freddai")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(t) = app.try_state::<crate::terminal::Terminals>() { t.close_all(); }
+            }
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Exit) {
+                crate::voice::transcribe::unload_all();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = event;
+        });
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -907,5 +1181,25 @@ mod upgrade_retry_tests {
         let reply = json!({"sessions":[{"status":"running"},{"status":"done"},{"status":"waiting"},{"status":"failed"}]});
         assert_eq!(running_sessions(&reply), 2);
         assert_eq!(running_sessions(&json!({"error":"x"})), 0);
+    }
+
+    #[test]
+    fn forced_restart_on_legacy_host_fails_loudly() {
+        use std::os::unix::net::UnixListener;
+        use std::io::{BufRead, BufReader, Write};
+        let root = std::env::temp_dir().join(format!("freddai-force-legacy-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let listener = UnixListener::bind(root.join("host.sock")).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"], "upgrade_force");
+            writeln!(stream, "{}", json!({"error":"Unknown host command: upgrade_force"})).unwrap();
+        });
+        let error = force_upgrade_host(&Host::new(root.clone(), PathBuf::from("new-host"))).unwrap_err();
+        server.join().unwrap();
+        let _ = fs::remove_dir_all(&root);
+        assert!(error.contains("Quit Freddai"), "{error}");
     }
 }

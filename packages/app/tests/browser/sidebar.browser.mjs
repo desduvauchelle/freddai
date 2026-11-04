@@ -10,13 +10,13 @@ try {
  const page = await browser.newPage({viewport:{width:1120,height:900}});
  const errors=[]; page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(({grouped,historyOnly}) => {
-   const sessions=Array.from({length:8},(_,i)=>({id:`t${i}`,project:'p',account:'',title:`Thread ${i}`,status:i<6 && !historyOnly?'running':'done',updated:100-i,provider_id:null,messages:[],pending:null,error:null}));
+   const sessions=Array.from({length:8},(_,i)=>({id:`t${i}`,project:'p',account:'',title:`Thread ${i}`,status:i<6 && !historyOnly?'running':'done',updated:100-i,read_at:100-i,provider_id:null,messages:[],pending:null,error:null}));
    const db={accounts:[],projects:[{id:'p',name:'Project',path:'/offline',color:'#aaa',policy:'inherit',account:null,last:null}],sessions,preferences:{prefer_last:false,fallback:null,last:null}};
    localStorage.setItem('freddai.grouped', JSON.stringify(grouped));
    localStorage.setItem('freddai.read',JSON.stringify(Object.fromEntries(sessions.filter(t=>t.status==='done').map(t=>[t.id,t.updated]))));
    window.isTauri=true;
    window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(cmd)=>{
-     if(cmd==='platform')return 'macos'; if(cmd==='snapshot')return db;
+     if(cmd==='platform')return 'macos'; if(cmd==='snapshot_since')return {...db,full:true,revision:1,hostId:'offline-sidebar'};
      if(cmd.startsWith('plugin:event|'))return 1;
      if(cmd==='provider_installations')return [];
      throw new Error(`Offline test blocks ${cmd}`);
@@ -29,6 +29,17 @@ try {
  await page.keyboard.press('Escape');
  const buttons=page.getByRole('button',{name:/^Show older threads/});
  assert.equal(await buttons.count(),1,'one history action per project');
+ async function checkFullWidthHover(button) {
+   const bounds = await button.evaluate(el => {
+     const row = el.getBoundingClientRect();
+     const parent = el.parentElement.getBoundingClientRect();
+     return {left:row.left,right:row.right,parentLeft:parent.left,parentRight:parent.right};
+   });
+   assert.ok(Math.abs(bounds.left-bounds.parentLeft)<1 && Math.abs(bounds.right-bounds.parentRight)<1,'history action fills the navigation row');
+   await button.hover({position:{x:bounds.right-bounds.left-16,y:10}});
+   assert.equal(await button.evaluate(el=>el.matches(':hover')),true,'far edge of row activates hover');
+ }
+ await checkFullWidthHover(buttons);
  assert.equal(await page.locator('.task-row').count(),historyOnly?0:6);
  const projectFilter = await page.getByRole('combobox',{name:'Project filter',exact:true}).innerText();
  const statusFilter = await page.getByRole('combobox',{name:'Status filter',exact:true}).innerText();
@@ -40,6 +51,7 @@ try {
  assert.equal(await page.getByText('Thread 7',{exact:true}).count(),1);
  assert.equal(await page.getByRole('button',{name:/finished/i}).count(),0,'no separate finished action');
  const historyButton=page.getByRole('button',{name:/^Hide older threads/});
+ await checkFullWidthHover(historyButton);
  assert.equal(await historyButton.getAttribute('aria-expanded'),'true');
  const style=await historyButton.evaluate(el=>({size:getComputedStyle(el).fontSize,weight:getComputedStyle(el).fontWeight}));
  assert.deepEqual(style,{size:'11px',weight:'400'});

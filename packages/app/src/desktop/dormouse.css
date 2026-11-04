@@ -1,0 +1,112 @@
+/* Dormouse mascot styles. Imported by Dormouse.tsx so the desktop and iPhone bundles both get them. */
+.dormouse-companion {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  width: 88px;
+  -webkit-app-region: no-drag;
+}
+.dormouse-circle {
+  position: relative;
+  display: block;
+  padding: 0;
+  width: 68px;
+  height: 68px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 2px solid var(--adaptive-border, #ded8c5);
+  border-radius: 50%;
+  background: #eae5d7;
+  box-shadow: 0 2px 10px #0003;
+}
+button.dormouse-circle { cursor: pointer; }
+.dormouse-art, .dormouse-static {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.dormouse-art { width: 112%; height: 115%; top: 56%; }
+.dormouse-static { width: 106%; height: 106%; top: 53%; object-fit: contain; }
+.dormouse-art > div, .dormouse-art canvas { width: 100%; height: 100%; }
+/* Animated art may pop its overlay props (thought bubble, ?, sparkles, drop) past the disc; the static fallback stays clipped. */
+.dormouse-circle:has(.dormouse-art) { overflow: visible; }
+.dormouse-caption { color: var(--adaptive-text, #c7c0ad); font-size: 10px; line-height: 17px; white-space: nowrap; }
+.dormouse-motion {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  top: 46px;
+  right: -4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--adaptive-border, #706e61);
+  border-radius: 50%;
+  background: var(--adaptive-surface, #34372d);
+  color: var(--adaptive-text, #f1eee6);
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .dormouse-motion { width: 44px; height: 44px; right: -20px; top: 34px; }
+}
+
+/* Compact brand mark (mobile header): a 28px badge. */
+.dormouse-companion.dormouse-compact {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 28px;
+  height: 28px;
+  flex-direction: row;
+}
+.dormouse-compact .dormouse-circle { width: 28px; height: 28px; border-width: 1px; box-shadow: none; }
+.dormouse-compact .dormouse-motion {
+  top: -4px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  opacity: 0;
+  z-index: 1;
+}
+.dormouse-compact:hover .dormouse-motion,
+.dormouse-compact:focus-within .dormouse-motion { opacity: 1; }
+@media (pointer: coarse) {
+  .dormouse-compact .dormouse-motion { width: 24px; height: 24px; right: -12px; top: -8px; }
+}
+
+/* Sized dormouse (titlebar, perch, hero, approval): diameter comes from --dm-size. */
+.dormouse-companion.dormouse-sized {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: var(--dm-size);
+  height: var(--dm-size);
+  flex-direction: row;
+  flex-shrink: 0;
+}
+.dormouse-sized .dormouse-circle { width: var(--dm-size); height: var(--dm-size); }
+.dormouse-sized .dormouse-motion {
+  top: 0;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+  z-index: 2;
+}
+.dormouse-sized:hover .dormouse-motion,
+.dormouse-sized:focus-within .dormouse-motion { opacity: 1; }
+.dormouse-sized.dormouse-small .dormouse-circle { border-width: 1px; box-shadow: none; }
+.dormouse-sized.dormouse-small .dormouse-motion { top: -4px; right: -8px; width: 16px; height: 16px; }
+@media (pointer: coarse) {
+  .dormouse-sized .dormouse-motion { width: 28px; height: 28px; right: -12px; top: -8px; }
+}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
 import { Field, FieldContent, FieldLabel, FieldDescription } from "@freddai/ui/components/field";
 import { Switch } from "@freddai/ui/components/switch";
+import { AwakeSettings } from "./AwakeSettings";
 export function BackgroundSettings({native}:{native:boolean}) {
   const [enabled,setEnabled]=useState(false),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   useEffect(()=>{if(native)void invoke<boolean>("startup_status").then(setEnabled).catch(e=>setError(String(e)));},[native]);
@@ -13,5 +14,6 @@ export function BackgroundSettings({native}:{native:boolean}) {
     </Field>
     <Button variant="outline" disabled={!native||busy} onClick={async()=>{setBusy(true);try{await invoke("stop_all");}catch(e){setError(String(e));}finally{setBusy(false);}}}>Stop all active agents</Button>
     {error&&<p role="alert">{error}</p>}
+    <AwakeSettings native={native}/>
   </section>;
 }

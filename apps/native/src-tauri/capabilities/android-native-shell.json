@@ -1,0 +1,13 @@
+{
+  "identifier": "android-native-shell",
+  "description": "Native Android navigation, thread drawer, composer and pickers",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "android"
+  ],
+  "permissions": [
+    "native-shell:default"
+  ]
+}

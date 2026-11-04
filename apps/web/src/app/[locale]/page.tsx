@@ -54,16 +54,18 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
           <p className="eyebrow">{d.downloadHeading}</p>
           <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">{d.downloadTitle}</h2>
           <p className="mt-5 max-w-2xl leading-relaxed opacity-80">{d.downloadBody}</p>
-          <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             {[
               {name: "Mac", url: downloads.mac, label: d.downloadMac, detail: d.macDetail, pending: d.unavailable},
               {name: "Linux", url: downloads.linux || downloads.linuxDeb, label: d.downloadLinux, detail: d.linuxDetail, pending: d.unavailable},
               {name: "Windows", url: downloads.windows, label: d.downloadWindows, detail: d.windowsDetail, pending: d.windowsPending},
+              {name: "Android", url: downloads.android, label: d.downloadAndroid, detail: d.androidDetail, pending: d.unavailable},
               {name: "iPhone", url: downloads.ios, label: d.downloadIos, detail: d.iosDetail, pending: d.iosPending},
             ].map(platform => <article key={platform.name} className="flex flex-col items-start border-t border-base-content/20 pt-5">
               <h3 className="text-xl font-semibold">{platform.name}</h3>
               <p className="mt-3 mb-6 text-sm leading-relaxed opacity-75">{platform.detail}</p>
               {platform.url ? <a className="btn btn-primary mt-auto" href={platform.url}>{platform.label}</a> : <div className="mt-auto"><button className="btn btn-outline" disabled>{platform.label}</button><p className="mt-3 min-h-10 text-xs leading-relaxed opacity-70">{platform.pending}</p></div>}
+              {platform.name === "Android" && platform.url && <a className="link mt-3 text-sm" href="https://github.com/desduvauchelle/freddai/blob/main/docs/android.md">{d.androidSetup}</a>}
               {platform.name === "Linux" && downloads.linux && downloads.linuxDeb && <a className="link mt-3 text-sm" href={downloads.linuxDeb}>{d.downloadDeb}</a>}
             </article>)}
           </div>

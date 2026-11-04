@@ -45,20 +45,22 @@ test('discovery handles unpublished releases, failures, and explicit overrides',
 test('platform downloads only activate for uploaded stable release assets', async () => {
   const { latestDownloads, testFlightUrl } = await import('../src/lib/download.ts');
   const originalFetch = globalThis.fetch;
-  const keys = ['RELEASES_REPOSITORY', 'MACOS_DOWNLOAD_URL', 'TESTFLIGHT_PUBLIC_URL'];
+  const keys = ['RELEASES_REPOSITORY', 'MACOS_DOWNLOAD_URL', 'TESTFLIGHT_PUBLIC_URL', 'ANDROID_DOWNLOAD_URL'];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
     process.env.RELEASES_REPOSITORY = 'example/releases';
     delete process.env.MACOS_DOWNLOAD_URL;
+    process.env.ANDROID_DOWNLOAD_URL = 'https://github.com/example/releases/releases/download/android-beta-0.1.0/Freddai-android-arm64.apk';
     process.env.TESTFLIGHT_PUBLIC_URL = 'https://testflight.apple.com/join/Ab123';
     const names = ['Freddai-macos-universal.dmg', 'Freddai-linux-x64.AppImage', 'Freddai-linux-x64.deb', 'Freddai-windows-x64-setup.exe'];
     const assets = names.map(name => ({name, state: 'uploaded', browser_download_url: `https://github.com/example/releases/releases/download/v1/${name}`}));
     globalThis.fetch = async () => ({ok: true, json: async () => ({draft: false, prerelease: false, assets})});
     const downloads = await latestDownloads();
     assert.deepEqual([downloads.mac, downloads.linux, downloads.linuxDeb, downloads.windows], assets.map(asset => asset.browser_download_url));
+    assert.equal(downloads.android, process.env.ANDROID_DOWNLOAD_URL);
     assert.equal(downloads.ios, process.env.TESTFLIGHT_PUBLIC_URL);
     globalThis.fetch = async () => ({ok: true, json: async () => ({draft: true, prerelease: false, assets})});
-    assert.deepEqual(await latestDownloads(), {mac: null, linux: null, linuxDeb: null, windows: null, ios: process.env.TESTFLIGHT_PUBLIC_URL});
+    assert.deepEqual(await latestDownloads(), {mac: null, linux: null, linuxDeb: null, windows: null, ios: process.env.TESTFLIGHT_PUBLIC_URL, android: process.env.ANDROID_DOWNLOAD_URL});
     for (const value of ['https://evil.example/join/Ab123', 'https://testflight.apple.com.evil.example/join/Ab123', 'http://testflight.apple.com/join/Ab123', 'https://testflight.apple.com/', 'https://testflight.apple.com/join/Ab123?redirect=other']) assert.equal(testFlightUrl(value), null);
   } finally {
     globalThis.fetch = originalFetch;

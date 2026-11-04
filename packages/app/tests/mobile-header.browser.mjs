@@ -7,8 +7,17 @@ try {
  const fixture=fileURLToPath(new URL('./fixtures/project-groups.html',import.meta.url));
  await page.goto(`${process.env.FREDDAI_PREVIEW_URL || 'http://127.0.0.1:1420'}/@fs${fixture}`);
  await page.getByRole('button',{name:/A task 00/}).click();
- // The centered mascot avatar was replaced by a left-aligned title block with a small connection icon.
+ // Navigation stays compact; live activity lives above the composer, outside the scroller.
  const header=page.locator('.companion-thread-header');await header.waitFor();
+ const activity=page.locator('.companion-activity');
+ await activity.getByRole('status').filter({hasText:'Working…'}).waitFor();
+ await activity.locator('[data-mascot-mode="animated"] canvas').waitFor();
+ const circle=await activity.locator('.dormouse-circle').boundingBox();
+ assert.ok(Math.abs(circle.width-circle.height)<0.5, `avatar must be circular, got ${circle.width}×${circle.height}`);
+ const activityBox=await activity.boundingBox();
+ assert.ok(activityBox.y>=0&&activityBox.y+activityBox.height<=844,'activity is visible at the end of the thread');
+ assert.equal(await page.locator('.companion-body .companion-activity').count(),1,'avatar scrolls with transcript');
+ assert.equal(await page.locator('.companion-compose-area .companion-activity').count(),0,'avatar does not consume composer space');
  assert.equal(await page.locator('.companion-avatar').count(),0,'the header avatar is gone');
  const hbox=await header.boundingBox();assert.ok(hbox.x>=0&&hbox.x+hbox.width<=390.5,'header fits the phone width');
  const title=await page.getByRole('heading',{name:'A task 00',exact:true}).boundingBox();assert.ok(title.x>=0&&title.x+title.width<=390.5,'title stays on screen');
@@ -18,6 +27,10 @@ try {
  await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'Stop current turn and pause queue',exact:true}).click();
  await page.getByRole('button',{name:'Stop current turn and pause queue',exact:true}).waitFor({state:'hidden'});
+ await activity.getByRole('status').filter({hasText:'Interrupted'}).waitFor();
+ assert.equal(await activity.locator('[data-mascot-state]').getAttribute('data-mascot-state'),'7');
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await activity.locator('[data-mascot-mode="static"]').waitFor();
  await page.getByRole('button',{name:'Thread actions',exact:true}).click();
  await page.getByRole('menuitem',{name:'Delete…',exact:true}).click();
  await page.getByRole('button',{name:'Cancel',exact:true}).click();

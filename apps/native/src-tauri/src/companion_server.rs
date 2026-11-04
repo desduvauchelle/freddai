@@ -1,7 +1,7 @@
 //! Device-authorized companion. Never forwards arbitrary desktop RPC methods.
 use freddai_core::{host, runtime::{Database, LaunchOptions, resolve}};
 use serde_json::{json, Value};
-use std::{fs, io::Read, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::Duration};
+use std::{fs, io::Read, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::{Duration, Instant}};
 #[cfg(test)]
 use subtle::ConstantTimeEq;
 use fs2::FileExt;
@@ -21,7 +21,7 @@ pub fn project_snapshot(db: &Database) -> Value {
     let threads: Vec<_> = db.sessions.iter().filter(|s| !s.archived && s.deleted_at.is_none() && s.status != "archived").map(|s| {
         let queue = db.queues.iter().find(|q| q.session == s.id);
         json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,
-            "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":s.messages,"error":s.error,
+            "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":s.messages,"tasks":s.tasks,"error":s.error,
             "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
             "usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
             "options":{"model":s.options.model,"effort":s.options.effort,"permission_mode":s.options.permission_mode},
@@ -142,8 +142,51 @@ fn upload(root: &Path, p: &Value) -> Result<Value,String> {
     }
     Err("Unknown upload operation".into())
 }
+// Phone push-to-talk dictation. The audio rides the normal upload chunks but is never imported as an attachment:
+// `transcribe` consumes the unfinished upload, runs the local model and always deletes the audio.
+const VOICE_MAX_BYTES: u64 = 10 * 1024 * 1024;
+fn voice_upload_dir(root: &Path, input: &Value) -> Result<PathBuf,String> {
+    let id=text(input,"id")?;
+    if id.len()!=64 || hex::decode(id).is_err() {return Err("Invalid upload".into());}
+    let dir=root.join("companion/uploads").join(id);
+    if !dir.join("bytes").is_file() || dir.join("result").exists() {return Err("Upload expired".into());}
+    Ok(dir)
+}
+/// Verifies the received bytes and moves them to a file whose extension (from the original name) lets the decoder probe the format.
+fn voice_prepare_audio(dir: &Path, input: &Value) -> Result<PathBuf,String> {
+    let len=fs::metadata(dir.join("bytes")).map_err(|_|"Upload expired")?.len();
+    if len==0 {return Err("The recording is empty".into());}
+    if len>VOICE_MAX_BYTES {return Err("The recording is too large (10 MB limit)".into());}
+    if let Some(size)=input["size"].as_u64() { if size!=len {return Err("Recording upload is incomplete".into());} }
+    let name=fs::read_to_string(dir.join("name")).unwrap_or_default();
+    let ext=Path::new(&name).extension().and_then(|e|e.to_str()).filter(|e|!e.is_empty() && e.len()<=8 && e.chars().all(|c|c.is_ascii_alphanumeric())).unwrap_or("m4a").to_ascii_lowercase();
+    let audio=dir.join(format!("audio.{ext}"));
+    fs::rename(dir.join("bytes"),&audio).map_err(|e|e.to_string())?;
+    Ok(audio)
+}
+fn voice_composer(root: &Path, p: &Value) -> Result<Value,String> {
+    if p["operation"]=="voice" {
+        let status=crate::voice::status(root);
+        return Ok(json!({"enabled":status.enabled,"ready":status.ready}));
+    }
+    let input=&p["input"];
+    let dir=voice_upload_dir(root,input)?;
+    let started=std::time::Instant::now();
+    let id=dir.file_name().and_then(|n|n.to_str()).unwrap_or("?").chars().take(8).collect::<String>();
+    let bytes=fs::metadata(dir.join("bytes")).map(|m|m.len()).unwrap_or(0);
+    let result=crate::voice::ready(root).and_then(|_|voice_prepare_audio(&dir,input)).and_then(|audio|crate::voice::transcribe_file(root,&audio));
+    let _=fs::remove_dir_all(&dir);
+    match result {
+        Ok(t)=>{eprintln!("companion.transcribe id={id} bytes={bytes} result=ok model={} audio_ms={} elapsed_ms={} chars={}",t.model,t.duration_ms,started.elapsed().as_millis(),t.text.chars().count());
+            Ok(json!({"text":t.text,"durationMs":t.duration_ms,"model":t.model}))},
+        Err(e)=>{eprintln!("companion.transcribe id={id} bytes={bytes} result=err elapsed_ms={} error={e}",started.elapsed().as_millis());Err(e)}
+    }
+}
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
+    // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
+    if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
     let db = snapshot(root)?;
     if route == "/v1/composer" { return composer(root, &db, &p); }
     if route == "/v1/snapshot" { return Ok(project_snapshot(&db)); }
@@ -212,6 +255,10 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
         Err(e)=>return Err(e.to_string()),
     }
     let lock=Arc::new(lock);
+    // Record build identity so a newer desktop can replace this process after an app update.
+    let identity=std::env::current_exe().map(|e|build_identity(&e)).map_err(|e|e.to_string())?;
+    fs::write(dir.join("server.identity"),json!({"pid":std::process::id(),"identity":identity}).to_string()).map_err(|e|e.to_string())?;
+    eprintln!("companion_server.started pid={} identity={identity:?}",std::process::id());
     let server=Server::https(format!("0.0.0.0:{PORT}"),SslConfig {
         certificate:fs::read(dir.join("server.crt")).map_err(|e|e.to_string())?,
         private_key:fs::read(dir.join("server.key")).map_err(|e|e.to_string())?,
@@ -228,25 +275,31 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
             let auth=req.headers().iter().find(|h|h.field.equiv("Authorization")).map(|h|h.value.as_str()).unwrap_or("");
             let auth=auth.to_string();
             let route=req.url().to_string();
+            let started=Instant::now();
+            let mut reason=String::new();
             let pairing=["/v1/pair/request","/v1/pair/claim"].contains(&route.as_str());
-            let (status,result)=if req.method()!=&Method::Post || !(pairing || ["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read"].contains(&route.as_str())) {(404,Err("Unknown companion operation".into()))}
-            else if !pairing && crate::companion_pairing::device(&root,&auth).ok().flatten().is_none() {(401,Err("Device is not authorized. Pair this iPhone in Mac settings.".into()))}
+            let (mut status,result)=if req.method()!=&Method::Post || !(pairing || ["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake"].contains(&route.as_str())) {reason="unknown route or method".into();(404,Err("Unknown companion operation".into()))}
+            else if !pairing && crate::companion_pairing::device(&root,&auth).ok().flatten().is_none() {reason="auth failure: no paired device matches the bearer token".into();(401,Err("Device is not authorized. Pair this iPhone in Mac settings.".into()))}
             else {
                 let mut body=Vec::new();
                 let result=req.as_reader().take(LIMIT+1).read_to_end(&mut body);
-                if result.is_err() || body.len() as u64>LIMIT {(413,Err("Request is too large".into()))}
+                if result.is_err() || body.len() as u64>LIMIT {reason="request body unreadable or over limit".into();(413,Err("Request is too large".into()))}
                 else {
                     let _lock=gate.lock().unwrap();
-                    let result=serde_json::from_slice(&body).map_err(|_|"Invalid request".to_string()).and_then(|p|match route.as_str() {
+                    let caught=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||serde_json::from_slice(&body).map_err(|_|"Invalid request".to_string()).and_then(|p|match route.as_str() {
                         "/v1/pair/request"=>crate::companion_pairing::request(&root,&p),
                         "/v1/pair/claim"=>crate::companion_pairing::claim(&root,&p),
                         _=> { if crate::companion_pairing::device(&root,&auth)?.is_none() {return Err("Device revoked".into());} dispatch(&root,&route,p) },
-                    });
-                    match result {Ok(v)=>(200,Ok(v)), Err(e)=>(400,Err(e))}
+                    })));
+                    let mut panicked=false;
+                    let result=caught.unwrap_or_else(|_|{panicked=true;reason="panic while handling request".into();Err("Companion server error. Check the Freddai log on your Mac.".into())});
+                    match result {Ok(v)=>(200,Ok(v)), Err(e)=>{if reason.is_empty() {reason=e.clone();}(if panicked {500} else {400},Err(e))}}
                 }
             };
             let payload=match result {Ok(v)=>json!({"result":v,"relay":crate::companion_pairing::edit(&root,|r|Ok(r.relay.clone())).ok().flatten()}),Err(e)=>json!({"error":e})};
-            let response=Response::from_string(payload.to_string()).with_status_code(StatusCode(status))
+            let text=match serde_json::to_string(&payload) {Ok(t)=>t,Err(e)=>{reason=format!("serialization failure: {e}");status=500;json!({"error":"Companion server could not encode the response."}).to_string()}};
+            eprintln!("companion.server.request op={route} status={status} response_bytes={} duration_ms={} reason={reason:?}",text.len(),started.elapsed().as_millis());
+            let response=Response::from_string(text).with_status_code(StatusCode(status))
                 .with_header(Header::from_bytes("Content-Type","application/json").unwrap())
                 .with_header(Header::from_bytes("Cache-Control","no-store").unwrap());
             let _=req.respond(response);
@@ -254,13 +307,83 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
     }
     Ok(true)
 }
+/// Identity of one installed build: version plus the resolved binary path, size and mtime.
+/// The desktop caches binaries under a content-hash name, so this changes on every new build.
+pub fn build_identity(binary: &Path) -> String {
+    let real=fs::canonicalize(binary).unwrap_or_else(|_|binary.to_path_buf());
+    let meta=fs::metadata(&real).ok();
+    let mtime=meta.as_ref().and_then(|m|m.modified().ok()).and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_secs()).unwrap_or(0);
+    format!("{}|{}|{}|{}",env!("CARGO_PKG_VERSION"),real.display(),meta.map(|m|m.len()).unwrap_or(0),mtime)
+}
+#[derive(Debug, PartialEq)]
+enum ServerState { Current, Stale { pid: Option<u32>, old: String } }
+/// Decides whether a running server (lock held) must be replaced. `recorded` is (pid, identity)
+/// from server.identity; None means a server that predates identity recording.
+fn server_state(recorded: Option<(u32,String)>, own: &str) -> ServerState {
+    match recorded {
+        Some((_,id)) if id==own => ServerState::Current,
+        Some((pid,id)) => ServerState::Stale { pid: Some(pid), old: id },
+        None => ServerState::Stale { pid: None, old: "unrecorded (pre-identity build)".into() },
+    }
+}
+fn lock_held(path: &Path) -> bool {
+    let Ok(f)=fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path) else {return false};
+    match f.try_lock_exclusive() { Ok(())=>{let _=f.unlock();false}, Err(_)=>true }
+}
+fn lock_holders(path: &Path) -> Vec<u32> {
+    let Ok(out)=std::process::Command::new("/usr/sbin/lsof").arg("-t").arg(path).output() else {return vec![]};
+    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l|l.trim().parse().ok()).filter(|p|*p!=std::process::id()).collect()
+}
+/// The companion server is a stateless HTTP front end over the host socket (agent work runs in the
+/// separate `--host` process), so terminating it never interrupts agent turns.
+fn replace_stale(dir: &Path, own: &str) {
+    let lock=dir.join("listener.lock");
+    if !lock_held(&lock) { return; }
+    let recorded=fs::read_to_string(dir.join("server.identity")).ok().and_then(|t|serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v|Some((v["pid"].as_u64()? as u32,v["identity"].as_str()?.to_string())));
+    let ServerState::Stale{pid,old}=server_state(recorded,own) else {return};
+    let pids=match pid { Some(p)=>vec![p], None=>lock_holders(&lock) };
+    if pids.is_empty() {
+        eprintln!("companion_server.stale_replace_failed reason=\"lock held but holder pid not found\" old={old:?} new={own:?}");
+        return;
+    }
+    eprintln!("companion_server.stale_replacing pids={pids:?} old={old:?} new={own:?}");
+    for p in &pids { unsafe { libc::kill(*p as i32,libc::SIGTERM); } }
+    let deadline=Instant::now()+Duration::from_secs(5);
+    while Instant::now()<deadline {
+        if !lock_held(&lock) {
+            eprintln!("companion_server.stale_replaced pids={pids:?} old={old:?} new={own:?}");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("companion_server.stale_replace_failed reason=\"old server still holds lock after SIGTERM and 5s\" pids={pids:?} old={old:?} new={own:?}");
+}
 pub fn ensure(root: PathBuf, binary: PathBuf) -> Result<(), String> {
     if !root.join("companion/server.crt").exists() { return Ok(()); }
+    replace_stale(&root.join("companion"),&build_identity(&binary));
     let mut child=std::process::Command::new(binary).arg("--companion-server").arg(root)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit()).spawn().map_err(|e|e.to_string())?;
     std::thread::spawn(move || {let _=child.wait();});
     Ok(())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    #[test] fn server_replacement_decision() {
+        assert_eq!(server_state(Some((1,"a".into())),"a"),ServerState::Current);
+        assert_eq!(server_state(Some((7,"a".into())),"b"),ServerState::Stale{pid:Some(7),old:"a".into()});
+        assert!(matches!(server_state(None,"b"),ServerState::Stale{pid:None,..}));
+    }
+    #[test] fn identity_changes_with_binary() {
+        let d=std::env::temp_dir().join(format!("fr-id-{}",std::process::id()));fs::create_dir_all(&d).unwrap();
+        let (a,b)=(d.join("a"),d.join("b"));fs::write(&a,"1").unwrap();fs::write(&b,"1").unwrap();
+        assert_eq!(build_identity(&a),build_identity(&a));
+        assert_ne!(build_identity(&a),build_identity(&b));
+        fs::remove_dir_all(d).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +413,23 @@ mod tests {
         let (_,bytes,path)=freddai_core::attachments::load(&root,file["id"].as_str().unwrap()).unwrap();
         assert_eq!(bytes,b"hey");fs::write(path,"changed").unwrap();
         assert!(freddai_core::attachments::load(&root,file["id"].as_str().unwrap()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn phone_dictation_validates_upload_before_transcribing() {
+        let root=std::env::temp_dir().join(format!("fr-voice-{}",crate::companion_crypto::random()));
+        assert!(voice_upload_dir(&root,&json!({})).is_err());
+        assert!(voice_upload_dir(&root,&json!({"id":"../escape"})).is_err());
+        assert!(voice_upload_dir(&root,&json!({"id":"ab".repeat(32)})).is_err());
+        let id=upload(&root,&json!({"action":"begin","name":"dictation.m4a"})).unwrap();
+        let id=id.as_str().unwrap();
+        let input=json!({"id":id});
+        let dir=voice_upload_dir(&root,&input).unwrap();
+        assert!(voice_prepare_audio(&dir,&input).is_err()); // empty
+        upload(&root,&json!({"action":"chunk","id":id,"offset":0,"data":"686579"})).unwrap();
+        assert!(voice_prepare_audio(&dir,&json!({"id":id,"size":4})).is_err()); // size mismatch
+        let audio=voice_prepare_audio(&dir,&json!({"id":id,"size":3})).unwrap();
+        assert_eq!(audio.file_name().unwrap(),"audio.m4a");
+        assert_eq!(fs::read(&audio).unwrap(),b"hey");
         fs::remove_dir_all(root).unwrap();
     }
     #[test] fn device_auth_rejects_missing_and_wrong_credentials() {

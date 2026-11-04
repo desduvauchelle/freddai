@@ -295,6 +295,42 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the append_composer_text command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-append-composer-text",
+          "markdownDescription": "Enables the append_composer_text command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the append_composer_text command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-append-composer-text",
+          "markdownDescription": "Denies the append_composer_text command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discard_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-discard-files",
+          "markdownDescription": "Enables the discard_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discard_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-discard-files",
+          "markdownDescription": "Denies the discard_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_option command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-option",
+          "markdownDescription": "Enables the pick_option command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_option command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-option",
+          "markdownDescription": "Denies the pick_option command without any pre-configured scope."
+        },
+        {
           "description": "Enables the ping command without any pre-configured scope.",
           "type": "string",
           "const": "allow-ping",
@@ -391,10 +427,22 @@
           "markdownDescription": "Denies the set_threads command without any pre-configured scope."
         },
         {
-          "description": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-set-threads`\n- `allow-set-thread-meta`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Enables the set_voice command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-voice",
+          "markdownDescription": "Enables the set_voice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_voice command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-voice",
+          "markdownDescription": "Denies the set_voice command without any pre-configured scope."
+        },
+        {
+          "description": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-set-threads`\n- `allow-set-thread-meta`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`"
         }
       ]
     }

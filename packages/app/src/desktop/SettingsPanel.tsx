@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { ArrowLeft, Bot, ChartNoAxesCombined, FolderGit2, Keyboard, ListFilter, CalendarClock, Power, Palette, Smartphone } from "lucide-react";
+import { ArrowLeft, Bot, ChartNoAxesCombined, FolderGit2, Download, Keyboard, ListFilter, CalendarClock, Power, Palette, Smartphone, Mic, SlidersHorizontal } from "lucide-react";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@freddai/ui/components/breadcrumb";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
 import { Separator } from "@freddai/ui/components/separator";
@@ -11,7 +11,10 @@ const sections = [
   { id: "settings", label: "Agents & defaults", icon: Bot },
   { id: "usage", label: "Accounts & usage", icon: ChartNoAxesCombined },
   { id: "projects", label: "Projects", icon: FolderGit2 },
+  { id: "import", label: "Import sessions", icon: Download },
   { id: "companion", label: "Phone pairing", icon: Smartphone },
+  { id: "voice", label: "Voice", icon: Mic },
+  { id: "agentconfig", label: "Agent config", icon: SlidersHorizontal },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "threads", label: "Thread display", icon: ListFilter },
   { id: "schedules", label: "Schedules", icon: CalendarClock },

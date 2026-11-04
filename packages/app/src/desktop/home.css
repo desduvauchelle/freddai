@@ -1,0 +1,44 @@
+/* Home hub: dense workbench pane, reuses workspace tokens. */
+.home-view { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 20px; display: flex; flex-direction: column; gap: 14px; background: var(--adaptive-background, var(--background)); }
+.home-status { display: flex; align-items: center; gap: 12px; }
+.home-status > div { display: flex; flex-direction: column; font-size: 12px; }
+.home-status span { color: var(--muted-foreground); font-size: 11px; }
+.home-section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.home-section-title { display: flex; align-items: center; gap: 8px; height: 24px; font: 600 10px/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: .6px; text-transform: uppercase; color: var(--muted-foreground); border-bottom: 1px solid var(--border); }
+.home-section-title > button { margin-left: auto; height: 22px; font-size: 11px; gap: 4px; text-transform: none; letter-spacing: 0; }
+.home-count { font-weight: 400; }
+.home-empty { margin: 0; font-size: 11px; color: var(--muted-foreground); }
+.home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.home-tile, .home-request { border: 1px solid var(--border); border-radius: 5px; background: var(--card); padding: 8px 10px; min-width: 0; animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+.home-tile > header, .home-request > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.home-tile > header strong, .home-request > header strong { font-size: 12px; font-weight: 550; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-request > header strong { flex: 1; }
+.home-tile > header strong { flex: 1; }
+.home-project-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.home-tile-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.home-tile-actions .composer-mic, .home-tile-add { width: 26px; height: 26px; border-radius: 6px; }
+.home-tile-actions .composer-mic svg { width: 14px; height: 14px; }
+.home-tile-actions .composer-mic[data-state="recording"] { color: var(--destructive, #dc2626); background: color-mix(in srgb, var(--destructive, #dc2626) 14%, transparent); }
+.home-tile-error { margin: 6px 0 0; }
+.home-tile .voice-notice { margin-top: 6px; }
+.home-counts { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font: 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--muted-foreground); }
+.home-counts li { display: inline-flex; align-items: center; gap: 4px; }
+.home-counts li[data-kind="needs"][data-active="true"], .home-counts li[data-kind="failed"] { color: var(--foreground); font-weight: 600; }
+.home-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; animation: motion-fade-in var(--motion-fast, 140ms) var(--motion-ease-out, ease-out) both; }
+.home-prompt input { flex: 1; min-width: 0; height: 28px; font-size: 12px; }
+.home-prompt .inline-error { flex-basis: 100%; margin: 0; }
+.home-queue { display: flex; flex-direction: column; gap: 8px; }
+.home-request-project { font: 10px ui-monospace, SFMono-Regular, monospace; color: var(--muted-foreground); flex-shrink: 0; }
+.home-request > header > button { height: 22px; font-size: 11px; gap: 3px; flex-shrink: 0; }
+.home-request .approval-card { margin-top: 6px; }
+.home-queue .thread-presence + .thread-presence { margin-top: 8px; }
+@media (prefers-reduced-motion: reduce) { .home-tile, .home-request, .home-prompt { animation: none; } }
+.home-tile-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; border-radius: 3px; }
+.home-tile-open:hover strong { text-decoration: underline; }
+.home-tile-open strong { display: block; }
+.home-pane { height: 100%; display: flex; flex-direction: column; min-width: 0; }
+.home-agent-chip { margin: 6px 0 0; padding: 1px 6px; width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: 4px; font: 10px/1.6 ui-monospace, SFMono-Regular, monospace; color: var(--muted-foreground); }
+.home-agent-chip[data-state="error"] { color: var(--destructive, #dc2626); border-color: color-mix(in srgb, var(--destructive, #dc2626) 40%, var(--border)); }
+.home-started { margin: 6px 0 0; font-size: 11px; color: var(--foreground); animation: home-started-fade 4s ease-out both; }
+@keyframes home-started-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .home-started { animation: none; } }

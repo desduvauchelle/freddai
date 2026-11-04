@@ -24,15 +24,33 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 serde = { version = "1", features = ["derive"] }
 
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 freddai-core = { path = "../../../crates/core" }
+tauri-plugin-notification = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+portable-pty = "0.9"
+tokio = { version = "1", features = ["time", "rt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fs2 = "0.4"
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 subtle = "2"
+objc2 = "0.6"
+objc2-web-kit = { version = "0.3", default-features = false, features = ["WKWebViewConfiguration"] }
+# Local push-to-talk dictation (src/voice). macOS only so the iOS build never compiles whisper.cpp.
+transcribe-rs = { version = "=0.3.11", default-features = false, features = ["whisper-metal"] }
+cpal = "0.15"
+rubato = "0.16"
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "isomp4", "aac"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "3"
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 tauri-plugin-native-shell = { path = "plugins/native-shell" }
 tokio = { version = "1", features = ["time"] }
+
+[[test]]
+name = "writing_tools_configuration"
+harness = false

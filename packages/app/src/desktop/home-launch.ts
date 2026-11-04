@@ -1,0 +1,23 @@
+import { effectivePermissionMode } from "./PermissionSelect";
+import { providerName, resolveAccount, type Database, type PermissionMode } from "./types";
+
+/** What a Home tile will launch. One resolution shared by the tile's agent chip and `createHomeThread`, so they cannot disagree. */
+export type HomeLaunchPlan =
+  | { ok: true; project: string; account: string; provider: string; accountName: string; permission_mode: PermissionMode; worktree: boolean; model: string | null; effort: string | null; label: string }
+  | { ok: false; reason: string };
+
+export function resolveHomeLaunch(db: Database, projectId: string, permissionMode: PermissionMode): HomeLaunchPlan {
+  const project = db.projects.find(p => p.id === projectId);
+  if (!project) return { ok: false, reason: "Project not found." };
+  if (!db.accounts.length) return { ok: false, reason: "Connect an agent account to start." };
+  // The project's own default first; when it has none (or it no longer exists) the global default applies.
+  const account = db.accounts.find(a => a.id === resolveAccount(db, project)) ?? db.accounts.find(a => a.id === resolveAccount(db));
+  if (!account) return { ok: false, reason: "No default account configured for this project." };
+  // Home never overrides the model or effort: the provider's configured default applies (its name is only known per provider catalog).
+  const model: string | null = null, effort: string | null = null;
+  return {
+    ok: true, project: project.id, account: account.id, provider: account.provider, accountName: account.name,
+    permission_mode: effectivePermissionMode(account.provider, permissionMode), worktree: db.preferences.use_worktree ?? false, model, effort,
+    label: [providerName(account.provider), account.name, model ?? "default model", effort ?? "default effort"].join(" · "),
+  };
+}

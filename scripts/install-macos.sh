@@ -8,7 +8,8 @@ if ! command -v pnpm >/dev/null; then
   corepack enable --install-directory "$shim"
   export PATH="$shim:$PATH"
 fi
-pnpm --filter @freddai/native tauri build --bundles app
+# Marks this as a local build: the in-app updater stays quiet about published releases.
+FREDDAI_LOCAL_BUILD=1 pnpm --filter @freddai/native tauri build --bundles app
 # Use an explicitly selected identity, or the only available Developer ID identity.
 identity="${FREDDAI_SIGNING_IDENTITY:-}"
 if [ -z "$identity" ]; then
@@ -18,7 +19,7 @@ if [ -z "$identity" ]; then
     exit 1
   fi
 fi
-codesign --force --options runtime --timestamp --identifier com.freddai.desktop --sign "$identity" target/release/bundle/macos/Freddai.app
+codesign --force --options runtime --entitlements apps/native/src-tauri/Entitlements.plist --timestamp --identifier com.freddai.desktop --sign "$identity" target/release/bundle/macos/Freddai.app
 python3 - <<'PY'
 import os, subprocess, tempfile, uuid
 from pathlib import Path

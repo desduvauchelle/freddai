@@ -29,9 +29,54 @@ pub fn edit<T>(root:&Path,f:impl FnOnce(&mut Registry)->Result<T,String>)->Resul
     file.sync_all().map_err(|e|e.to_string())?;fs::rename(temp,path).map_err(|e|e.to_string())?;
     result
 }
+/// Provision on explicit Pair phone action, keeping existing Mac identities intact.
+pub fn provision(root:&Path)->Result<(),String> {
+    use std::process::Command;
+    let dir=root.join("companion");fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    fs::set_permissions(&dir,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+    let lock=fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(dir.join("provision.lock")).map_err(|e|e.to_string())?;
+    lock.lock_exclusive().map_err(|e|e.to_string())?;
+    let host=Command::new("/usr/sbin/scutil").args(["--get","LocalHostName"]).output().map_err(|_|"Cannot read Mac network name")?;
+    if !host.status.success(){return Err("Set your Mac’s local hostname in System Settings → Sharing".into());}
+    let host=String::from_utf8_lossy(&host.stdout).trim().to_owned();
+    if host.is_empty() || !host.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-') {return Err("Invalid Mac network name".into());}
+    let host=format!("{host}.local");
+    if !dir.join("server.crt").exists() {
+        if dir.join("ca.key").exists() || dir.join("server.key").exists() {return Err("Incomplete Mac identity. Restore your companion identity before pairing.".into());}
+        let stage=dir.join(format!("identity-{}",random()));fs::create_dir(&stage).map_err(|e|e.to_string())?;
+        fs::set_permissions(&stage,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+        let result=(||->Result<(),String>{
+            fs::write(stage.join("ca.cnf"),"[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Freddai Companion Private CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n").map_err(|e|e.to_string())?;
+            fs::write(stage.join("openssl.cnf"),format!("[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN={host}\n[ext]\nsubjectAltName=DNS:{host}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")).map_err(|e|e.to_string())?;
+            for args in [
+                vec!["req","-x509","-newkey","rsa:2048","-nodes","-days","3650","-config","ca.cnf","-keyout","ca.key","-out","ca.crt"],
+                vec!["req","-new","-newkey","rsa:2048","-nodes","-config","openssl.cnf","-keyout","server.key","-out","server.csr"],
+                vec!["x509","-req","-in","server.csr","-CA","ca.crt","-CAkey","ca.key","-CAcreateserial","-days","365","-extfile","openssl.cnf","-extensions","ext","-out","server.crt"],
+            ] {
+                let out=Command::new("/usr/bin/openssl").args(args).current_dir(&stage).output().map_err(|_|"Cannot generate Mac connection certificate")?;
+                if !out.status.success(){return Err("Cannot generate Mac connection certificate".into());}
+            }
+            let ca=fs::read(stage.join("ca.crt")).map_err(|e|e.to_string())?;
+            fs::OpenOptions::new().append(true).open(stage.join("server.crt")).and_then(|mut f|f.write_all(&ca)).map_err(|e|e.to_string())?;
+            for name in ["ca.key","server.key"] {fs::set_permissions(stage.join(name),fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
+            for name in ["ca.cnf","openssl.cnf","ca.key","ca.crt","server.key","server.crt"] {fs::rename(stage.join(name),dir.join(name)).map_err(|e|e.to_string())?;}
+            Ok(())
+        })();
+        let _=fs::remove_dir_all(stage);result?;
+    }
+    let certificate=fs::read_to_string(dir.join("ca.crt")).map_err(|_|"Cannot read Mac public certificate")?;
+    // Reuse the original endpoint for existing identities; a renamed Mac needs certificate renewal.
+    let path=dir.join("iphone-provision.json");
+    if !path.exists() {
+        let value=json!({"endpoint":format!("https://{host}:49744"),"certificate":certificate});
+        let mut file=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(path).map_err(|e|e.to_string())?;
+        file.write_all(value.to_string().as_bytes()).map_err(|e|e.to_string())?;
+    }
+    Ok(())
+}
 pub fn status(root:&Path)->Result<Value,String> {edit(root,|r| {
     let pairing=r.pairing.as_ref().filter(|p|p.expires>now());
-    Ok(json!({"code":pairing.map(|p|p.code.as_str()),"expires":pairing.map(|p|p.expires),
+    Ok(json!({"setup":if pairing.is_some(){fs::read_to_string(root.join("companion/iphone-provision.json")).ok().and_then(|text|crate::companion_enrollment::Provision::parse(&text).ok()).and_then(|p|serde_json::to_string(&p).ok())}else{None},"code":pairing.map(|p|p.code.as_str()),"expires":pairing.map(|p|p.expires),
         "pending":pairing.and_then(|p|p.pending.as_ref()).filter(|p|p.approved.is_none()).map(|p|json!({"id":p.id,"name":p.name})),
         "devices":r.devices.iter().map(|d|json!({"id":d.id,"name":d.name,"pairedAt":d.paired_at})).collect::<Vec<_>>(),"relay":r.relay}))
 })}
@@ -94,6 +139,21 @@ pub fn device(root:&Path,authorization:&str)->Result<Option<Device>,String> {edi
         let key=grant["device"]["key"].as_str().unwrap();assert!(device(&root,&format!("Bearer {key}")).unwrap().is_some());
         let status=status(&root).unwrap().to_string();assert!(!status.contains(key));
         control(&root,"revoke",req["id"].as_str().unwrap()).unwrap();assert!(device(&root,&format!("Bearer {key}")).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn fresh_mac_setup_contains_only_public_trust_and_preserves_identity() {
+        let root=root();provision(&root).unwrap();
+        let dir=root.join("companion");
+        let key=fs::read(dir.join("server.key")).unwrap();
+        provision(&root).unwrap();assert_eq!(key,fs::read(dir.join("server.key")).unwrap());
+        assert!(status(&root).unwrap()["setup"].is_null());
+        let value=control(&root,"begin","").unwrap();
+        let setup=value["setup"].as_str().unwrap();
+        assert!(!setup.contains("PRIVATE KEY"));assert!(!setup.contains("mailbox"));
+        let parsed=crate::companion_enrollment::Provision::parse(setup).unwrap();
+        assert!(parsed.endpoint.starts_with("https://"));parsed.client().unwrap();
+        let mut invalid:Value=serde_json::from_str(setup).unwrap();invalid["device"]=json!({"key":"unexpected"});
+        assert!(crate::companion_enrollment::Provision::parse(&invalid.to_string()).is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test] fn wrong_codes_expiry_and_cancellation_fail_closed() {

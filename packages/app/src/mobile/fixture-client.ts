@@ -12,10 +12,11 @@ const min = 60_000, hour = 3_600_000, day = 24 * hour;
 let seq = 0;
 const msg = (role: string, text: string): Message => ({ id: `fx-${++seq}`, role, text });
 
+const assistants = [{ id: 'claude-personal', name: 'Personal', provider: 'claude' }, { id: 'codex-work', name: 'Work', provider: 'codex' }];
 const projects: CompanionSnapshot['projects'] = [
-  { id: 'freddai', name: 'Freddai', color: '#7c6cf0', canStart: true, provider: 'claude' },
-  { id: 'lucy-web', name: 'Lucy Web', color: '#2fa37a', canStart: true, provider: 'codex' },
-  { id: 'dormouse-rive', name: 'Dormouse Rive', color: '#e0803c', canStart: true, provider: 'claude' },
+  { id: 'freddai', name: 'Freddai', color: '#7c6cf0', canStart: true, provider: 'claude', defaultAssistant: 'claude-personal', assistants },
+  { id: 'lucy-web', name: 'Lucy Web', color: '#2fa37a', canStart: true, provider: 'codex', defaultAssistant: 'codex-work', assistants },
+  { id: 'dormouse-rive', name: 'Dormouse Rive', color: '#e0803c', canStart: true, provider: 'claude', defaultAssistant: 'claude-personal', assistants },
 ];
 
 const markdown = `I traced the unread badge to the companion snapshot. Here is what I found.
@@ -104,6 +105,11 @@ const models: Model[] = [
   { model: 'claude-haiku-4-5', displayName: 'Haiku', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] },
 ];
 
+const codexModels: Model[] = [
+  { model: 'gpt-5.5', displayName: 'GPT-5.5', isDefault: true, supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort })) },
+  { model: 'gpt-5.5-mini', displayName: 'GPT-5.5 Mini', supportedReasoningEfforts: ['low', 'medium'].map(reasoningEffort => ({ reasoningEffort })) },
+];
+
 export function createFixtureClient(): CompanionClient {
   const state: CompanionSnapshot = { projects, threads: threads.map(x => ({ ...x, messages: [...x.messages] })) };
   const touch = (id: string, fn: (th: CompanionThread) => void) => {
@@ -112,10 +118,18 @@ export function createFixtureClient(): CompanionClient {
   };
   return {
     snapshot: async () => ({ projects: state.projects, threads: state.threads.map(x => ({ ...x, messages: [...x.messages] })) }),
-    models: async () => models,
-    start: async ({ project, prompt }) => {
+    models: async target => {
+      const a = assistants.find(x => x.id === target.assistant);
+      const provider = a?.provider ?? (target.thread ? state.threads.find(x => x.id === target.thread)?.provider : projects.find(p => p.id === target.project)?.provider);
+      return provider === 'codex' ? codexModels : models;
+    },
+    // Pretend the Mac accepted the upload; the file never leaves the simulator.
+    attachPath: async file => ({ id: `fx-att-${++seq}`, name: file.name, bytes: 0, mime: file.mime, sha256: '' }),
+    voice: async () => ({ enabled: true, ready: true }),
+    transcribe: async () => ({ text: 'This is a dictated fixture sentence.', durationMs: 2000, model: 'fixture' }),
+    start: async ({ project, prompt, assistant, options }) => {
       const id = `fx-new-${++seq}`;
-      state.threads.unshift({ id, project, title: prompt.slice(0, 60), status: 'running', updated: Date.now(), last_user_message_at: Date.now(), messages: [msg('user', prompt), msg('assistant', 'On it. (Fixture mode: no agent is running.)')], canReply: true, queued: 0, error: null, provider: projects.find(p => p.id === project)?.provider });
+      state.threads.unshift({ id, project, title: prompt.slice(0, 60), status: 'running', updated: Date.now(), last_user_message_at: Date.now(), messages: [msg('user', prompt), msg('assistant', 'On it. (Fixture mode: no agent is running.)')], canReply: true, queued: 0, error: null, provider: assistants.find(a => a.id === assistant)?.provider ?? projects.find(p => p.id === project)?.provider, options: options && { model: options.model, effort: options.effort, permission_mode: options.permission_mode } });
       return id;
     },
     reply: async ({ thread, prompt }) => touch(thread, th => { th.messages.push(msg('user', prompt), msg('assistant', 'Got it. (Fixture mode: no agent is running.)')); }),

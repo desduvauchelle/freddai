@@ -56,12 +56,25 @@ pub fn select_model(session: &Value, session_id: &str, model: &str) -> Result<Va
     let option = session["configOptions"].as_array()
         .and_then(|options| options.iter().find(|o| o["category"] == "model" || o["id"] == "model"))
         .ok_or("This agent version does not expose model selection. Choose Model default or update the CLI.")?;
-    let config = option["id"].as_str().ok_or("Missing model configuration ID")?;
-    let available = option["options"].as_array().is_some_and(|options| options.iter().any(|o| {
-        o["value"] == model || o["options"].as_array().is_some_and(|group| group.iter().any(|v| v["value"] == model))
-    }));
-    if !available { return Err(format!("Agent did not offer model {model} for this account. Choose Model default or an available model ID.")); }
-    Ok(request(105, "session/set_config_option", json!({"sessionId":session_id,"configId":config,"value":model})))
+    let config = option["id"]
+        .as_str()
+        .ok_or("Missing model configuration ID")?;
+    let available = option["options"].as_array().is_some_and(|options| {
+        options.iter().any(|o| {
+            o["value"] == model
+                || o["options"]
+                    .as_array()
+                    .is_some_and(|group| group.iter().any(|v| v["value"] == model))
+        })
+    });
+    if !available {
+        return Err(format!("Agent did not offer model {model} for this account. Choose Model default or an available model ID."));
+    }
+    Ok(request(
+        105,
+        "session/set_config_option",
+        json!({"sessionId":session_id,"configId":config,"value":model}),
+    ))
 }
 pub fn approval(frame: &Value, allow: bool) -> Result<Value, String> {
     if frame["method"] != "session/request_permission" {
@@ -84,7 +97,10 @@ pub fn approval(frame: &Value, allow: bool) -> Result<Value, String> {
 // Verify cached Antigravity access with session/new, never authenticate or prompt.
 // Authentication required is an error response, so this cannot start browser login.
 pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> {
-    cmd.arg("acp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.arg("acp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     let cwd = std::env::temp_dir().to_string_lossy().into_owned();
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let mut input = child.stdin.take().ok_or("No agent input")?;
@@ -92,7 +108,9 @@ pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> 
     let output = child.stdout.take().unwrap();
     std::thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() { break; }
+            if tx.send(line).is_err() {
+                break;
+            }
         }
     });
     let result = (|| {
@@ -100,21 +118,34 @@ pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> 
         input.flush().map_err(|e| e.to_string())?;
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let line = rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                .map_err(|_| "CLI connection check timed out. Sign in in the official CLI first.")?;
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue; };
+            let line = rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .map_err(|_| {
+                    "CLI connection check timed out. Sign in in the official CLI first."
+                })?;
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if !v["error"].is_null() {
-                if v["error"]["code"] == -32000 { return Ok(false); }
-                return Err("CLI could not verify cached access. Sign in in Terminal first.".into());
+                if v["error"]["code"] == -32000 {
+                    return Ok(false);
+                }
+                return Err(
+                    "CLI could not verify cached access. Sign in in Terminal first.".into(),
+                );
             }
             if v["id"] == 101 {
-                if v["result"]["protocolVersion"] != 1 { return Err("Update this CLI for ACP v1 support.".into()); }
+                if v["result"]["protocolVersion"] != 1 {
+                    return Err("Update this CLI for ACP v1 support.".into());
+                }
                 writeln!(input, "{}", session(&cwd, None, &v["result"])?)
                     .map_err(|e| e.to_string())?;
                 input.flush().map_err(|e| e.to_string())?;
             }
             if v["id"] == 103 {
-                return Ok(v["result"]["sessionId"].as_str().is_some_and(|id| !id.is_empty()));
+                return Ok(v["result"]["sessionId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty()));
             }
         }
     })();
