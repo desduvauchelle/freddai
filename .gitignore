@@ -36,3 +36,4 @@ xcuserdata/
 *.mobileprovision
 build/
 companion-provision.json
+.pnpm-store/

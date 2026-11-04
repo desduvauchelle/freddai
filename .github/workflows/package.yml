@@ -7,7 +7,7 @@ on:
       check_windows:
         description: 'Also build Windows installer (host unsupported; validation only)'
         type: boolean
-        default: false
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -43,20 +43,6 @@ jobs:
             args: --bundles deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: pnpm/action-setup@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - name: Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
-      - run: pnpm install --frozen-lockfile
       - name: Require macOS distribution credentials
         if: runner.os == 'macOS'
         env:
@@ -71,6 +57,20 @@ jobs:
             test -n "${!key}" || { echo "Missing secret: $key"; exit 1; }
           done
         shell: bash
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: cargo test --workspace
       - uses: tauri-apps/tauri-action@v1
