@@ -1516,3 +1516,7 @@ The iOS app currently embeds a developer-Mac endpoint and pinned certificate fro
 ### CI portability verification (2026-11-04)
 
 Desktop CI isolates the iOS-only native-shell plugin, exposes an explicit unsupported pairing result on non-macOS desktops, and tests provider environment setup without requiring installed provider CLIs. Production CLI discovery still rejects missing executables. Freddai App Store Connect record: 6830788346 (com.freddai.companion). External TestFlight remains pending a distributable pairing flow and Apple beta review; no public join URL is advertised.
+
+### Initial public desktop release (2026-11-04)
+
+Release `desktop-0.1.0` publishes the Mac universal DMG and Linux x64 Debian/AppImage artifacts from successful packaging run `41881098967` (source `0d07bfc`). Mac signature, notarization ticket, Gatekeeper acceptance and universal architectures verified. Linux Debian installation and 20-second GUI-process startup passed in clean-runner check `41883242256`; interactive Linux UI, AppImage execution and live provider sessions remain unverified. Windows compilation passed but host support is still absent, so its installer stays validation-only. Apple agreement is accepted and the Freddai internal TestFlight group is created; no mobile build or external invitation is published.
