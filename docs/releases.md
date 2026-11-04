@@ -38,20 +38,6 @@ The download section recognizes these uploaded assets in the latest published st
 
 The current iOS build uses this developer Mac's compile-time endpoint and certificate. Do not distribute it as a general external beta. A generic secure pairing/enrollment flow must precede external testing. App Store Connect beta review and tester setup remain pending.
 
-## iOS and iPadOS internal TestFlight
-
-The companion is one universal iOS app (`com.freddai.companion`, team `BSH2UEDLU5`) for both iPhone and iPad. There is no separate iPad bundle, listing or release stream. The existing shared native shell adapts to the app window; iPad supports all four orientations and multitasking.
-
-On this Mac's Xcode 27 toolchain, optimized Swift plugin linking also requires Rust's LLVM tools (`rustup component add llvm-tools`). The debug simulator build alone does not verify release linking.
-
-- `pnpm ios:archive` builds a **release**, non-fixture archive into `output/ios-distribution/<build-number>/Freddai.xcarchive`. It uses the existing Mac TLS provisioning without including device authentication secrets. The build number defaults to days since 2020, UTC hour and minute, satisfying Apple's 4.2.2 digit limits. To build twice in one minute, set an explicit greater `FREDDAI_IOS_BUILD_NUMBER`. Existing archive directories are never overwritten.
-- Archive validation checks the bundle ID, iPhone/iPad device families, iPad orientations, multitasking, opaque App Store icons, and production frontend assets. The icon preparation step encodes the existing artwork into opaque RGB in the generated Xcode catalog; source artwork is retained. `Freddai-build.json` records asset hashes and binds production validation to the archived executable hash. Tauri embeds compressed web assets in that binary. Fixture mode is rejected for distribution; the production flag is also set explicitly to override local Vite environment files.
-- `pnpm ios:upload` uploads the latest validated archive using Xcode automatic distribution signing and the existing Xcode account. Set `FREDDAI_IOS_ARCHIVE` to select a specific archive. Xcode may create distribution signing material with that account. No passwords, API keys or certificates are stored in source. This upload uses `testFlightInternalTestingOnly=true`: it cannot be released to external testers or the App Store.
-
-App Store Connect needs an iOS app record for this bundle ID (name **Freddai Companion**, primary language **English (U.S.)**, SKU **freddai-companion**), under the same developer team. If the name is unavailable, choose an available name in App Store Connect; do not change the bundle ID of an installed companion. If the command reports a missing account/session, sign in to **Xcode → Settings → Accounts** with the existing developer account. After a successful upload, wait for Apple processing, resolve any build-specific compliance requirements, then assign the build to an internal testing group. Upload alone does not assign testers or establish a public TestFlight invitation. The app record, Apple processing, tester assignment and actual installation must each be verified separately.
-
-External distribution still requires generic secure Mac enrollment (the current build trusts this developer Mac), production acceptance and store metadata/review, including iPad screenshots. The website's public TestFlight link stays unset until external testing is actually available. Distribution follows [Apple's upload workflow](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds) and [Tauri's App Store workflow](https://tauri.app/distribute/app-store/).
-
 ## Apple setup status (2026-11-04)
 
 App Store Connect contains Freddai, Apple ID `6830788346`, bundle ID `com.freddai.companion`. The Internal Testing group exists with manual distribution and no testers or builds. External testing is not yet available on this empty build record. Apple Developer account shows the updated Program License Agreement accepted November 4, 2026; no acceptance action remains pending.
