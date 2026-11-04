@@ -14,7 +14,9 @@ Copy `.env.example` to `.env.local` only when configuring integrations. Do not c
 
 ## Downloads
 
-Set `MACOS_DOWNLOAD_URL` to the HTTPS URL of a real distribution release and rebuild. Until then, the page displays an honest coming-soon state. The locally installed debug app is not a public release. Notarization, public hosting, and release publishing are outside this setup.
+Production: https://freddai.ai-juicing.com. Vercel project `freddai` belongs to the personal `desduvauchelles-projects` account and deploys `main` from https://github.com/desduvauchelle/freddai. Root directory: `apps/web`; workspace source outside the root is enabled. `vercel.json` records the install/build commands. Node 24 is selected in project settings.
+
+`RELEASES_REPOSITORY=desduvauchelle/freddai` discovers the latest public stable GitHub release and its `Freddai-macos-universal.dmg` asset. `MACOS_DOWNLOAD_URL` is an optional HTTPS override. Until a distribution release is published, the page displays coming soon. See `docs/releases.md` for signing, packaging, and platform limitations.
 
 ## Localization
 

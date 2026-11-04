@@ -1,11 +1,13 @@
 # Desktop releases
 
-The packaging workflow is local scaffolding until this folder is committed and pushed to GitHub. No remote repository, secrets, account, or release has been created.
+Source repository: https://github.com/desduvauchelle/freddai (public). Production website: https://freddai.ai-juicing.com, hosted by the `freddai` Vercel project in the personal `desduvauchelles-projects` Hobby account. Vercel builds `apps/web` from `main`, includes workspace dependencies outside that directory, and uses Node 24. The Squarespace `freddai` CNAME points to `7ae8c160439a60c5.vercel-dns-017.com`.
+
+`RELEASES_REPOSITORY=desduvauchelle/freddai` connects published release assets to the website. `SITE_URL=https://freddai.ai-juicing.com` is configured for production. No public desktop release exists yet; downloads remain unavailable until a verified installer is published.
 
 ## Initial setup
 
-1. Create the intended GitHub repository and push this project, including the lockfiles and `.github/workflows/package.yml`. Do not commit `.env` files or signing material.
-2. Configure Actions repository secrets: `APPLE_CERTIFICATE` (base64 Developer ID Application certificate exported as a password-protected .p12, including its private key), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (full Developer ID Application name), `APPLE_ID`, `APPLE_PASSWORD` (Apple app-specific password), and `APPLE_TEAM_ID`. Export the existing identity through Keychain Access; this setup does not extract credentials automatically.
+1. The repository and Vercel Git connection are configured. `.gitignore` excludes build outputs, local caches, previews, environment files and signing material. Keep both lockfiles committed.
+2. Configure Actions repository secrets: `APPLE_CERTIFICATE` (base64 Developer ID Application certificate exported as a password-protected .p12, including its private key), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (full Developer ID Application name), `APPLE_ID`, `APPLE_PASSWORD` (Apple app-specific password), and `APPLE_TEAM_ID`. The existing Developer ID was exported with a generated password and uploaded directly to this repository at the owner’s request. The certificate, export password, signing identity, team ID and Apple ID secrets are configured; `APPLE_PASSWORD` still requires an Apple app-specific password. Temporary signing exports are not retained.
 3. Run **Package desktop** manually to validate builds. This uploads workflow artifacts without creating a release. macOS credentials are required even for manual runs; unsigned distribution builds are not silently substituted.
 4. Set the deployed Next.js server's `RELEASES_REPOSITORY=owner/repo` to a public distribution repository. `MACOS_DOWNLOAD_URL` remains an optional HTTPS override. No token is required or sent to visitors.
 
@@ -19,7 +21,7 @@ macOS builds one signed and notarized universal DMG for Apple Silicon and Intel.
 
 Download the draft installers and verify clean installation, launch, provider discovery and normal application behavior on each claimed platform. Review release notes, then publish the draft as the latest stable release. Publishing is deliberately manual. The website reads GitHub's latest stable release metadata with five-minute revalidation and offers the exact `Freddai-macos-universal.dmg` asset. Drafts, prereleases, missing assets, invalid repository settings and API failures show the existing coming-soon state. Initial configuration requires a website deployment; subsequent published releases require no website rebuild. Run Next.js as a server, not a static export.
 
-Linux downloads are retained as release assets pending runtime verification and website UI support. Windows is validation-only: enable the manual workflow's checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Automatic in-app updates and web deployment are outside this workflow.
+Linux downloads are retained as release assets pending runtime verification and website UI support. Windows is validation-only: use the manual workflow's enabled-by-default checkbox to attempt an unsigned NSIS build. The background host currently rejects non-Unix platforms, so Windows artifacts are never included in release drafts or advertised as supported. CI success alone is not platform runtime verification. Automatic in-app updates remain outside this workflow. Vercel handles web deployment independently on pushes to `main`. Changes to the packaging workflow also trigger installer validation. The separate Checks workflow runs typechecking, web/native frontend builds, web/relay tests and core Rust tests on pushes and pull requests.
 
 ## Local checks
 
