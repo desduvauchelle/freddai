@@ -35,7 +35,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/freddai-smoke/data" "$RUNNER_TEMP/freddai-smoke/config"
           set +e
           XDG_DATA_HOME="$RUNNER_TEMP/freddai-smoke/data" XDG_CONFIG_HOME="$RUNNER_TEMP/freddai-smoke/config" \
-            timeout 20s dbus-run-session -- xvfb-run -a freddai > launch.log 2>&1
+            timeout 20s dbus-run-session -- xvfb-run -a freddai-native > launch.log 2>&1
           result=$?
           set -e
           cat launch.log
