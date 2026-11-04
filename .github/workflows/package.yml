@@ -2,6 +2,8 @@ name: Package desktop
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['.github/workflows/package.yml']
   workflow_dispatch:
     inputs:
       check_windows:
@@ -129,7 +131,7 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" installers/* --clobber
   windows-validation:
-    if: github.event_name == 'workflow_dispatch' && inputs.check_windows
+    if: github.event_name == 'push' || inputs.check_windows
     needs: validate
     runs-on: windows-latest
     steps:
