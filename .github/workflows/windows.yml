@@ -1,10 +1,10 @@
 name: Windows runtime
 on:
   push:
-    branches: [main, codex/windows-runtime]
-    paths: ['crates/**', 'apps/native/**', 'packages/**', 'scripts/tests/windows-*.ps1', '.github/workflows/windows.yml', 'Cargo.lock', 'pnpm-lock.yaml']
+    branches: [main]
+    paths: ['crates/**', 'apps/native/**', 'packages/**', 'scripts/tests/windows-*', '.github/workflows/windows.yml', 'Cargo.lock', 'pnpm-lock.yaml']
   pull_request:
-    paths: ['crates/**', 'apps/native/**', 'scripts/tests/windows-*.ps1', '.github/workflows/windows.yml']
+    paths: ['crates/**', 'apps/native/**', 'scripts/tests/windows-*', '.github/workflows/windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
