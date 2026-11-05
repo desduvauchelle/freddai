@@ -1,4 +1,7 @@
 $ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Run this installation test on a disposable GitHub Actions Windows runner.' }
+$nativeRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'com.freddai.desktop'
+if (Test-Path $nativeRoot) { throw 'Refusing to test against an existing Freddai workspace.' }
 $installer = (Get-ChildItem 'target/release/bundle/nsis/*.exe' | Select-Object -First 1).FullName
 $probe = (Resolve-Path 'target/debug/examples/host_probe.exe').Path
 $fixture = Join-Path $env:TEMP ('freddai-install-test-' + [guid]::NewGuid())
@@ -30,7 +33,8 @@ try {
   if ($app.MainWindowHandle -eq 0) { throw 'No native app window appeared' }
   node scripts/tests/windows-ui.mjs
   if ($LASTEXITCODE -ne 0) { throw 'Installed app UI verification failed' }
-  $root = Join-Path $env:APPDATA 'com.freddai.desktop'
+  # Tauri uses the Windows known-folder API, which intentionally ignores APPDATA overrides.
+  $root = $nativeRoot
   $hello = & $probe hello $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0) { throw 'Installed host handshake failed' }
   if (!(Test-Path $hello.build) -or !($hello.build.EndsWith('.exe'))) { throw 'Host is not using the cached Windows executable' }
