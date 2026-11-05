@@ -1186,3 +1186,8 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .native-workspace .project-toggle > strong { font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .native-workspace .project-toggle:focus-visible { outline: 2px solid var(--ring); border-radius: 3px; }
 .native-workspace .project-attention { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--adaptive-surface, #34303e); color: var(--adaptive-text, #dedee3); font-size: 10px; font-weight: 600; }
+
+/* Finished rows retain the status slot so title truncation stays aligned. */
+.native-workspace .task-row.compact-session:has(> .state-Done) { opacity: .82; }
+.native-workspace .task-row.compact-session:has(> .state-Done):is(:hover, :focus-within) { opacity: 1; }
+.native-workspace .task-row.compact-session > .state-Done { background: transparent; }
