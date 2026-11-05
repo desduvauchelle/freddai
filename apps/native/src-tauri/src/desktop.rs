@@ -478,7 +478,7 @@ async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, Strin
     .await
 }
 #[tauri::command]
-async fn save_thread_list(h: State<'_, Host>, settings: crate::companion_server::ThreadListSettings) -> Result<(), String> {
+async fn save_thread_list(h: State<'_, Host>, settings: crate::thread_list_settings::ThreadListSettings) -> Result<(), String> {
     let dir = h.root.join("companion");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("thread-list.json");

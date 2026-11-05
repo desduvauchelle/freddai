@@ -62,3 +62,6 @@ pub fn configure_companion_relay(root: &std::path::Path, url: &str) -> Result<()
 
 #[cfg(windows)]
 mod windows_startup;
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod thread_list_settings;
