@@ -7,15 +7,7 @@ use subtle::ConstantTimeEq;
 use fs2::FileExt;
 use tiny_http::{Header, Method, Response, Server, SslConfig, StatusCode};
 
-/// Only presentation fields cross the companion boundary, independent of host upgrades.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadListSettings {
-    pub project_order: Vec<String>,
-    pub grouped: bool,
-    pub hide_read: bool,
-    pub recent_finished: usize,
-}
+use crate::thread_list_settings::ThreadListSettings;
 
 const PORT: u16 = 49744;
 const LIMIT: u64 = 128 * 1024;

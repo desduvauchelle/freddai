@@ -144,7 +144,11 @@ pub fn generate_codex(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+    #[cfg(not(windows))]
     let _guard = crate::watchdog::Guard::start(child.id());
     let result = (|| -> Result<Generated, String> {
         let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
@@ -272,6 +276,8 @@ pub fn generate_codex(
             }
         }
     })();
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }

@@ -1,6 +1,6 @@
 //! Read-only git summary for a project folder (branch, uncommitted changes, recent commits).
 use serde::Serialize;
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 #[derive(Debug, Serialize, PartialEq, Eq, Clone)]
 pub struct GitChange {
@@ -47,7 +47,7 @@ pub struct GitHistory {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = freddai_core::platform::quiet_command("git")
         .arg("--no-optional-locks")
         .arg("-C")
         .arg(dir)

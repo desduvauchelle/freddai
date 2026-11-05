@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       check_windows:
-        description: 'Also build Windows installer (host unsupported; validation only)'
+        description: 'Also build and validate the Windows installer'
         type: boolean
         default: true
 permissions:
@@ -174,6 +174,9 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
+      - run: cargo build --locked -p freddai-core --example host_probe
+      - run: ./scripts/tests/windows-host.ps1
+      - run: cargo test --locked -p freddai-core --lib
       - uses: tauri-apps/tauri-action@v1
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -181,8 +184,9 @@ jobs:
         with:
           projectPath: apps/native
           args: --bundles nsis
+      - run: ./scripts/tests/windows-install.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-unsupported-validation
+          name: windows-installer-validation
           path: target/release/bundle/nsis/*.exe
           if-no-files-found: error

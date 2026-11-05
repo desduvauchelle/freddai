@@ -8,7 +8,6 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -400,7 +399,7 @@ pub fn default_home(provider: &str, configured: Option<&Path>) -> Option<PathBuf
     };
     std::env::var_os(key)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(folder)))
+        .or_else(|| crate::platform::home_dir().map(|h| h.join(folder)))
 }
 
 /// Expand `/prompts:name args` with the Codex custom prompt file. Other text is returned untouched.
@@ -463,7 +462,7 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
 }
 
 fn git_files(root: &Path) -> Option<Vec<String>> {
-    let out = Command::new("git")
+    let out = crate::platform::quiet_command("git")
         .arg("-C")
         .arg(root)
         .args(["ls-files", "-co", "--exclude-standard", "-z"])
@@ -511,7 +510,7 @@ fn walk_files(root: &Path) -> Vec<String> {
                     stack.push((e.path(), depth + 1));
                 }
             } else if let Ok(rel) = e.path().strip_prefix(root) {
-                out.push(rel.to_string_lossy().into_owned());
+                out.push(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
                 if out.len() >= FILE_CAP {
                     out.sort();
                     return out;
@@ -658,7 +657,7 @@ mod tests {
     fn git_listing_respects_gitignore() {
         let root = temp("git");
         let git = |args: &[&str]| {
-            assert!(Command::new("git")
+            assert!(crate::platform::quiet_command("git")
                 .arg("-C")
                 .arg(&root)
                 .args(args)

@@ -361,22 +361,6 @@ pub(crate) fn private_dir(path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     Ok(())
 }
-fn is_executable(path: &Path) -> bool {
-    let Ok(meta) = fs::metadata(path) else {
-        return false;
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
 fn is_acp(provider: &str) -> bool {
     matches!(
         provider,
@@ -394,22 +378,7 @@ fn executable(provider: &str) -> Result<PathBuf> {
         "cursor" => "agent",
         _ => return Err("Unsupported agent".into()),
     };
-    let mut dirs = vec![
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ];
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        dirs.push(home.join(".local/bin"));
-        dirs.push(home.join(".opencode/bin"));
-        dirs.push(home.join(".cursor/bin"));
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        dirs.extend(std::env::split_paths(&path));
-    }
-    dirs.into_iter()
-        .map(|d| d.join(name))
-        .find(|p| is_executable(p))
+    crate::platform::executable_in(name, crate::platform::cli_dirs())
         .ok_or_else(|| format!("Install {name} CLI before using this account."))
 }
 #[derive(Serialize)]
@@ -480,7 +449,7 @@ fn command_with_resolver(
     if account.config_home.is_none() {
         private_dir(&home)?;
     }
-    let mut cmd = Command::new(resolve(&account.provider)?);
+    let mut cmd = crate::platform::quiet_command(resolve(&account.provider)?);
     for key in AUTH_ENV {
         cmd.env_remove(key);
     }
@@ -492,7 +461,7 @@ fn command_with_resolver(
         if account.config_home.is_none() {
             return Err("Antigravity uses the shared CLI sign-in. Connect it in Accounts.".into());
         }
-        let help = Command::new(resolve("antigravity")?)
+        let help = crate::platform::quiet_command(resolve("antigravity")?)
             .args(["acp", "--help"])
             .output()
             .map_err(|e| e.to_string())?;
@@ -525,8 +494,7 @@ fn command_with_resolver(
         cmd.args(["-c", "cli_auth_credentials_store=\"file\""]);
     }
     // GUI applications do not inherit the user's interactive shell PATH.
-    let path = std::env::var("PATH").unwrap_or_default();
-    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{path}"));
+    cmd.env("PATH", crate::platform::cli_path()?);
     #[cfg(unix)]
     cmd.process_group(0);
     Ok(cmd)
@@ -556,11 +524,14 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
     } else {
         c.args(["auth", "status"]);
     }
-    let mut child = c
+    c
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut c).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
+    let mut child = c.spawn()
         .map_err(|e| e.to_string())?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -572,6 +543,8 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    #[cfg(windows)]
+    drop(job);
     terminate(&mut child);
     let name = if provider == "codex" {
         "Codex"
@@ -600,7 +573,7 @@ fn local_account_from_env(
     let claude_default_config = provider == "claude" && override_home.is_none();
     let home = override_home
         .clone()
-        .or_else(|| get_env("HOME").map(|h| PathBuf::from(h).join(folder)))
+        .or_else(|| crate::platform::home_from_env(&get_env).map(|h| h.join(folder)))
         .ok_or("Cannot locate CLI configuration")?;
     let resolved = fs::canonicalize(&home).map_err(|_| "No existing CLI configuration found")?;
     if !resolved.is_dir() {
@@ -1181,6 +1154,12 @@ impl Runtime {
         let exe = executable(&a.provider)?;
         let home = i.root.join("accounts").join(&a.id);
         private_dir(&home)?;
+        #[cfg(windows)]
+        return crate::platform::interactive_login(&exe, &home,
+            if a.provider == "gemini" { "GEMINI_CLI_HOME" } else { "CLAUDE_CONFIG_DIR" }, AUTH_ENV,
+            if a.provider == "gemini" { &[] } else { &["auth", "login", "--claudeai"] });
+        #[cfg(not(windows))]
+        {
         fn q(s: &str) -> String {
             format!("'{}'", s.replace('\'', "'\\''"))
         }
@@ -1205,6 +1184,7 @@ impl Runtime {
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
+        }
     }
     pub fn login_state(&self, account: &str) -> Option<crate::login::LoginState> {
         self.1.state(account)
@@ -2489,7 +2469,13 @@ impl Runtime {
     ) -> Result<()> {
         let root = self.0.lock().unwrap().root.clone();
         let attachments = crate::attachments::blocks(&root, &s.options.attachments, &a.provider)?;
+        #[cfg(windows)]
+        let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        let guard = Some(job);
+        #[cfg(not(windows))]
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        #[cfg(not(windows))]
         let guard = match crate::watchdog::Guard::start(child.id()) {
             Ok(g) => g,
             Err(e) => {
@@ -3489,7 +3475,7 @@ fn account_home(a: &Account, root: &Path) -> PathBuf {
 }
 /// The CLI homes a user's own terminal sessions write to (not owned by any Freddai account unless matched).
 pub fn default_import_roots() -> Vec<crate::import::ImportRoot> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::platform::home_dir();
     [
         ("claude", "CLAUDE_CONFIG_DIR", ".claude"),
         ("codex", "CODEX_HOME", ".codex"),
@@ -3716,6 +3702,7 @@ impl Runtime {
 }
 #[cfg(test)]
 mod tests {
+    use crate::platform::is_executable;
     use super::*;
     #[test]
     fn thread_actions_preserve_identity_history_and_execution_folder() {

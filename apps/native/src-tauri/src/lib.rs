@@ -59,3 +59,9 @@ pub fn serve_companion(root: std::path::PathBuf) -> Result<(), String> {
 pub fn configure_companion_relay(root: &std::path::Path, url: &str) -> Result<(), String> {
     companion_pairing::control(root,"relay",url).map(|_|())
 }
+
+#[cfg(windows)]
+mod windows_startup;
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod thread_list_settings;

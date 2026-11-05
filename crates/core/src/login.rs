@@ -74,6 +74,10 @@ impl LoginManager {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
+        #[cfg(windows)]
+        let (mut child, job) = crate::windows_process::spawn(&mut cmd)
+            .map_err(|e| format!("Could not start sign-in: {e}"))?;
+        #[cfg(not(windows))]
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Could not start sign-in: {e}"))?;
@@ -90,6 +94,8 @@ impl LoginManager {
         drop(entries);
         let manager = self.clone();
         std::thread::spawn(move || {
+            #[cfg(windows)]
+            let _job = job;
             let started = Instant::now();
             let result = loop {
                 if manager.0.lock().unwrap().get(&id).is_none_or(|e| e.cancel) {
@@ -156,12 +162,15 @@ impl LoginManager {
 mod tests {
     use super::*;
     fn cmd(script: &str) -> Command {
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", script]);
+        #[cfg(not(windows))]
+        let mut c = { let mut c = Command::new("/bin/sh"); c.args(["-c", script]); c };
+        #[cfg(windows)]
+        let mut c = { let mut c = Command::new("powershell.exe"); c.args(["-NoProfile", "-Command", &script.replace("sleep 30", "Start-Sleep -Seconds 30")]); c };
+        crate::platform::hide_console(&mut c);
         c
     }
     fn wait(m: &LoginManager) -> LoginState {
-        for _ in 0..100 {
+        for _ in 0..500 {
             let s = m.state("a").unwrap();
             if s.status != "pending" {
                 return s;

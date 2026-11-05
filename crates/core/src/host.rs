@@ -1,5 +1,10 @@
-//! Local Unix-socket host. Never exposes a TCP endpoint or provider credentials.
+//! Local host: Unix sockets on macOS/Linux, owner-restricted named pipes on Windows.
+#[cfg(windows)]
+#[path = "windows_host.rs"]
+mod windows_host;
 use crate::runtime::Runtime;
+#[cfg(unix)]
+use std::io::Write;
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::{
@@ -8,7 +13,7 @@ use std::os::unix::{
 };
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -359,7 +364,6 @@ fn install_shutdown_flush(rt: Runtime) {
         std::thread::sleep(Duration::from_millis(50));
     });
 }
-#[cfg(unix)]
 pub fn serve(root: PathBuf) -> Result<(), String> {
     use fs2::FileExt;
     crate::runtime::private_dir(&root)?;
@@ -372,13 +376,8 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     lock.try_lock_exclusive()
         .map_err(|_| "A Freddai host already owns this workspace")?;
-    let path = root.join("host.sock");
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| e.to_string())?;
-    }
     let rt = Runtime::open(root.clone())?;
-    let listener = UnixListener::bind(&path).map_err(|e| e.to_string())?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
     install_shutdown_flush(rt.clone());
     let scheduler = rt.clone();
     std::thread::spawn(move || loop {
@@ -386,6 +385,14 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
         scheduler.queue_tick();
         std::thread::sleep(Duration::from_secs(2));
     });
+    #[cfg(windows)]
+    return windows_host::serve(&root, rt);
+    #[cfg(unix)]
+    {
+    let path = root.join("host.sock");
+    if path.exists() { fs::remove_file(&path).map_err(|e|e.to_string())?; }
+    let listener = UnixListener::bind(&path).map_err(|e| e.to_string())?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     for socket in listener.incoming() {
         let Ok(mut socket) = socket else { continue };
         let rt = rt.clone();
@@ -428,14 +435,11 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
         });
     }
     Ok(())
+    }
 }
-#[cfg(not(unix))]
-pub fn call(_: &Path, _: &str, _: Value) -> Result<Value, String> {
-    Err("Background host currently requires macOS or Linux".into())
-}
-#[cfg(not(unix))]
-pub fn serve(_: PathBuf) -> Result<(), String> {
-    Err("Background host currently requires macOS or Linux".into())
+#[cfg(windows)]
+pub fn call(root: &Path, method: &str, params: Value) -> Result<Value, String> {
+    windows_host::call(root, method, params)
 }
 
 #[cfg(test)]

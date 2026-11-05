@@ -34,3 +34,7 @@ pub mod agent_config;
 pub mod import;
 
 mod computer_use;
+
+pub mod platform;
+#[cfg(windows)]
+pub mod windows_process;

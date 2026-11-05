@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [{
+      "label": "main",
+      "create": false,
+      "title": "Freddai",
+      "visible": false,
+      "width": 1100,
+      "height": 760,
+      "minWidth": 640,
+      "minHeight": 480,
+      "titleBarStyle": "Visible",
+      "hiddenTitle": false
+    }]
+  },
+  "bundle": { "targets": ["nsis"] }
+}

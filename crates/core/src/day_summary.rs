@@ -276,7 +276,11 @@ pub(crate) fn side_codex(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+    #[cfg(not(windows))]
     let _guard = crate::watchdog::Guard::start(child.id());
     let result = (|| -> Result<String, String> {
         let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
@@ -365,6 +369,8 @@ pub(crate) fn side_codex(
             }
         }
     })();
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }
@@ -390,7 +396,11 @@ pub(crate) fn side_claude(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+    #[cfg(not(windows))]
     let _guard = crate::watchdog::Guard::start(child.id());
     let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
     let (mut stdout, mut stderr) = (
@@ -428,6 +438,8 @@ pub(crate) fn side_claude(
             }
         }
     };
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }
@@ -591,7 +603,7 @@ mod tests {
     fn db(sessions: Vec<Value>) -> Database {
         serde_json::from_value(json!({
             "accounts":[{"id":"a","name":"A","provider":"codex","color":"x"},{"id":"g","name":"G","provider":"grok","color":"x"}],
-            "projects":[{"id":"p","name":"Project A","path":"/tmp","color":"x","policy":"p","account":null,"last":null}],
+            "projects":[{"id":"p","name":"Project A","path":std::env::temp_dir(),"color":"x","policy":"p","account":null,"last":null}],
             "sessions":sessions,"preferences":{"prefer_last":false,"fallback":null,"last":null}
         })).unwrap()
     }

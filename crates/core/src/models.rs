@@ -12,11 +12,14 @@ pub fn read(mut cmd: Command) -> Result<Value, String> {
     query(cmd, Duration::from_secs(15))
 }
 fn query(mut cmd: Command, timeout: Duration) -> Result<Value, String> {
-    let mut child = cmd
+    cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
+    let mut child = cmd.spawn()
         .map_err(|_| "Could not load models. Check the Codex CLI installation.")?;
     let mut input = child.stdin.take().unwrap();
     let output = child.stdout.take().unwrap();
@@ -72,6 +75,8 @@ fn query(mut cmd: Command, timeout: Duration) -> Result<Value, String> {
         }
     })();
     drop(input);
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     let _ = reader.join();
     result

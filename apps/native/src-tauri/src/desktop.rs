@@ -111,7 +111,7 @@ fn cache_host_binary(exe: &std::path::Path, root: &std::path::Path) -> Result<Pa
         .map_err(|e| e.to_string());
     }
     // Unbundled development executables do not depend on a bundle Info.plist.
-    let target = dir.join(name);
+    let target = dir.join(if cfg!(windows) { format!("{name}.exe") } else { name });
     if !target.exists() {
         fs::copy(exe, &target).map_err(|e| e.to_string())?;
     }
@@ -132,6 +132,33 @@ fn verify_bundle(bundle: &std::path::Path) -> Result<(), String> {
     }
     Ok(())
 }
+// Windows GetModuleFileName (current_exe) and canonicalize can spell the same
+// executable differently (notably the \\?\ prefix). Compare resolved paths there.
+fn host_build_matches(build: Option<&str>, binary: &std::path::Path) -> bool {
+    if build == binary.to_str() { return true; }
+    #[cfg(windows)]
+    if let Some(build) = build {
+        if let (Ok(actual), Ok(expected)) = (fs::canonicalize(build), fs::canonicalize(binary)) {
+            return actual == expected;
+        }
+    }
+    false
+}
+#[cfg(all(test, windows))]
+mod windows_host_identity_tests {
+    use super::*;
+    #[test]
+    fn extended_and_regular_executable_paths_identify_the_same_host() {
+        let exe = std::env::current_exe().unwrap();
+        let canonical = fs::canonicalize(&exe).unwrap();
+        let extended = canonical.to_str().unwrap();
+        let regular = extended.strip_prefix(r"\\?\").expect("Windows canonical path prefix");
+        assert!(host_build_matches(Some(regular), &canonical));
+        assert!(host_build_matches(Some(extended), std::path::Path::new(regular)));
+        assert!(!host_build_matches(None, &canonical));
+        assert!(!host_build_matches(Some("missing-other-build.exe"), &canonical));
+    }
+}
 fn ensure_host(host: &Host) -> Result<(), String> {
     let mut last = host.upgrade_attempt.lock().unwrap();
     *last = Some(std::time::Instant::now());
@@ -146,9 +173,8 @@ fn ensure_host_inner(host: &Host, running: Option<usize>) -> Result<(), String> 
 }
 fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
     let binary = host.binary.clone();
-    let build = binary.to_string_lossy();
     if let Ok(reply) = freddai_core::host::call(&host.root, "hello", json!({})) {
-        if reply["version"] == freddai_core::host::VERSION && reply["build"] == build.as_ref() {
+        if reply["version"] == freddai_core::host::VERSION && host_build_matches(reply["build"].as_str(), &binary) {
             host.upgrade_resolved();
             return Ok(());
         }
@@ -158,7 +184,7 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(300));
     }
-    let mut cmd = Command::new(binary);
+    let mut cmd = freddai_core::platform::quiet_command(binary);
     cmd.arg("--host")
         .arg(&host.root)
         .current_dir(&host.root)
@@ -177,13 +203,19 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
             });
         }
     }
+    #[cfg(windows)]
+    {
+        let log_path = host.root.join("host.log");
+        let log = fs::OpenOptions::new().create(true).append(true).open(log_path).map_err(|e| e.to_string())?;
+        cmd.stderr(Stdio::from(log));
+    }
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     for _ in 0..50 {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return Err(format!("Background host exited during startup ({status}). See ~/Library/Logs/Freddai/native.log for details."));
+            return Err(format!("Background host exited during startup ({status}). {}", if cfg!(windows) { format!("See {} for details.", host.root.join("host.log").display()) } else { "See ~/Library/Logs/Freddai/native.log for details.".into() }));
         }
         if freddai_core::host::call(&host.root, "hello", json!({}))
-            .is_ok_and(|reply| reply["build"].as_str() == host.binary.to_str()) {
+            .is_ok_and(|reply| host_build_matches(reply["build"].as_str(), &host.binary)) {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
@@ -234,7 +266,7 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
     match freddai_core::host::call(&host.root, method, p.clone()) {
         result if method == "snapshot_since" && match &result {
             Err(e) => e.contains("Unknown host command"),
-            Ok(reply) => reply["build"].as_str() != host.binary.to_str(),
+            Ok(reply) => !host_build_matches(reply["build"].as_str(), &host.binary),
         } => {
             // Polling must retry after a startup upgrade was deferred by active work.
             // Otherwise the full-database compatibility fallback can remain active forever.
@@ -293,9 +325,9 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                 let h2 = std::time::Instant::now();
                 let hello = freddai_core::host::call(&host.root, "hello", json!({}))?;
                 hello_ms = freddai_core::timing::ms(h2);
-                result["host_update_pending"] = json!(hello["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(hello["build"].as_str(), &host.binary));
             } else if result.get("host_update_pending").is_none() {
-                result["host_update_pending"] = json!(result["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(result["build"].as_str(), &host.binary));
             }
             static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
             let gap = {
@@ -472,7 +504,7 @@ async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, Strin
     .await
 }
 #[tauri::command]
-async fn save_thread_list(h: State<'_, Host>, settings: crate::companion_server::ThreadListSettings) -> Result<(), String> {
+async fn save_thread_list(h: State<'_, Host>, settings: crate::thread_list_settings::ThreadListSettings) -> Result<(), String> {
     let dir = h.root.join("companion");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("thread-list.json");
@@ -752,6 +784,10 @@ async fn voice_cancel_recording() -> Result<(), String> {
 }
 #[tauri::command]
 fn startup_status() -> bool {
+    #[cfg(windows)]
+    return crate::windows_startup::enabled();
+    #[cfg(not(windows))]
+    {
     std::env::var_os("HOME")
         .map(|h| {
             PathBuf::from(h)
@@ -760,11 +796,16 @@ fn startup_status() -> bool {
         })
         .unwrap_or(false)
 }
+}
 #[tauri::command]
 fn set_start_at_login(h: State<Host>, enabled: bool) -> Result<(), String> {
     configure_start_at_login(h.inner(), enabled)
 }
 fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    return crate::windows_startup::configure(&h.binary, &h.root, enabled);
+    #[cfg(not(windows))]
+    {
     let home = std::env::var_os("HOME").ok_or("Cannot find home directory")?;
     let dir = PathBuf::from(home).join("Library/LaunchAgents");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -784,6 +825,7 @@ fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
     let bin = h.binary.clone();
     let plist=format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>com.freddai.host</string><key>ProgramArguments</key><array><string>{}</string><string>--host</string><string>{}</string></array><key>RunAtLoad</key><true/><key>ProcessType</key><string>Background</string></dict></plist>",xml(&bin.to_string_lossy()),xml(&h.root.to_string_lossy()));
     fs::write(file, plist).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -1194,6 +1236,7 @@ mod upgrade_retry_tests {
         assert_eq!(running_sessions(&json!({"error":"x"})), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn forced_restart_on_legacy_host_fails_loudly() {
         use std::os::unix::net::UnixListener;
