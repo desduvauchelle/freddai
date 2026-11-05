@@ -6,19 +6,16 @@ $installer = (Get-ChildItem 'target/release/bundle/nsis/*.exe' | Select-Object -
 $probe = (Resolve-Path 'target/debug/examples/host_probe.exe').Path
 $fixture = Join-Path $env:TEMP ('freddai-install-test-' + [guid]::NewGuid())
 $install = Join-Path $fixture 'app'
-$debugArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $app = $null
 $root = $nativeRoot
 try {
   # The disposable runner has no Freddai profile. Preserve Windows' real known
   # folders so WebView2 can discover its installed runtime and initialize normally.
   New-Item -ItemType Directory -Force 'output/windows-validation' | Out-Null
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
   $setup = Start-Process $installer -ArgumentList @('/S', ('/D=' + $install)) -Wait -PassThru
   if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
   $binary = Join-Path $install 'freddai-native.exe'
   if (!(Test-Path $binary)) { throw 'Installed executable missing' }
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
   $app = Start-Process $binary -PassThru -RedirectStandardError 'output/windows-validation/native-stderr.log' -RedirectStandardOutput 'output/windows-validation/native-stdout.log'
   for ($i = 0; $i -lt 120; $i++) {
     Start-Sleep -Milliseconds 500
@@ -27,8 +24,7 @@ try {
     if ($app.MainWindowHandle -ne 0) { break }
   }
   if ($app.MainWindowHandle -eq 0) { throw 'No native app window appeared' }
-  node scripts/tests/windows-ui.mjs
-  if ($LASTEXITCODE -ne 0) { throw 'Installed app UI verification failed' }
+  ./scripts/tests/windows-ui.ps1 -WindowHandle $app.MainWindowHandle
   $root = $nativeRoot
   $hello = & $probe hello $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0) { throw 'Installed host handshake failed' }
@@ -66,5 +62,4 @@ try {
   $bitmap.Dispose()
   if ($app -and !$app.HasExited) { Stop-Process -Id $app.Id }
   if ($root -and (Test-Path $root)) { & $probe upgrade_idle $root 2>$null }
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArgs
 }
