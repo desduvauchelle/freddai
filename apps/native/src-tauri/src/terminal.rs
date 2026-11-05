@@ -175,9 +175,17 @@ mod tests {
         let mut s = PtySession::spawn(&dir, 80, 24, move |d| { let _ = tx.send(d); }, move |c| { let _ = etx.send(c); }).unwrap();
         #[cfg(not(windows))]
         s.write("echo freddai-$((20+22))\nexit 3\n").unwrap();
-        #[cfg(windows)]
-        s.write("Write-Output ('freddai-' + (20+22))\r\nexit 3\r\n").unwrap();
         let mut out = String::new();
+        #[cfg(windows)]
+        {
+            // ConPTY asks its terminal emulator for the initial cursor position.
+            // The app's xterm answers this; the headless test must emulate it.
+            while !out.contains("\x1b[6n") {
+                out.push_str(&rx.recv_timeout(Duration::from_secs(10)).expect("ConPTY cursor query"));
+            }
+            s.write("\x1b[1;1R").unwrap();
+            s.write("Write-Output ('freddai-' + (20+22))\r\nexit 3\r\n").unwrap();
+        }
         while let Ok(d) = rx.recv_timeout(Duration::from_secs(10)) { out.push_str(&d); }
         assert!(out.contains("freddai-42"), "output was: {out:?}");
         assert_eq!(erx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(3));
