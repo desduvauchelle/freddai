@@ -1,0 +1,17 @@
+name: Windows runtime
+on:
+  push:
+    branches: [codex/windows-runtime]
+  pull_request:
+    paths: ['crates/**', 'apps/native/**', 'scripts/tests/windows-*.ps1', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked -p freddai-core --example host_probe
+      - run: ./scripts/tests/windows-host.ps1
