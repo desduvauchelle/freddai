@@ -2059,7 +2059,7 @@ export function DesktopApp() {
           )}
           {dialog === "companion" && <CompanionSettings native={native} />}
           {dialog === "appearance" && <AppearanceSettings appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
-          {dialog === "voice" && <VoiceSettings native={native}/>}
+          {dialog === "voice" && <VoiceSettings native={native && /Mac/.test(navigator.platform)}/>}
           {dialog === "agentconfig" && <AgentConfigSettings native={native} accounts={db.accounts} projects={db.projects}/>}
           {dialog === "background" && <BackgroundSettings native={native}/>}
           {dialog === "threads" && (
