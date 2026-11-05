@@ -67,6 +67,19 @@ impl PtySession {
         let writer = pair.master.take_writer().map_err(|e| format!("Cannot write to terminal: {e}"))?;
         let child = Arc::new(Mutex::new(child));
         let waiter = child.clone();
+        #[cfg(windows)]
+        std::thread::spawn(move || {
+            // ConPTY may retain its output pipe after the shell exits. Waiting for
+            // EOF before checking the process would never emit terminal-exit.
+            let code = loop {
+                match waiter.lock().map_err(|_| ()).and_then(|mut c| c.try_wait().map_err(|_| ())) {
+                    Ok(Some(status)) => break Some(status.exit_code()),
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                    Err(()) => break None,
+                }
+            };
+            on_exit(code);
+        });
         std::thread::spawn(move || {
             let (mut buf, mut pending) = ([0u8; 8192], Vec::new());
             loop {
@@ -80,6 +93,8 @@ impl PtySession {
                 }
             }
             if !pending.is_empty() { on_data(String::from_utf8_lossy(&pending).into_owned()); }
+            #[cfg(not(windows))]
+            {
             // EOF: the shell (or whole session) ended. Poll so close() can still take the lock to kill.
             let code = loop {
                 match waiter.lock().map_err(|_| ()).and_then(|mut c| c.try_wait().map_err(|_| ())) {
@@ -89,6 +104,7 @@ impl PtySession {
                 }
             };
             on_exit(code);
+            }
         });
         Ok(Self { master: pair.master, writer, child })
     }
