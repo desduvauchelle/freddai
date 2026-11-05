@@ -10,7 +10,7 @@ $saved = @{}
 foreach ($key in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
 $debugArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $app = $null
-$root = $null
+$root = $nativeRoot
 try {
   # Empty profile: no provider accounts, credentials or agent turns are fixtures.
   foreach ($key in $saved.Keys) {
@@ -18,6 +18,7 @@ try {
     New-Item -ItemType Directory -Force $dir | Out-Null
     [Environment]::SetEnvironmentVariable($key, $dir)
   }
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
   $setup = Start-Process $installer -ArgumentList @('/S', ('/D=' + $install)) -Wait -PassThru
   if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
   $binary = Join-Path $install 'freddai-native.exe'
@@ -56,6 +57,18 @@ try {
   Start-Sleep -Seconds 1
   Write-Output 'PASS: NSIS install, visible native window, matching host, empty snapshot, GUI exit and reopen'
 } finally {
+  New-Item -ItemType Directory -Force 'output/windows-validation' | Out-Null
+  Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'freddai|msedgewebview' } | Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Depth 4 | Set-Content 'output/windows-validation/processes.json'
+  if (Test-Path (Join-Path $nativeRoot 'host.log')) { Copy-Item (Join-Path $nativeRoot 'host.log') 'output/windows-validation/host.log' }
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  $bitmap.Save((Join-Path (Get-Location) 'output/windows-validation/desktop.png'))
+  $graphics.Dispose()
+  $bitmap.Dispose()
   if ($app -and !$app.HasExited) { Stop-Process -Id $app.Id }
   if ($root -and (Test-Path $root)) { & $probe upgrade_idle $root 2>$null }
   foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }

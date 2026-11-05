@@ -4,15 +4,19 @@ import fs from 'node:fs/promises';
 
 const deadline = Date.now() + 60_000;
 let page;
+let targets = [];
+let connectionError;
 while (Date.now() < deadline) {
   try {
-    const targets = await fetch('http://127.0.0.1:9223/json/list').then(r => r.json());
-    page = targets.find(p => p.type === 'page' && /tauri|localhost/.test(p.url));
+    targets = await fetch('http://127.0.0.1:9223/json/list').then(r => r.json());
+    page = targets.find(p => ['page', 'webview'].includes(p.type) && /tauri|localhost/.test(p.url));
     if (page?.webSocketDebuggerUrl) break;
-  } catch {}
+  } catch (error) { connectionError = String(error); }
   await new Promise(r => setTimeout(r, 300));
 }
-assert(page?.webSocketDebuggerUrl, 'Installed app did not expose its test WebView');
+await fs.mkdir('output/windows-validation', { recursive: true });
+await fs.writeFile('output/windows-validation/connection.json', JSON.stringify({ targets, connectionError }, null, 2));
+assert(page?.webSocketDebuggerUrl, `Installed app did not expose its test WebView: ${JSON.stringify({ targets, connectionError })}`);
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
 let next = 0;
