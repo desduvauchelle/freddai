@@ -8,8 +8,8 @@ export { defaultSelection } from "./agent-selection";
 export type { AgentSelection } from "./agent-selection";
 import { effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from "./agent-selection";
 
-export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels, iconOnly = false }: {
-  iconOnly?: boolean; account?: Account; native: boolean; value: AgentSelection; onChange: (value: AgentSelection) => void; disabled?: boolean; provider?: string; loadModels?: () => Promise<Model[]>;
+export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels, iconOnly = false, context = "the next message" }: {
+  context?: string; iconOnly?: boolean; account?: Account; native: boolean; value: AgentSelection; onChange: (value: AgentSelection) => void; disabled?: boolean; provider?: string; loadModels?: () => Promise<Model[]>;
 }) {
   const id = useId();
   const [expanded, setExpanded] = useState(false);
@@ -35,7 +35,7 @@ export function AgentControls({ account, native, value, onChange, disabled = fal
       {iconOnly && <Cpu size={18} aria-hidden="true"/>}<span className="agent-model-label">{choices.find(choice => choice.value === value.model)?.label || value.model || "Model default"}</span>{value.effort !== "default" && <span className="agent-effort-label">{effortLabel(value.effort)}</span>}<ChevronDown size={12} aria-hidden="true"/>
     </summary>
     <div className="agent-controls-panel">
-      <p>{provider ? providerName(provider) : "Choose an account"} · Applies to the next message</p>
+      <p>{provider ? providerName(provider) : "Choose an account"} · Applies to {context}</p>
       <label htmlFor={`${id}-model`}>Model</label>
       <select id={`${id}-model`} disabled={disabled || !provider} value={custom || !known ? "__custom" : value.model} onChange={e => {
         if (e.target.value === "__custom") { setCustom(true); return; }

@@ -1,3 +1,5 @@
+import { AgentControls } from "./AgentControls";
+import { defaultSelection, type AgentSelection } from "./agent-selection";
 import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Button } from "@freddai/ui/components/button";
@@ -45,6 +47,9 @@ export function todayProjects(sessions: readonly Session[], projects: readonly P
 export const needsYou = (sessions: readonly Session[]) => sessions.filter(t => isLive(t) && !!t.pending).sort(compareThreadRecency);
 
 export type HomeViewProps = {
+  native?: boolean;
+  homeSelections?: Record<string, AgentSelection>;
+  onHomeSelection?: (account: string, selection: AgentSelection) => void;
   sessions: Session[];
   projects: Project[];
   accounts: Account[];
@@ -123,9 +128,10 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   </article>;
 }
 
-export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules }: HomeViewProps) {
+export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection }: HomeViewProps) {
   const clock = now ?? Date.now();
   const tiles = useMemo(() => todayProjects(sessions, projects, clock), [sessions, projects, clock]);
+  const launchAccounts = accounts.filter(account => projects.some(project => { const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
   const waiting = useMemo(() => needsYou(sessions), [sessions]);
   const [openProject, setOpenProject] = useState<string | null>(null);
   const live = sessions.filter(isLive);
@@ -147,7 +153,13 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
 
     <section className="home-section" aria-label="Today">
       <div className="home-section-title"><span>Today</span>
+        <div className="home-header-actions">
+          {onHomeSelection && launchAccounts.map(account => <div key={account.id} className="home-model" aria-label={`Model for ${account.name}`} title={`Agent for Home microphones and new threads · ${account.name}`}>
+            {launchAccounts.length > 1 && <span>{account.name}</span>}
+            <AgentControls account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="Home microphones and new threads" />
+          </div>)}
         <Button type="button" variant="ghost" size="sm" onClick={onAddProject}><FolderPlus size={13} aria-hidden="true" />Add project</Button>
+        </div>
       </div>
       {tiles.length ? <div className="home-tiles">
         {tiles.map(entry => <Tile key={entry.project.id} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}

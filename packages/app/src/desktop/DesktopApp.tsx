@@ -576,6 +576,7 @@ export function DesktopApp() {
   const [resumePrompt, setResumePrompt] = useState("Continue where you left off.");
   const dialogThread = db.sessions.find(t => t.id === threadDialog?.id);
   const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default");
+  const [homeSelections, setHomeSelections] = usePreference<Record<string, AgentSelection>>("freddai.home-agent-selections", {});
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
   const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
   const [replySelections, setReplySelections] = useState<Record<string, AgentSelection>>({});
@@ -1027,7 +1028,7 @@ export function DesktopApp() {
   }
   // Home prompt: same launch path and defaults as a fresh New thread draft (project/global default account,
   // saved worktree preference, current default permission mode). Errors propagate to the tile.
-  const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode);
+  const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode, homeSelections);
   async function createHomeThread(project: string, prompt: string): Promise<string> {
     if (!native) throw new Error("Open the Freddai macOS app to start threads.");
     const plan = resolveHomeTile(project);
@@ -1706,6 +1707,8 @@ export function DesktopApp() {
             canCreate={native && !working && !launching}
             onOpenThread={id => { setHome(false); setSelected(id); }}
             onAddProject={addProject}
+            native={native} homeSelections={homeSelections}
+            onHomeSelection={(account, selection) => setHomeSelections(previous => ({ ...previous, [account]: selection }))}
             onCreateThread={createHomeThread}
             resolveLaunch={resolveHomeTile}
             onRespond={respondHome}

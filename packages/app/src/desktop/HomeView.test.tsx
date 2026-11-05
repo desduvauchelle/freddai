@@ -148,3 +148,13 @@ it("resolveHomeLaunch picks the project's fixed account and reports missing ones
   expect(resolveHomeLaunch(db({ accounts: [] }), "alpha", "ask")).toMatchObject({ ok: false });
   expect(resolveHomeLaunch(db(), "nope", "ask")).toMatchObject({ ok: false });
 });
+
+it("changes the Home microphone model beside Add project", () => {
+  const onHomeSelection = vi.fn();
+  render(<HomeView {...props([thread("1")])} homeSelections={{ a: { model: "opus", effort: "default" } }} onHomeSelection={onHomeSelection} />);
+  const header = screen.getByRole("button", { name: "Add project" }).parentElement!;
+  expect(within(header).getByLabelText("Model and effort").textContent).toContain("Opus");
+  fireEvent.click(within(header).getByLabelText("Model and effort"));
+  fireEvent.change(within(header).getByLabelText("Model"), { target: { value: "sonnet" } });
+  expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "sonnet", effort: "default" });
+});
