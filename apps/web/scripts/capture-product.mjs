@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-const fixture = fileURLToPath(new URL('../../../../packages/app/tests/fixtures/marketing.html', import.meta.url));
+const fixture = fileURLToPath(new URL('../../../packages/app/tests/fixtures/marketing.html', import.meta.url));
 const output = fileURLToPath(new URL('../public/screenshots/', import.meta.url));
 const mobileSelector = query => query ? '.companion' : '.home-tiles';
 const browser=await chromium.launch({channel:'chrome',headless:true});

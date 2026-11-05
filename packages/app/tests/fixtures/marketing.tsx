@@ -8,11 +8,11 @@ import '../../src/workspace.css';
 import '../../src/desktop/desktop.css';
 import '../../src/desktop/themes.css';
 import { mockIPC } from '@tauri-apps/api/mocks';
+const now = new Date(2026, 10, 4, 12, 0).getTime();
 mockIPC((cmd, args) => {
   if (cmd !== 'day_summary') throw new Error('No native actions in marketing capture');
-  return {date: args?.date, running: false, error: null, threads: 6, summary: {date: args?.date, markdown: 'Across three projects: shipped onboarding, fixed tablet navigation, and added search pagination.\n\nStill in progress: pricing page polish and offline support.', generated_at: Date.now(), provider: 'Preview', account: '', model: 'Illustrative recap', threads: 6}};
+  return {date: args?.date, running: false, error: null, threads: 6, summary: {date: args?.date, markdown: 'Across three projects: shipped onboarding, fixed tablet navigation, and added search pagination.\n\nStill in progress: pricing page polish and offline support.', generated_at: now, provider: 'Preview', account: '', model: 'Illustrative recap', threads: 6}};
 });
-const now = Date.now();
 const projects: Project[] = [
   { id: 'web', name: 'Website', color: '#9b91d2', path: '/demo/website', policy: 'inherit', account: null, last: null },
   { id: 'app', name: 'Mobile app', color: '#86b8a3', path: '/demo/mobile', policy: 'inherit', account: null, last: null },
