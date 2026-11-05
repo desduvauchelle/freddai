@@ -1,16 +1,19 @@
-param([long]$WindowHandle)
+param([int]$AppProcessId)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force 'output/windows-validation' | Out-Null
-$window = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$WindowHandle)
+$processCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
 $deadline = [DateTime]::UtcNow.AddSeconds(60)
 $names = @()
 $buttons = @()
 do {
-  $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+  # Tauri creates an early event-loop HWND before its actual WebView window.
+  # Resolve current top-level windows each time instead of retaining that handle.
+  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $processCondition)
+  $elements = @($windows | ForEach-Object { $_.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) })
   $names = @($elements | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
   $buttons = @($elements | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button })
   if (($names -contains 'Set up agents & accounts') -and ($names -contains 'Scan again') -and $buttons.Count -gt 3) { break }

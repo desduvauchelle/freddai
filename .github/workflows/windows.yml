@@ -6,6 +6,11 @@ on:
   pull_request:
     paths: ['crates/**', 'apps/native/**', 'scripts/tests/windows-*', '.github/workflows/windows.yml']
   workflow_dispatch:
+    inputs:
+      installer_run:
+        description: 'Optional existing run containing Freddai-windows-x64; rerun installed-app checks without rebuilding'
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
@@ -34,12 +39,23 @@ jobs:
         with:
           node-version: '24'
       - uses: pnpm/action-setup@v4
+        if: ${{ !inputs.installer_run }}
       - run: pnpm install --frozen-lockfile
+        if: ${{ !inputs.installer_run }}
       - id: build
+        if: ${{ !inputs.installer_run }}
         run: pnpm --filter @freddai/native tauri build --bundles nsis
       - run: cargo test --release --locked -p freddai-native terminal::tests
+        if: ${{ !inputs.installer_run }}
       - run: cargo test --release --locked -p freddai-native windows_host_identity_tests
+        if: ${{ !inputs.installer_run }}
       - run: cargo build --locked -p freddai-core --example host_probe
+      - name: Download existing installer for acceptance rerun
+        if: ${{ inputs.installer_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLER_RUN: ${{ inputs.installer_run }}
+        run: gh run download $env:INSTALLER_RUN --repo $env:GITHUB_REPOSITORY -n Freddai-windows-x64 -D target/release/bundle/nsis
       - run: ./scripts/tests/windows-install.ps1
       - uses: actions/upload-artifact@v4
         if: always()

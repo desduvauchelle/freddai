@@ -24,7 +24,7 @@ try {
     if ($app.MainWindowHandle -ne 0) { break }
   }
   if ($app.MainWindowHandle -eq 0) { throw 'No native app window appeared' }
-  ./scripts/tests/windows-ui.ps1 -WindowHandle $app.MainWindowHandle
+  ./scripts/tests/windows-ui.ps1 -AppProcessId $app.Id
   $root = $nativeRoot
   $hello = & $probe hello $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0) { throw 'Installed host handshake failed' }
