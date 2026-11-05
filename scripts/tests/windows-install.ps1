@@ -44,6 +44,7 @@ try {
   if (!$app.CloseMainWindow() -or !$app.WaitForExit(10000)) { throw 'Reopened app did not close normally' }
   & $probe upgrade_idle $root
   if ($LASTEXITCODE -ne 0) { throw 'Test host could not shut down' }
+  $root = $null # Shutdown succeeded; do not turn a second cleanup RPC into a failure.
   Start-Sleep -Seconds 1
   Write-Output 'PASS: NSIS install, visible native window, matching host, empty snapshot, GUI exit and reopen'
 } finally {
