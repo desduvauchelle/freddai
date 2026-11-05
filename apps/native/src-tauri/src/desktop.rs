@@ -132,6 +132,33 @@ fn verify_bundle(bundle: &std::path::Path) -> Result<(), String> {
     }
     Ok(())
 }
+// Windows GetModuleFileName (current_exe) and canonicalize can spell the same
+// executable differently (notably the \\?\ prefix). Compare resolved paths there.
+fn host_build_matches(build: Option<&str>, binary: &std::path::Path) -> bool {
+    if build == binary.to_str() { return true; }
+    #[cfg(windows)]
+    if let Some(build) = build {
+        if let (Ok(actual), Ok(expected)) = (fs::canonicalize(build), fs::canonicalize(binary)) {
+            return actual == expected;
+        }
+    }
+    false
+}
+#[cfg(all(test, windows))]
+mod windows_host_identity_tests {
+    use super::*;
+    #[test]
+    fn extended_and_regular_executable_paths_identify_the_same_host() {
+        let exe = std::env::current_exe().unwrap();
+        let canonical = fs::canonicalize(&exe).unwrap();
+        let extended = canonical.to_str().unwrap();
+        let regular = extended.strip_prefix(r"\\?\").expect("Windows canonical path prefix");
+        assert!(host_build_matches(Some(regular), &canonical));
+        assert!(host_build_matches(Some(extended), std::path::Path::new(regular)));
+        assert!(!host_build_matches(None, &canonical));
+        assert!(!host_build_matches(Some("missing-other-build.exe"), &canonical));
+    }
+}
 fn ensure_host(host: &Host) -> Result<(), String> {
     let mut last = host.upgrade_attempt.lock().unwrap();
     *last = Some(std::time::Instant::now());
@@ -146,9 +173,8 @@ fn ensure_host_inner(host: &Host, running: Option<usize>) -> Result<(), String> 
 }
 fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
     let binary = host.binary.clone();
-    let build = binary.to_string_lossy();
     if let Ok(reply) = freddai_core::host::call(&host.root, "hello", json!({})) {
-        if reply["version"] == freddai_core::host::VERSION && reply["build"] == build.as_ref() {
+        if reply["version"] == freddai_core::host::VERSION && host_build_matches(reply["build"].as_str(), &binary) {
             host.upgrade_resolved();
             return Ok(());
         }
@@ -189,7 +215,7 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
             return Err(format!("Background host exited during startup ({status}). {}", if cfg!(windows) { format!("See {} for details.", host.root.join("host.log").display()) } else { "See ~/Library/Logs/Freddai/native.log for details.".into() }));
         }
         if freddai_core::host::call(&host.root, "hello", json!({}))
-            .is_ok_and(|reply| reply["build"].as_str() == host.binary.to_str()) {
+            .is_ok_and(|reply| host_build_matches(reply["build"].as_str(), &host.binary)) {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
@@ -240,7 +266,7 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
     match freddai_core::host::call(&host.root, method, p.clone()) {
         result if method == "snapshot_since" && match &result {
             Err(e) => e.contains("Unknown host command"),
-            Ok(reply) => reply["build"].as_str() != host.binary.to_str(),
+            Ok(reply) => !host_build_matches(reply["build"].as_str(), &host.binary),
         } => {
             // Polling must retry after a startup upgrade was deferred by active work.
             // Otherwise the full-database compatibility fallback can remain active forever.
@@ -299,9 +325,9 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                 let h2 = std::time::Instant::now();
                 let hello = freddai_core::host::call(&host.root, "hello", json!({}))?;
                 hello_ms = freddai_core::timing::ms(h2);
-                result["host_update_pending"] = json!(hello["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(hello["build"].as_str(), &host.binary));
             } else if result.get("host_update_pending").is_none() {
-                result["host_update_pending"] = json!(result["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(result["build"].as_str(), &host.binary));
             }
             static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
             let gap = {
