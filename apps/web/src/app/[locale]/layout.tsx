@@ -6,8 +6,8 @@ import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "../globals.css";
 
 export const metadata: Metadata = {
-  title: "Freddai | A home for your coding threads",
-  description: "A native workspace for your Codex and Claude Code sessions, projects, and next steps.",
+  title: "Freddai | All your coding agents and accounts in one app",
+  description: "Switch coding agents and accounts, see usage limits, organize project threads, and keep working from your phone or iPad with the Freddai companion.",
   icons: { icon: "/brand/icon.svg" },
 };
 

@@ -33,3 +33,11 @@ WEB_TEST_URL=http://127.0.0.1:3000 node --test apps/web/tests/foundation.test.mj
 Without `WEB_TEST_URL`, only the pure download and theme checks run. Integration checks cover root HTTP 200, canonical redirect, 404, SDK disabled mode, security headers, and cross-origin rejection. The root check guards a NextURL loopback-host normalization issue: proxy URLs retain the actual request Host, and `skipProxyUrlNormalize` prevents the Next.js adapter from normalizing it again.
 
 SDK 0.1.178 has an upstream packaging warning for the optional `growth-engine-pull-forms` CLI bin path. Runtime imports build successfully. The form-pulling CLI is not configured or required here.
+
+## Marketing product views
+
+The landing page leads with switching connected coding agents/accounts and seeing provider usage in one workspace. It also covers the Mac-paired companion, thread grouping/read visibility, Home capture and user-generated daily recaps. Windows remains coming soon; iPhone/iPad remain pending Apple approval. Published release discovery still controls download availability.
+
+The two product captures use the actual HomeView and MobileApp with illustrative projects and no accounts, credentials or live-provider requests. `packages/app/tests/fixtures/marketing.tsx` is a Vite-only capture surface, excluded from application entry points. Dispatch is disabled; only read-only illustrative daily summaries are supplied. Captions identify the previews as illustrative.
+
+With `pnpm dev:app` running, regenerate using `PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node apps/web/scripts/capture-product.mjs`. With the production website server running, verify six light/dark desktop/tablet/phone layouts with `PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node apps/web/tests/landing.browser.mjs`. `WEB_TEST_URL` supports production verification as well.

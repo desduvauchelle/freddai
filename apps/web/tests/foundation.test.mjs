@@ -20,7 +20,7 @@ test('system theme follows OS while an explicit choice wins', () => {
 test('production home serves HTML without a redirect loop', { skip: !base }, async () => {
   const res = await fetch(base, { redirect: 'manual' });
   assert.equal(res.status, 200);
-  assert.match(await res.text(), /Many threads\. One place to focus\./);
+  assert.match(await res.text(), /Switch agents\. Not your whole workflow\./);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
 });
 test('default locale redirects to canonical home and unknown pages remain 404', { skip: !base }, async () => {
