@@ -35,7 +35,8 @@ jobs:
           node-version: '24'
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @freddai/native tauri build --bundles nsis
+      - id: build
+        run: pnpm --filter @freddai/native tauri build --bundles nsis
       - run: cargo test --release --locked -p freddai-native terminal::tests
       - run: cargo build --locked -p freddai-core --example host_probe
       - run: ./scripts/tests/windows-install.ps1
@@ -45,6 +46,7 @@ jobs:
           name: Windows-UI-verification
           path: output/windows-validation/*
       - uses: actions/upload-artifact@v4
+        if: always() && steps.build.outcome == 'success'
         with:
           name: Freddai-windows-x64
           path: target/release/bundle/nsis/*.exe

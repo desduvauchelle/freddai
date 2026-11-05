@@ -6,25 +6,20 @@ $installer = (Get-ChildItem 'target/release/bundle/nsis/*.exe' | Select-Object -
 $probe = (Resolve-Path 'target/debug/examples/host_probe.exe').Path
 $fixture = Join-Path $env:TEMP ('freddai-install-test-' + [guid]::NewGuid())
 $install = Join-Path $fixture 'app'
-$saved = @{}
-foreach ($key in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
 $debugArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $app = $null
 $root = $nativeRoot
 try {
-  # Empty profile: no provider accounts, credentials or agent turns are fixtures.
-  foreach ($key in $saved.Keys) {
-    $dir = Join-Path $fixture $key
-    New-Item -ItemType Directory -Force $dir | Out-Null
-    [Environment]::SetEnvironmentVariable($key, $dir)
-  }
+  # The disposable runner has no Freddai profile. Preserve Windows' real known
+  # folders so WebView2 can discover its installed runtime and initialize normally.
+  New-Item -ItemType Directory -Force 'output/windows-validation' | Out-Null
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
   $setup = Start-Process $installer -ArgumentList @('/S', ('/D=' + $install)) -Wait -PassThru
   if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
   $binary = Join-Path $install 'freddai-native.exe'
   if (!(Test-Path $binary)) { throw 'Installed executable missing' }
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
-  $app = Start-Process $binary -PassThru
+  $app = Start-Process $binary -PassThru -RedirectStandardError 'output/windows-validation/native-stderr.log' -RedirectStandardOutput 'output/windows-validation/native-stdout.log'
   for ($i = 0; $i -lt 120; $i++) {
     Start-Sleep -Milliseconds 500
     $app.Refresh()
@@ -34,7 +29,6 @@ try {
   if ($app.MainWindowHandle -eq 0) { throw 'No native app window appeared' }
   node scripts/tests/windows-ui.mjs
   if ($LASTEXITCODE -ne 0) { throw 'Installed app UI verification failed' }
-  # Tauri uses the Windows known-folder API, which intentionally ignores APPDATA overrides.
   $root = $nativeRoot
   $hello = & $probe hello $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0) { throw 'Installed host handshake failed' }
@@ -58,6 +52,7 @@ try {
   Write-Output 'PASS: NSIS install, visible native window, matching host, empty snapshot, GUI exit and reopen'
 } finally {
   New-Item -ItemType Directory -Force 'output/windows-validation' | Out-Null
+  if ($app) { $app.Refresh(); Write-Output "App exited=$($app.HasExited) exitCode=$($app.ExitCode)" }
   Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'freddai|msedgewebview' } | Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Depth 4 | Set-Content 'output/windows-validation/processes.json'
   if (Test-Path (Join-Path $nativeRoot 'host.log')) { Copy-Item (Join-Path $nativeRoot 'host.log') 'output/windows-validation/host.log' }
   Add-Type -AssemblyName System.Windows.Forms
@@ -71,6 +66,5 @@ try {
   $bitmap.Dispose()
   if ($app -and !$app.HasExited) { Stop-Process -Id $app.Id }
   if ($root -and (Test-Path $root)) { & $probe upgrade_idle $root 2>$null }
-  foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArgs
 }
