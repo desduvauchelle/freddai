@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::{
     path::Path,
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 /// Maximum diff bytes returned to the viewer / sent for message generation.

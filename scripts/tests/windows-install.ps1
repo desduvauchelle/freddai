@@ -5,6 +5,7 @@ $fixture = Join-Path $env:TEMP ('freddai-install-test-' + [guid]::NewGuid())
 $install = Join-Path $fixture 'app'
 $saved = @{}
 foreach ($key in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+$debugArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $app = $null
 $root = $null
 try {
@@ -18,6 +19,7 @@ try {
   if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
   $binary = Join-Path $install 'freddai-native.exe'
   if (!(Test-Path $binary)) { throw 'Installed executable missing' }
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
   $app = Start-Process $binary -PassThru
   for ($i = 0; $i -lt 120; $i++) {
     Start-Sleep -Milliseconds 500
@@ -26,6 +28,8 @@ try {
     if ($app.MainWindowHandle -ne 0) { break }
   }
   if ($app.MainWindowHandle -eq 0) { throw 'No native app window appeared' }
+  node scripts/tests/windows-ui.mjs
+  if ($LASTEXITCODE -ne 0) { throw 'Installed app UI verification failed' }
   $root = Join-Path $env:APPDATA 'com.freddai.desktop'
   $hello = & $probe hello $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0) { throw 'Installed host handshake failed' }
@@ -51,4 +55,5 @@ try {
   if ($app -and !$app.HasExited) { Stop-Process -Id $app.Id }
   if ($root -and (Test-Path $root)) { & $probe upgrade_idle $root 2>$null }
   foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArgs
 }

@@ -1,6 +1,5 @@
 use std::{
     path::{Path, PathBuf},
-    process::Command,
 };
 fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     let out = crate::platform::quiet_command("git")

@@ -1,7 +1,8 @@
 name: Windows runtime
 on:
   push:
-    branches: [codex/windows-runtime]
+    branches: [main, codex/windows-runtime]
+    paths: ['crates/**', 'apps/native/**', 'packages/**', 'scripts/tests/windows-*.ps1', '.github/workflows/windows.yml', 'Cargo.lock', 'pnpm-lock.yaml']
   pull_request:
     paths: ['crates/**', 'apps/native/**', 'scripts/tests/windows-*.ps1', '.github/workflows/windows.yml']
   workflow_dispatch:
@@ -10,19 +11,25 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo build --locked -p freddai-core --example host_probe
       - run: ./scripts/tests/windows-host.ps1
       - run: cargo test --locked -p freddai-core --lib
   installer:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -32,6 +39,11 @@ jobs:
       - run: cargo test --locked -p freddai-native terminal::tests
       - run: cargo build --locked -p freddai-core --example host_probe
       - run: ./scripts/tests/windows-install.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-UI-verification
+          path: output/windows-validation/*
       - uses: actions/upload-artifact@v4
         with:
           name: Freddai-windows-x64

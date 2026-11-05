@@ -163,4 +163,21 @@ mod tests {
             Some(PathBuf::from(r"C:\Users\A User"))
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn npm_style_cmd_shim_preserves_argument_boundaries() {
+        let root = std::env::temp_dir().join(format!("freddai shim {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("arguments.py");
+        std::fs::write(&script, "import json,sys\nprint(json.dumps(sys.argv[1:]))\n").unwrap();
+        let shim = root.join("fixture.cmd");
+        std::fs::write(&shim, format!("@echo off\r\npython3 \"{}\" %*\r\n", script.display())).unwrap();
+        let args = ["prompt with spaces", "a&b|c<d>e", "quoted \"value\"", "Unicode café"];
+        let output = quiet_command(&shim).args(args).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let actual: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(actual, args);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
