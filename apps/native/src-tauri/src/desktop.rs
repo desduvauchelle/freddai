@@ -1210,6 +1210,7 @@ mod upgrade_retry_tests {
         assert_eq!(running_sessions(&json!({"error":"x"})), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn forced_restart_on_legacy_host_fails_loudly() {
         use std::os::unix::net::UnixListener;
