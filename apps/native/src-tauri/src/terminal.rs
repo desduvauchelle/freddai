@@ -17,12 +17,18 @@ pub struct PtySession {
 }
 
 fn shell_command(cwd: &Path) -> CommandBuilder {
+    #[cfg(not(windows))]
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| {
         eprintln!("terminal: $SHELL is not set; falling back to /bin/zsh");
         "/bin/zsh".into()
     });
+    #[cfg(windows)]
+    let shell = "powershell.exe";
     let mut cmd = CommandBuilder::new(shell);
+    #[cfg(not(windows))]
     cmd.arg("-l");
+    #[cfg(windows)]
+    cmd.args(["-NoLogo", "-NoProfile"]);
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -167,7 +173,10 @@ mod tests {
         let (etx, erx) = mpsc::channel();
         let dir = std::env::temp_dir();
         let mut s = PtySession::spawn(&dir, 80, 24, move |d| { let _ = tx.send(d); }, move |c| { let _ = etx.send(c); }).unwrap();
+        #[cfg(not(windows))]
         s.write("echo freddai-$((20+22))\nexit 3\n").unwrap();
+        #[cfg(windows)]
+        s.write("Write-Output ('freddai-' + (20+22))\r\nexit 3\r\n").unwrap();
         let mut out = String::new();
         while let Ok(d) = rx.recv_timeout(Duration::from_secs(10)) { out.push_str(&d); }
         assert!(out.contains("freddai-42"), "output was: {out:?}");

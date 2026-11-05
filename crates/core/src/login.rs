@@ -74,6 +74,10 @@ impl LoginManager {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
+        #[cfg(windows)]
+        let (mut child, job) = crate::windows_process::spawn(&mut cmd)
+            .map_err(|e| format!("Could not start sign-in: {e}"))?;
+        #[cfg(not(windows))]
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Could not start sign-in: {e}"))?;
@@ -90,6 +94,8 @@ impl LoginManager {
         drop(entries);
         let manager = self.clone();
         std::thread::spawn(move || {
+            #[cfg(windows)]
+            let _job = job;
             let started = Instant::now();
             let result = loop {
                 if manager.0.lock().unwrap().get(&id).is_none_or(|e| e.cancel) {

@@ -400,7 +400,7 @@ pub fn default_home(provider: &str, configured: Option<&Path>) -> Option<PathBuf
     };
     std::env::var_os(key)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(folder)))
+        .or_else(|| crate::platform::home_dir().map(|h| h.join(folder)))
 }
 
 /// Expand `/prompts:name args` with the Codex custom prompt file. Other text is returned untouched.

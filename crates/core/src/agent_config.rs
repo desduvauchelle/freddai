@@ -45,7 +45,7 @@ struct Ctx {
 
 /// Entry point used by the native shell. `root` is Freddai's app-data directory.
 pub fn handle(root: &Path, req: Request) -> Res<Value> {
-    handle_with_home(root, std::env::var_os("HOME").map(PathBuf::from), req)
+    handle_with_home(root, crate::platform::home_dir(), req)
 }
 
 pub fn handle_with_home(root: &Path, user_home: Option<PathBuf>, req: Request) -> Res<Value> {
