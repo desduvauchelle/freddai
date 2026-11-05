@@ -32,15 +32,17 @@ pub(crate) fn executable_in(name: &str, dirs: impl IntoIterator<Item = PathBuf>)
     #[cfg(not(windows))]
     let suffixes = [""];
     dirs.into_iter().flat_map(|dir| suffixes.map(|ext| dir.join(format!("{name}{ext}"))))
-        .find(|p| {
-            let Ok(meta) = p.metadata() else { return false; };
-            if !meta.is_file() { return false; }
-            #[cfg(unix)]
-            { use std::os::unix::fs::PermissionsExt; meta.permissions().mode() & 0o111 != 0 }
-            #[cfg(not(unix))]
-            { true }
-        })
+        .find(|p| is_executable(p))
 }
+pub(crate) fn is_executable(p: &Path) -> bool {
+    let Ok(meta) = p.metadata() else { return false; };
+    if !meta.is_file() { return false; }
+    #[cfg(unix)]
+    { use std::os::unix::fs::PermissionsExt; meta.permissions().mode() & 0o111 != 0 }
+    #[cfg(not(unix))]
+    { true }
+}
+
 pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(program);
     hide_console(&mut command);

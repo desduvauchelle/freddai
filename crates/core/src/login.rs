@@ -162,8 +162,11 @@ impl LoginManager {
 mod tests {
     use super::*;
     fn cmd(script: &str) -> Command {
-        let mut c = Command::new("/bin/sh");
-        c.args(["-c", script]);
+        #[cfg(not(windows))]
+        let mut c = { let mut c = Command::new("/bin/sh"); c.args(["-c", script]); c };
+        #[cfg(windows)]
+        let mut c = { let mut c = Command::new("powershell.exe"); c.args(["-NoProfile", "-Command", &script.replace("sleep 30", "Start-Sleep -Seconds 30")]); c };
+        crate::platform::hide_console(&mut c);
         c
     }
     fn wait(m: &LoginManager) -> LoginState {

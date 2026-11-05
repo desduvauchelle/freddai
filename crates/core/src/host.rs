@@ -3,6 +3,8 @@
 #[path = "windows_host.rs"]
 mod windows_host;
 use crate::runtime::Runtime;
+#[cfg(unix)]
+use std::io::Write;
 use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::{
@@ -11,7 +13,7 @@ use std::os::unix::{
 };
 use std::{
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     time::Duration,
 };

@@ -3697,6 +3697,7 @@ impl Runtime {
 }
 #[cfg(test)]
 mod tests {
+    use crate::platform::is_executable;
     use super::*;
     #[test]
     fn thread_actions_preserve_identity_history_and_execution_folder() {

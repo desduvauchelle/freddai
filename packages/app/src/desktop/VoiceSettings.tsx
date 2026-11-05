@@ -6,6 +6,7 @@ import { Switch } from "@freddai/ui/components/switch";
 import { LANGUAGE_OPTIONS, SHORTCUT_OPTIONS, downloadPercent, formatBytes, useVoice, voice, type VoiceModel, type VoiceShortcut } from "./voice";
 
 export function VoiceSettings({ native }: { native: boolean }) {
+  native = native && /Mac/.test(navigator.platform);
   const { status, statusError } = useVoice();
   const downloading = !!status?.models.some(m => m.download && !m.download.error);
   useEffect(() => {

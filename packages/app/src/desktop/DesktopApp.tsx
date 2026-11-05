@@ -911,6 +911,7 @@ export function DesktopApp() {
   const voiceShortcut = useSyncExternalStore(voice.subscribe, () => { const s = voice.getSnapshot().status; return s?.ready ? s.shortcut : ""; });
   useEffect(() => {
     if (!native) return;
+    if (!/Mac/.test(navigator.platform)) return;
     void voice.refresh();
     const refresh = () => void voice.refresh();
     window.addEventListener("focus", refresh);
@@ -1039,7 +1040,7 @@ export function DesktopApp() {
   // saved worktree preference, current default permission mode). Errors propagate to the tile.
   const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode, homeSelections);
   async function createHomeThread(project: string, prompt: string): Promise<string> {
-    if (!native) throw new Error("Open the Freddai macOS app to start threads.");
+    if (!native) throw new Error("Open the Freddai desktop app to start threads.");
     const plan = resolveHomeTile(project);
     if (!plan.ok) { if (!db.accounts.length) openAccounts(); throw new Error(plan.reason); }
     if (actionLock.current) throw new Error("Another action is still running.");
