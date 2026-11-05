@@ -784,6 +784,7 @@ fn platform() -> &'static str { "desktop" }
 fn companion_devices(h: State<'_,Host>) -> Result<Value,String> {crate::companion_pairing::status(&h.root)}
 #[tauri::command]
 fn companion_device_action(h: State<'_,Host>, action:String, id:String) -> Result<Value,String> {
+    #[cfg(target_os = "macos")]
     if action=="begin" {
         crate::companion_pairing::provision(&h.root)?;
         crate::companion_server::ensure(h.root.clone(),h.binary.clone())?;
