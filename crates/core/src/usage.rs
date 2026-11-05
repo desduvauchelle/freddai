@@ -161,11 +161,14 @@ fn query_rpc(
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
-    let mut child = command
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut command).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
+    let mut child = command.spawn()
         .map_err(|_| "Could not start Codex. Check the CLI installation.".to_string())?;
     let mut input = child.stdin.take().unwrap();
     let output = child.stdout.take().unwrap();
@@ -222,6 +225,8 @@ fn query_rpc(
         }
     })();
     drop(input);
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     let _ = reader.join();
     result
@@ -346,6 +351,9 @@ pub fn read_claude(mut cmd: Command) -> Result<AccountUsage, String> {
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let stdout = child
         .stdout
@@ -377,6 +385,8 @@ pub fn read_claude(mut cmd: Command) -> Result<AccountUsage, String> {
             }
         }
     })();
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }

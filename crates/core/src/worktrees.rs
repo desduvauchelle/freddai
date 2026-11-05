@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = crate::platform::quiet_command("git")
         .current_dir(cwd)
         .args(args)
         .output()

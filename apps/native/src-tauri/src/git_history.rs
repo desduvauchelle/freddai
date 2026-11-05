@@ -47,7 +47,7 @@ pub struct GitHistory {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = freddai_core::platform::quiet_command("git")
         .arg("--no-optional-locks")
         .arg("-C")
         .arg(dir)

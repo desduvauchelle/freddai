@@ -53,7 +53,7 @@ fn run(program: &str, dir: &Path, args: &[&str], ok_codes: &[i32]) -> Result<Str
     if !dir.is_dir() {
         return Err(format!("Project folder not found: {}", dir.display()));
     }
-    let mut cmd = Command::new(program);
+    let mut cmd = freddai_core::platform::quiet_command(program);
     if program == "git" {
         cmd.arg("-C").arg(dir);
     } else {

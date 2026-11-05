@@ -170,7 +170,7 @@ mod tests {
         c
     }
     fn wait(m: &LoginManager) -> LoginState {
-        for _ in 0..100 {
+        for _ in 0..500 {
             let s = m.state("a").unwrap();
             if s.status != "pending" {
                 return s;

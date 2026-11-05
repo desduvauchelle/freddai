@@ -524,11 +524,14 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
     } else {
         c.args(["auth", "status"]);
     }
-    let mut child = c
+    c
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut c).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
+    let mut child = c.spawn()
         .map_err(|e| e.to_string())?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -540,6 +543,8 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    #[cfg(windows)]
+    drop(job);
     terminate(&mut child);
     let name = if provider == "codex" {
         "Codex"

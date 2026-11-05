@@ -102,6 +102,9 @@ pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> 
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let mut input = child.stdin.take().ok_or("No agent input")?;
     let (tx, rx) = mpsc::channel();
@@ -149,6 +152,8 @@ pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> 
             }
         }
     })();
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }
@@ -159,6 +164,9 @@ pub fn verify_grok(mut cmd: Command) -> Result<bool, String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let mut input = child.stdin.take().ok_or("No agent input")?;
     let output = child.stdout.take().unwrap();
@@ -194,6 +202,8 @@ pub fn verify_grok(mut cmd: Command) -> Result<bool, String> {
             }
         }
     })();
+    #[cfg(windows)]
+    drop(job);
     crate::runtime::terminate(&mut child);
     result
 }
