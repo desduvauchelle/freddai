@@ -36,7 +36,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @freddai/native tauri build --bundles nsis
-      - run: cargo test --locked -p freddai-native terminal::tests
+      - run: cargo test --release --locked -p freddai-native terminal::tests
       - run: cargo build --locked -p freddai-core --example host_probe
       - run: ./scripts/tests/windows-install.ps1
       - uses: actions/upload-artifact@v4
