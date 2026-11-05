@@ -412,7 +412,7 @@ function ConversationPane({
         </div>
         <TodoPanel key={`todos-${task.id}`} messages={task.messages} active={busy(task)}/>
         <ConversationUsage key={task.id} usage={task.usage}/>
-        {taskQueue && <MessageQueue queue={taskQueue} active={busy(task)} disabled={working} canSteer={taskAccount?.provider === "codex"} onAction={onQueueAction}/>}
+        {taskQueue && <MessageQueue queue={taskQueue} active={busy(task)} disabled={working} canSteer={!!taskAccount} onAction={onQueueAction}/>}
         <form className="chat-composer" onSubmit={e => void onSend(e)}>
           {fileChips(attachments, onAttachments)}
           <ReplyTextarea
@@ -465,7 +465,7 @@ function ConversationPane({
         </form>
         <p className={taskAccount ? "chat-composer-hint sr-only" : "chat-composer-hint"}>
           {taskAccount
-            ? "Enter to send or queue · ⌘ Enter to steer (Codex) · Shift Enter for new line"
+            ? "Enter to send or queue · ⌘ Enter to steer · Shift Enter for new line"
             : "This connection was removed. Fork thread to continue with a connection you choose."}
         </p>
       </div>
@@ -548,6 +548,15 @@ export function DesktopApp() {
     [recentFinishedPref, setRecentFinished] = usePreference<number>("freddai.recentFinished", RECENT_FINISHED_DEFAULT),
     [readOverlay, setReadOverlay] = useState<Record<string, number>>({}),
     [olderPages, setOlderPages] = useState<Record<string, number>>({});
+  // Publish only sidebar presentation settings; migrate existing local preferences on launch.
+  const threadListSave = useRef(Promise.resolve<unknown>(undefined));
+  useEffect(() => {
+    if (!native) return;
+    const thread_list = { projectOrder: savedProjectOrder, grouped, hideRead, recentFinished: sanitizeRecentCount(recentFinishedPref) };
+    threadListSave.current = threadListSave.current
+      .then(() => invoke("save_thread_list", { settings: thread_list }))
+      .catch(e => setError(String(e)));
+  }, [native, savedProjectOrder, grouped, hideRead, recentFinishedPref]);
   const [projectId, setProjectId] = useState(""),
     [accountId, setAccountId] = useState("default"),
     [draft, setDraft] = useState(""),
@@ -756,11 +765,11 @@ export function DesktopApp() {
   function selectNewAccount(value: string) {
     setAccountId(value);
     if (native && value !== "default") {
-      const preferences = { ...db.preferences, last_selected: value };
+      const patch = { last_selected: value };
       // Remember the choice without taking the send lock. Serialize rapid changes
       // so an older write cannot overwrite the latest choice; polling refreshes it.
       accountSelectionSave.current = accountSelectionSave.current
-        .then(() => invoke("save_preferences", { preferences }))
+        .then(() => invoke("save_preferences", { patch }))
         .catch(e => { setError(String(e)); });
     }
   }
@@ -1414,6 +1423,7 @@ export function DesktopApp() {
               <DropdownMenuItem disabled={!native} onSelect={() => setDialog("import")}>Import sessions…</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setDialog("settings")}>Settings<DropdownMenuShortcut>⌘,</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuItem onSelect={openAccounts}>Revisit onboarding</DropdownMenuItem>
               <DropdownMenuItem disabled={!native || appUpdate.state.state === "checking" || appUpdate.state.state === "downloading"} onSelect={() => void appUpdate.check()}>Check for updates</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1672,10 +1682,10 @@ export function DesktopApp() {
                         }}/>
                         <div className="new-conversation-options">
                           <Picker label="Project" value={projectId} onChange={setProjectId} options={db.projects.map(p => ({ value: p.id, label: p.name }))}/>
-                          <Picker label="Agent and account" disabled={!native || working} value={accountId} onChange={selectNewAccount} options={[{ value: "default", label: resolveAccount(db, destination) ? `${db.preferences.new_thread_policy === "last_selected" && db.preferences.last_selected ? "Last selected" : db.preferences.new_thread_policy === "default" ? "Global default" : destination?.policy === "fixed" ? "Project default" : destination?.policy === "last" && destination.last ? "Last used in project" : "Global default"}: ${accountLabel(db, resolveAccount(db, destination))}` : "No default account configured" }, ...db.accounts.map(a => ({ value: a.id, label: `${providerName(a.provider)} · ${a.name}` }))]}/>
+                          <Picker label="Agent and account" disabled={!native || working} value={accountId} onChange={selectNewAccount} options={[{ value: "default", label: resolveAccount(db, destination) ? accountLabel(db, resolveAccount(db, destination)) : "No default account configured" }, ...db.accounts.map(a => ({ value: a.id, label: `${providerName(a.provider)} · ${a.name}` }))]}/>
                           <label className="new-worktree" title={worktree ? "New branch from the current commit; uncommitted files stay in the original folder." : "Use the project folder directly. Your choice is remembered."}><input type="checkbox" checked={worktree} onChange={e => {
                             setWorktree(e.target.checked);
-                            if (native) void action(() => invoke("save_preferences", { preferences: { ...db.preferences, use_worktree: e.target.checked } }));
+                            if (native) void action(() => invoke("save_preferences", { patch: { use_worktree: e.target.checked } }));
                           }}/>Separate worktree</label>
                         </div>
                         <VoiceNotice target />
@@ -2010,7 +2020,7 @@ export function DesktopApp() {
               <Field>
                 <FieldLabel>Agent and connection for new threads</FieldLabel>
                 <Picker label="New thread selection" disabled={!native || working} value={db.preferences.new_thread_policy || (db.preferences.prefer_last ? "legacy" : "project")} onChange={value => void action(async () => {
-                  await invoke("save_preferences", { preferences: { ...db.preferences, new_thread_policy: value === "legacy" ? null : value, prefer_last: value === "legacy" } });
+                  await invoke("save_preferences", { patch: { new_thread_policy: value === "legacy" ? null : value, prefer_last: value === "legacy" } });
                   await refresh();
                 })} options={[
                   { value: "last_selected", label: "Last selected across projects" },
@@ -2030,9 +2040,7 @@ export function DesktopApp() {
                   value={db.preferences.fallback || ""}
                   onChange={(v) =>
                     void action(async () => {
-                      await invoke("save_preferences", {
-                        preferences: { ...db.preferences, fallback: v },
-                      });
+                      await invoke("save_preferences", { patch: { fallback: v } });
                       await refresh();
                     })
                   }

@@ -48,8 +48,9 @@ private enum DrawerItem: Hashable {
 
 // MARK: Drawer
 
-/// Native thread list: header (mascot, connection, new thread), search + filter menu, per-project sections.
+/// Native thread list: header (title, connection, dashboard), search + filter menu, per-project sections.
 final class ThreadDrawerViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
+  var onDashboard: (() -> Void)?
   var onSelectThread: ((String) -> Void)?
   var onSearch: ((String) -> Void)?
   var onSetFilter: ((String, String) -> Void)?
@@ -128,8 +129,6 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   // MARK: Header
 
   private func makeHeader() -> UIView {
-    let icon = ShellViewController.avatarView(size: 28)
-
     let title = UILabel()
     title.text = "Freddai"
     title.font = .systemFont(ofSize: 22, weight: .bold)
@@ -145,7 +144,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     let spacer = UIView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-    let titleRow = UIStackView(arrangedSubviews: [icon, title, connectionIcon, spacer])
+    let titleRow = UIStackView(arrangedSubviews: [title, connectionIcon, spacer])
     titleRow.axis = .horizontal
     titleRow.alignment = .center
     titleRow.spacing = 8
@@ -170,7 +169,15 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     searchRow.alignment = .center
     searchRow.spacing = 6
 
-    let column = UIStackView(arrangedSubviews: [titleRow, searchRow])
+    var dashboardConfig = UIButton.Configuration.plain()
+    dashboardConfig.title = "Dashboard"
+    dashboardConfig.image = UIImage(systemName: "square.grid.2x2")
+    dashboardConfig.imagePadding = 10
+    let dashboard = UIButton(configuration: dashboardConfig)
+    dashboard.contentHorizontalAlignment = .leading
+    dashboard.accessibilityIdentifier = "companion-dashboard"
+    dashboard.addAction(UIAction { [weak self] _ in self?.onDashboard?() }, for: .touchUpInside)
+    let column = UIStackView(arrangedSubviews: [titleRow, dashboard, searchRow])
     column.axis = .vertical
     column.spacing = 10
     return column

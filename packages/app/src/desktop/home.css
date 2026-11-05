@@ -10,6 +10,7 @@
 .home-empty { margin: 0; font-size: 11px; color: var(--muted-foreground); }
 .home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .home-tile, .home-request { border: 1px solid var(--border); border-radius: 5px; background: var(--card); padding: 8px 10px; min-width: 0; animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+.home-tile { animation: none; }
 .home-tile > header, .home-request > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .home-tile > header strong, .home-request > header strong { font-size: 12px; font-weight: 550; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-request > header strong { flex: 1; }

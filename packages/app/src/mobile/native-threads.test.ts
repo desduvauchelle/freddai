@@ -45,7 +45,7 @@ it('expands older threads per project and keeps the selected thread live', () =>
   expect(expanded.groups[0].olderRemaining).toBe(0);
   const selected = buildThreadsModel({ ...base, data: snapshot(threads), read, selected: 'old2' });
   expect(selected.selectedId).toBe('old2');
-  expect(selected.groups[0].threads.map(t => t.id)).toEqual(['old2', ...recentIds]);
+  expect(selected.groups[0].threads.map(t => t.id)).toEqual([...recentIds, 'old2']);
   expect(selected.groups[0].olderRemaining).toBe(1);
 });
 
@@ -107,4 +107,14 @@ it('derives the run state word', () => {
   expect(nativeRunState({ status: 'running', pending: {} })).toBe('waiting');
   expect(nativeRunState({ status: 'failed', pending: {} })).toBe('failed');
   expect(nativeRunState({ status: 'done' })).toBe('');
+});
+
+it('follows desktop project order and bucket settings in the native drawer', () => {
+  const data = snapshot([thread('a1', 'a', 'done', 50), thread('b1', 'b', 'running', 10)]);
+  data.threadList = { projectOrder: ['b', 'removed', 'a'], hideRead: false, recentFinished: 0 };
+  expect(buildThreadsModel({ ...base, data }).groups.map(g => g.project)).toEqual(['b', 'a']);
+  data.threadList.grouped = false;
+  const model = buildThreadsModel({ ...base, data });
+  expect(model.groups).toHaveLength(1);
+  expect(model.groups[0].threads.map(t => t.id)).toEqual(['a1', 'b1']);
 });

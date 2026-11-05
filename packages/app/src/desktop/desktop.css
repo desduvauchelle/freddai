@@ -870,6 +870,8 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
   --navigator-gap: 8px;
   --navigator-text-inset: calc(var(--navigator-inset) + var(--navigator-icon) + var(--navigator-gap));
 }
+.native-workspace .task-row.compact-session,
+.native-workspace .task-row.compact-session .thread-title-label { cursor: pointer; }
 .native-workspace .project-group-heading,
 .native-workspace .task-row.compact-session {
   padding-top: 8px;
@@ -991,10 +993,21 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .git-search-dim { opacity: .25; }
 .git-history .git-error, .git-history > .git-body > .git-empty { margin: 12px; }
 
-/* Keep conversations readable on wide windows, including each split pane. */
-.native-workspace .chat-transcript {
-  padding-inline: max(24px, calc((100% - 800px) / 2));
+/* Prose stays centered in each pane; tables use the full transcript width. */
+.native-workspace .chat-transcript { padding-inline: 24px; }
+.native-workspace .thread-transcript > :not(.chat-assistant) {
+  max-width: 800px;
+  width: 100%;
+  margin-inline: auto;
 }
+.native-workspace .thread-transcript > .chat-user {
+  width: fit-content;
+  max-width: min(90%, 800px);
+  margin-left: auto;
+  margin-right: max(0px, calc((100% - 800px) / 2));
+}
+.native-workspace .chat-assistant { min-width: 0; }
+.native-workspace .chat-assistant > strong { display: block; }
 .native-workspace .chat-composer,
 .native-workspace .message-queue,
 .native-workspace .conversation-usage {

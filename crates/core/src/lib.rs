@@ -32,3 +32,5 @@ pub mod commands;
 pub mod agent_config;
 
 pub mod import;
+
+mod computer_use;

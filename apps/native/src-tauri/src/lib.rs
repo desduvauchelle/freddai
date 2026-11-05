@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+mod companion_operations;
 #[cfg(target_os = "macos")]
 mod writing_tools;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]

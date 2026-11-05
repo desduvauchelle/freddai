@@ -10,7 +10,7 @@ import { splitMarkdownBlocks } from "./markdown-blocks";
 const remarkPlugins = [remarkGfm];
 const components: Components = {
   pre: ({ children }) => <ScrollArea orientation="both" viewportProps={{ style: { maxHeight: 400 }, "aria-label": "Code block" }}><pre>{children}</pre></ScrollArea>,
-  table: ({ children }) => <ScrollArea orientation="horizontal" viewportProps={{ "aria-label": "Message table" }}><table>{children}</table></ScrollArea>,
+  table: ({ children }) => <ScrollArea className="message-table" orientation="horizontal" viewportProps={{ "aria-label": "Message table", tabIndex: 0 }}><table>{children}</table></ScrollArea>,
   a: MessageLink,
 };
 

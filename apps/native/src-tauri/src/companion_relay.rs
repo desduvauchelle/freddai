@@ -26,7 +26,9 @@ pub fn start(root:PathBuf,gate:Arc<Mutex<()>>) {
                             let value=json!({"id":id,"envelope":envelope});
                             cache.insert(cache_key,(crypto::now()+120,value.clone()));value
                         };
-                        let _=client.post(format!("{base}/responses/{id}")).bearer_auth(&device.mailbox).json(&response).send();
+                        let bytes=response.to_string().len();
+                        let delivery=client.post(format!("{base}/responses/{id}")).bearer_auth(&device.mailbox).json(&response).send().and_then(|r|r.error_for_status());
+                        if let Err(error)=delivery { eprintln!("companion.relay.delivery_failed response_bytes={bytes} status={:?} timeout={}",error.status().map(|s|s.as_u16()),error.is_timeout()); }
                     }}
                 }}
             }
@@ -77,6 +79,37 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
         });
         let id=crypto::random();let v=process(&root,&Mutex::new(()),&d,&id,&request(&d,&id,"/v1/snapshot",crypto::now()+90)).unwrap();
         assert_eq!(v,json!({"projects":[],"threads":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn scoped_refresh_crosses_host_dispatch_and_encrypted_relay_without_all_histories() {
+        let (root,d)=fixture();
+        let socket=UnixListener::bind(root.join("host.sock")).unwrap();
+        let mut db=freddai_core::runtime::Database::default();
+        for n in 0..124 {
+            db.sessions.push(serde_json::from_value(json!({"id":format!("s{n}"),"project":"p","account":"none","title":"Synthetic","status":"done","updated":1,"provider_id":null,"messages":[{"id":"m","role":"assistant","text":"history ".repeat(45_000)}],"pending":null,"error":null})).unwrap());
+        }
+        let expected=json!(db.sessions[73].messages);
+        let host=std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut connection,_)=socket.accept().unwrap();let mut line=String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot");
+                writeln!(connection,"{}",json!({"result":db})).unwrap();
+            }
+        });
+        for selected in [None,Some("s73")] {
+            let id=crypto::random();
+            let plain=json!({"id":id,"route":"/v1/snapshot","expires":crypto::now()+90,"body":{"scoped":true,"thread":selected}});
+            let request=json!({"envelope":crypto::seal(&d.key,&format!("request:{}:{id}",d.id),&plain).unwrap()});
+            let result=process(&root,&Mutex::new(()),&d,&id,&request).unwrap();
+            let response=json!({"result":result});
+            let context=format!("response:{}:{id}",d.id);
+            let envelope=crypto::seal(&d.key,&context,&response).unwrap();
+            assert!(serde_json::to_vec(&envelope).unwrap().len()<1024*1024);
+            let decoded=crypto::open(&d.key,&context,&envelope).unwrap();
+            assert_eq!(decoded["result"]["threads"].as_array().unwrap().len(),124);
+            assert_eq!(decoded["result"]["threads"][73]["messages"],if selected.is_some(){expected.clone()}else{json!([])});
+        }
+        host.join().unwrap();fs::remove_dir_all(root).unwrap();
     }
     #[test] fn stale_unknown_revoked_and_replayed_requests_fail_closed() {
         let (root,d)=fixture();let id=crypto::random();let gate=Mutex::new(());

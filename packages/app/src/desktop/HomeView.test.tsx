@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { HomeView, todayProjects } from "./HomeView";
+import { HomeView, homeProjects } from "./HomeView";
 import { resolveHomeLaunch, type HomeLaunchPlan } from "./home-launch";
 import type { Account, Project, Session } from "./types";
 
@@ -27,13 +27,33 @@ const props = (sessions: Session[], projects = [project("alpha", "Alpha"), proje
   onOpenThread: vi.fn(), resolveLaunch: vi.fn((id: string): HomeLaunchPlan => resolveHomeLaunch(db(), id, "bypass")), onAddProject: vi.fn(), onCreateThread: vi.fn(async () => {}), onRespond: vi.fn(async () => {}),
 });
 
-it("lists only projects with activity since local midnight, newest first", () => {
-  const rows = todayProjects([
+it("lists all projects in their configured order regardless of thread activity", () => {
+  const projects = [project("alpha", "Alpha"), project("beta", "Beta"), project("gamma", "Gamma"), project("empty", "Empty")];
+  const rows = homeProjects([
     thread("1", { project: "alpha", updated: NOW - 5000 }),
     thread("2", { project: "beta", updated: NOW - 1000 }),
     thread("3", { project: "gamma", updated: MIDNIGHT - 1 }),
-  ], [project("alpha", "Alpha"), project("beta", "Beta"), project("gamma", "Gamma")], NOW);
-  expect(rows.map(r => r.project.id)).toEqual(["beta", "alpha"]);
+  ], projects, NOW);
+  expect(rows.map(r => r.project.id)).toEqual(projects.map(p => p.id));
+  expect(rows[3]).toMatchObject({ working: 0, done: 0, needs: 0, failed: 0, latest: null });
+});
+
+it("keeps project controls and a draft in place across activity updates and midnight", () => {
+  const p = props([thread("1"), thread("2", { project: "beta", updated: NOW - 5000 })]);
+  const { rerender } = render(<HomeView {...p} />);
+  const alpha = screen.getByRole("article", { name: "Project Alpha" });
+  const beta = screen.getByRole("article", { name: "Project Beta" });
+  const tiles = alpha.parentElement!;
+  fireEvent.click(within(alpha).getByRole("button", { name: "New thread in Alpha" }));
+  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "My draft" } });
+  const input = screen.getByLabelText("Prompt for Alpha");
+  for (const now of [NOW + 2000, MIDNIGHT + 86_400_000]) {
+    rerender(<HomeView {...p} now={now} sessions={[...p.sessions, thread("3", { project: "beta", status: "running", updated: now })]} />);
+    expect(Array.from(tiles.children)).toEqual([alpha, beta]);
+    expect(screen.getByLabelText("Prompt for Alpha")).toBe(input);
+    expect((input as HTMLInputElement).value).toBe("My draft");
+    expect(within(beta).getByText("1 working")).toBeTruthy();
+  }
 });
 
 it("counts working, done today and needs-you per project with text labels", () => {
@@ -48,7 +68,7 @@ it("counts working, done today and needs-you per project with text labels", () =
   expect(tile.getByText("2 working")).toBeTruthy();
   expect(tile.getByText("1 done")).toBeTruthy();
   expect(tile.getByText("1 needs you")).toBeTruthy();
-  expect(screen.queryByRole("article", { name: "Project Beta" })).toBeNull();
+  expect(screen.getByRole("article", { name: "Project Beta" })).toBeTruthy();
 });
 
 it("renders a needs-you card for any project, even without activity today, and opens the thread", () => {
@@ -99,7 +119,7 @@ it("shows a visible error when creating the dictated thread fails", async () => 
   const p = props([thread("1")]);
   p.onCreateThread.mockRejectedValueOnce(new Error("no account"));
   render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+  fireEvent.click(within(screen.getByRole("article", { name: "Project Alpha" })).getByRole("button", { name: "Dictate" }));
   expect((await screen.findByRole("alert")).textContent).toContain("no account");
 });
 
@@ -113,7 +133,7 @@ it("shows the resolved agent chip as soon as + is pressed", () => {
 it("shows the chip when the mic is pressed", () => {
   mic.ready = true;
   render(<HomeView {...props([thread("1")])} />);
-  fireEvent.pointerDown(screen.getByRole("button", { name: "Dictate" }));
+  fireEvent.pointerDown(within(screen.getByRole("article", { name: "Project Alpha" })).getByRole("button", { name: "Dictate" }));
   expect(screen.getByLabelText(/^Agent: Claude Code · Main/)).toBeTruthy();
 });
 
@@ -157,4 +177,12 @@ it("changes the Home microphone model beside Add project", () => {
   fireEvent.click(within(header).getByLabelText("Model and effort"));
   fireEvent.change(within(header).getByLabelText("Model"), { target: { value: "sonnet" } });
   expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "sonnet", effort: "default" });
+});
+
+it("opens the first-thread prompt for an empty project without opening a missing thread", () => {
+  const p = props([]);
+  render(<HomeView {...p} />);
+  fireEvent.click(screen.getByRole("button", { name: "Create first thread in Beta" }));
+  expect(screen.getByLabelText("Prompt for Beta")).toBeTruthy();
+  expect(p.onOpenThread).not.toHaveBeenCalled();
 });

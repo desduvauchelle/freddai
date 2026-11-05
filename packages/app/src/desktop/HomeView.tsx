@@ -22,26 +22,25 @@ export { homeRunState } from "./home-state";
 const isLive = (t: Session) => !t.archived && t.deleted_at == null && t.status !== "archived" && t.status !== "deleted";
 export const startOfLocalDay = (now: number) => { const d = new Date(now); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 
-export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string };
+export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string | null };
 
-/** One entry per project with thread activity since local midnight, most recent activity first. */
-export function todayProjects(sessions: readonly Session[], projects: readonly Project[], now: number): HomeProject[] {
+/** All configured projects in saved order; activity updates change counters only. */
+export function homeProjects(sessions: readonly Session[], projects: readonly Project[], now: number): HomeProject[] {
   const midnight = startOfLocalDay(now), rows: HomeProject[] = [];
   for (const project of projects) {
     const mine = sessions.filter(t => t.project === project.id && isLive(t));
     const today = mine.filter(t => t.updated >= midnight);
-    if (!today.length) continue;
     rows.push({
       project,
       working: mine.filter(t => homeRunState(t) === "running").length,
       needs: mine.filter(t => homeRunState(t) === "waiting").length,
       failed: mine.filter(t => homeRunState(t) === "failed" && t.updated >= midnight).length,
       done: today.filter(t => t.status === "done" && !t.pending).length,
-      lastActivity: Math.max(...today.map(t => t.updated)),
-      latest: [...mine].sort((a, b) => b.updated - a.updated)[0].id,
+      lastActivity: Math.max(0, ...today.map(t => t.updated)),
+      latest: [...mine].sort(compareThreadRecency)[0]?.id ?? null,
     });
   }
-  return rows.sort((a, b) => b.lastActivity - a.lastActivity || a.project.id.localeCompare(b.project.id));
+  return rows;
 }
 
 export const needsYou = (sessions: readonly Session[]) => sessions.filter(t => isLive(t) && !!t.pending).sort(compareThreadRecency);
@@ -97,7 +96,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   return <article className="home-tile" aria-label={`Project ${project.name}`}>
     <header>
       <span className="home-project-dot" style={{ background: project.color }} aria-hidden="true" />
-      <button type="button" className="home-tile-open" title={`Open latest thread in ${project.name}`} aria-label={`Open latest thread in ${project.name}`} onClick={onOpen}><strong>{project.name}</strong></button>
+      <button type="button" className="home-tile-open" title={entry.latest ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`} aria-label={entry.latest ? `Open latest thread in ${project.name}` : `Create first thread in ${project.name}`} onClick={onOpen}><strong>{project.name}</strong></button>
       <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <MicButton target={false} onText={t => void dictate(t)} />
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
@@ -130,7 +129,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
 
 export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection }: HomeViewProps) {
   const clock = now ?? Date.now();
-  const tiles = useMemo(() => todayProjects(sessions, projects, clock), [sessions, projects, clock]);
+  const tiles = useMemo(() => homeProjects(sessions, projects, clock), [sessions, projects, clock]);
   const launchAccounts = accounts.filter(account => projects.some(project => { const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
   const waiting = useMemo(() => needsYou(sessions), [sessions]);
   const [openProject, setOpenProject] = useState<string | null>(null);
@@ -151,8 +150,8 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
 
     <Office variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
 
-    <section className="home-section" aria-label="Today">
-      <div className="home-section-title"><span>Today</span>
+    <section className="home-section" aria-label="Projects">
+      <div className="home-section-title"><span>Projects</span>
         <div className="home-header-actions">
           {onHomeSelection && launchAccounts.map(account => <div key={account.id} className="home-model" aria-label={`Model for ${account.name}`} title={`Agent for Home microphones and new threads · ${account.name}`}>
             {launchAccounts.length > 1 && <span>{account.name}</span>}
@@ -164,8 +163,8 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
       {tiles.length ? <div className="home-tiles">
         {tiles.map(entry => <Tile key={entry.project.id} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
           onToggle={() => setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
-          onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => onOpenThread(entry.latest)} />)}
-      </div> : <p className="home-empty">No thread activity today.</p>}
+          onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => { if (entry.latest) onOpenThread(entry.latest); else setOpenProject(entry.project.id); }} />)}
+      </div> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
     </section>
 
     <section className="home-section" aria-label="Needs you">

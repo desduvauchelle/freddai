@@ -116,10 +116,17 @@ class NativeShellPlugin: Plugin {
       container?.toggleThreadList()
     }
     container.onOpenChange = { [weak drawer] open in if !open { drawer?.dismissKeyboard() } }
-    container.onPresentationChange = { [weak shell] sidebar, open in
+    container.onPresentationChange = { [weak shell, weak webview] sidebar, open in
       shell?.setThreadListPresentation(sidebar: sidebar, open: open)
+      // The landscape sidebar reduces the webview width and can invert its CSS orientation.
+      webview?.evaluateJavaScript("document.documentElement.dataset.companionSidebar = '\(sidebar)'", completionHandler: nil)
     }
     // Selecting, creating or paging only needs JS to change state; the drawer closes itself where appropriate.
+    drawer.onDashboard = { [weak self, weak container, weak drawer] in
+      drawer?.dismissKeyboard()
+      try? self?.trigger("dashboard", data: ProjectPayload(project: ""))
+      container?.setOpen(false, animated: true)
+    }
     drawer.onSelectThread = { [weak self, weak container, weak drawer] id in
       drawer?.dismissKeyboard()
       try? self?.trigger("selectThread", data: ThreadIdPayload(id: id))
@@ -166,7 +173,7 @@ class NativeShellPlugin: Plugin {
   @objc func setMode(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SetModeArgs.self)
     DispatchQueue.main.async { [weak self] in
-      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "new" ? .new : .other
+      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "new" ? .new : args.mode == "dashboard" ? .dashboard : .other
       self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder)
       self?.container?.drawerEnabled = mode != .other
       if mode != .other, args.openDrawer == true {

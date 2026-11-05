@@ -1,118 +1,158 @@
-import type { OfficeAgent, OfficeAgentState, OfficeModel, OfficeRoom } from "./officeModel";
+import { makeNav, type Nav, type Point } from "./officePath";
 
-/** Logical pixel grid for the office scene (1 unit = 1 art pixel; a tile is 16). The SVG scales this to any container. */
-export const TILE = 16;
+/*
+ * Fixed floor plan. Geometry is a pure function of the project list (order, names, colours) and the room-grid column count;
+ * thread states never feed into it, so the map cannot reflow when work starts, waits or finishes.
+ * Logical pixel grid: 1 unit = 1 art pixel, scaled by the parent <svg>.
+ */
 export const CELL_W = 80;
 export const CELL_H = 74;
 export const WALL = 8;
-export const FACE = 28;
+export const SPINE = 28;
 export const SIDE = 4;
+export const FACE = 36;
 export const SOUTH = 6;
 export const PAD_BOTTOM = 14;
+export const DESKS = 4;
+export const ROOM_W = 2 * CELL_W + 2 * SIDE;
+export const ROOM_H = FACE + 2 * CELL_H + PAD_BOTTOM + SOUTH;
 export const CORRIDOR_H = 40;
-export const RECEPTION_H = 62;
-export const MIN_INNER_W = 480;
-export const MINI_MAX_ROOMS = 4;
-export const MINI_MAX_DESKS = 3;
-/** Mini puts reception in a column on the left (the strip below would waste the card's width). */
-export const LOBBY_W = 150;
-export const MINI_CORRIDOR_H = 34;
-export const MINI_MIN_ZONE_W = 330;
+/** Walking line inside a corridor, measured from the bottom of the room row above it. */
+export const CORRIDOR_LINE = 28;
+export const BAND_H = 112;
+export const MIN_INNER_W = 560;
+export const MAX_COLS = 8;
+export const DOOR_W = 34;
+export const LOUNGE_MAX = 8;
+export const LOBBY_MAX = 6;
+export const TRAY_MAX = 8;
+export const TRAY_COLS = 4;
 
-export type PlacedAgent = { agent: OfficeAgent; x: number; y: number; tag: number | null };
-export type PlacedRoom = {
-  room: OfficeRoom; index: number; x: number; y: number; w: number; h: number; cols: number; rows: number;
-  agents: PlacedAgent[]; hidden: number; doorX: number;
-  /** Unoccupied desk cells (top-left), used for furniture. */
-  spare: { x: number; y: number }[];
-};
-export type Band = { x: number; y: number; w: number; h: number };
+export type PlanProject = { id: string; name: string; color: string };
+export type Spot = Point & { node: string };
+export type DeskSpot = { slot: number; x: number; y: number; seat: Spot; stand: Spot };
+export type PlacedRoom = { project: PlanProject; index: number; x: number; y: number; w: number; h: number; floorY: number; doorX: number; desks: DeskSpot[] };
+export type Rect = { x: number; y: number; w: number; h: number };
 export type Layout = {
-  width: number; height: number; innerW: number; lobby: boolean;
-  rooms: PlacedRoom[]; corridors: (Band & { last: boolean })[]; reception: Band;
-  needs: { tag: number; agent: OfficeAgent }[];
-  hiddenRooms: number; empty: boolean;
-  entrance: { x: number; w: number };
+  width: number; height: number; innerW: number; cols: number; rows: number; spineX: number;
+  rooms: PlacedRoom[]; corridors: (Rect & { line: number })[];
+  band: Rect; lobby: Rect; lounge: Rect; you: Rect;
+  door: Rect; reception: Rect; benches: Spot[]; coffee: Rect; tables: Point[]; loungeSpots: Spot[];
+  deskUser: Rect; tray: Rect & { stand: Spot; cells: Point[] };
+  nav: Nav;
 };
 
-const PRIORITY: Record<OfficeAgentState, number> = { "needs-you": 0, failed: 1, review: 2, working: 3, done: 4, idle: 5 };
+const sizeFor = (count: number, cols: number) => {
+  const rows = Math.ceil(count / cols), innerW = Math.max(MIN_INNER_W, SPINE + cols * ROOM_W);
+  return { rows, innerW, width: innerW + 2 * WALL, height: 2 * WALL + Math.max(rows, 1) * CORRIDOR_H + rows * ROOM_H + BAND_H };
+};
 
-/** Rooms per grid row, chosen from the project count (mini is always one wide row). */
-export function gridCols(count: number, variant: "mini" | "full"): number {
-  if (variant === "mini") return Math.max(1, Math.min(count, MINI_MAX_ROOMS));
-  if (count <= 1) return 1;
-  if (count <= 4) return 2;
-  if (count <= 6) return 3;
-  if (count <= 8) return 4;
-  return count === 9 ? 3 : 4;
-}
-
-/** Desk columns inside a room for `n` desks. */
-export function deskCols(n: number): number {
-  if (n <= 4) return Math.max(2, n);
-  return n <= 6 ? 3 : 4;
-}
-
-export function layoutOffice(model: OfficeModel, variant: "mini" | "full", maxRooms: number = MINI_MAX_ROOMS, forceCols?: number): Layout {
-  const mini = variant === "mini";
-  const allRooms = model.rooms;
-  const shown = mini ? allRooms.slice(0, maxRooms) : allRooms;
-  const hiddenRooms = allRooms.length - shown.length;
-  const per = forceCols && !mini ? Math.max(1, Math.min(forceCols, shown.length)) : gridCols(shown.length, variant);
-
-  type Draft = { room: OfficeRoom; agents: OfficeAgent[]; hidden: number; cols: number; rows: number; w: number };
-  const drafts: Draft[] = shown.map(room => {
-    let agents = room.agents;
-    if (mini && agents.length > MINI_MAX_DESKS) agents = [...agents].sort((a, b) => PRIORITY[a.state] - PRIORITY[b.state]).slice(0, MINI_MAX_DESKS);
-    const cols = deskCols(agents.length);
-    return { room, agents, hidden: room.agents.length - agents.length, cols, rows: Math.ceil(agents.length / cols), w: cols * CELL_W + 2 * SIDE };
-  });
-
-  const groups: Draft[][] = [];
-  for (let i = 0; i < drafts.length; i += per) groups.push(drafts.slice(i, i + per));
-  const rowW = (g: Draft[]) => g.reduce((s, d) => s + d.w, 0);
-  const lobbyW = mini ? LOBBY_W : 0, corridorH = mini ? MINI_CORRIDOR_H : CORRIDOR_H;
-  const zoneW = Math.max(mini ? MINI_MIN_ZONE_W : MIN_INNER_W, ...groups.map(rowW));
-  const zoneX = WALL + lobbyW, innerW = lobbyW + zoneW;
-
-  const rooms: PlacedRoom[] = [], corridors: Layout["corridors"] = [], needs: Layout["needs"] = [];
-  let y = WALL, tag = 0, index = 0;
-  for (const g of groups) {
-    const h = FACE + Math.max(...g.map(d => d.rows)) * CELL_H + PAD_BOTTOM + SOUTH;
-    let x = zoneX + Math.round((zoneW - rowW(g)) / 2);
-    for (const d of g) {
-      const agents: PlacedAgent[] = d.agents.map((agent, i) => {
-        const t = agent.state === "needs-you" ? ++tag : null;
-        if (t) needs.push({ tag: t, agent });
-        return { agent, tag: t, x: x + SIDE + (i % d.cols) * CELL_W, y: y + FACE + Math.floor(i / d.cols) * CELL_H };
-      });
-      const spare: PlacedRoom["spare"] = [];
-      for (let i = d.agents.length; i < d.cols * Math.max(1, d.rows); i++) spare.push({ x: x + SIDE + (i % d.cols) * CELL_W, y: y + FACE + Math.floor(i / d.cols) * CELL_H });
-      rooms.push({ room: d.room, index: index++, x, y, w: d.w, h, cols: d.cols, rows: d.rows, agents, hidden: d.hidden, doorX: x + d.w / 2, spare });
-      x += d.w;
-    }
-    y += h;
-    corridors.push({ x: zoneX, y, w: zoneW, h: corridorH, last: false });
-    y += corridorH;
-  }
-  const empty = groups.length === 0;
-  if (empty) { corridors.push({ x: zoneX, y, w: zoneW, h: corridorH * 2, last: true }); y += corridorH * 2; }
-  else corridors[corridors.length - 1].last = true;
-  const reception = mini ? { x: WALL, y: WALL, w: LOBBY_W, h: y - WALL } : { x: WALL, y, w: innerW, h: RECEPTION_H };
-  const height = (mini ? y : y + RECEPTION_H) + WALL;
-  return { width: innerW + 2 * WALL, height, innerW, lobby: mini, rooms, corridors, reception, needs, hiddenRooms, empty, entrance: { x: mini ? WALL + (LOBBY_W - 32) / 2 : WALL + 112, w: 32 } };
-}
-
-/** Full mode: of the sensible room-grid shapes, the one that scales largest into a `w` x `h` box (so the art fills the window). */
-export function bestFullLayout(model: OfficeModel, w: number, h: number): Layout {
-  const base = layoutOffice(model, "full");
-  const n = model.rooms.length;
-  if (n < 3 || w <= 0 || h <= 0) return base;
-  const fit = (l: Layout) => Math.min(w / l.width, h / l.height);
-  let best = base;
-  for (let cols = 2; cols <= Math.min(4, n); cols++) {
-    const l = layoutOffice(model, "full", MINI_MAX_ROOMS, cols);
-    if (fit(l) > fit(best) * 1.04) best = l;
-  }
+/** Rooms per grid row: the choice that scales the whole map largest into a `w` x `h` box (ties keep fewer columns). */
+export function planCols(count: number, w: number, h: number): number {
+  const max = Math.max(1, Math.min(count, MAX_COLS));
+  if (w <= 0 || h <= 0) return count <= 3 ? max : Math.min(max, Math.ceil(count / 2));
+  const fit = (cols: number) => { const s = sizeFor(count, cols); return Math.min(w / s.width, h / s.height); };
+  let best = 1;
+  for (let cols = 2; cols <= max; cols++) if (fit(cols) > fit(best) * 1.03) best = cols;
   return best;
 }
+
+export function floorPlan(projects: readonly PlanProject[], cols: number): Layout {
+  const count = projects.length, c = Math.max(1, Math.min(cols, Math.max(count, 1)));
+  const { rows, innerW, width, height } = sizeFor(count, c);
+  const rr = Math.max(rows, 1), spineX = WALL + SPINE / 2;
+  const x0 = WALL + SPINE + Math.floor((innerW - SPINE - c * ROOM_W) / 2);
+  const nodes: Record<string, Point> = {}, edges: [string, string][] = [];
+  const node = (name: string, x: number, y: number) => { nodes[name] = { x, y }; return { node: name, x, y }; };
+  const chain = (names: string[]) => { for (let i = 1; i < names.length; i++) edges.push([names[i - 1], names[i]]); };
+  const sorted = (names: string[]) => [...names].sort((a, b) => nodes[a].x - nodes[b].x);
+
+  const corridors: Layout["corridors"] = Array.from({ length: rr }, (_, k) => {
+    const y = WALL + k * (ROOM_H + CORRIDOR_H) + (k < rows ? ROOM_H : 0);
+    return { x: WALL, y, w: innerW, h: CORRIDOR_H, line: y + CORRIDOR_LINE };
+  });
+  const by = WALL + rr * CORRIDOR_H + rows * ROOM_H;
+  corridors.forEach((cr, k) => node(`spine:${k}`, spineX, cr.line));
+  const onLine: string[][] = corridors.map((_, k) => [`spine:${k}`]);
+
+  const rooms: PlacedRoom[] = projects.map((project, index) => {
+    const row = Math.floor(index / c), col = index % c;
+    const x = x0 + col * ROOM_W, y = WALL + row * (ROOM_H + CORRIDOR_H), floorY = y + FACE, doorX = x + ROOM_W / 2;
+    const out = `door:${index}:out`, inn = `door:${index}:in`, innY = y + ROOM_H - SOUTH - 6;
+    node(out, doorX, corridors[row].line); onLine[row].push(out);
+    node(inn, doorX, innY);
+    edges.push([out, inn]);
+    const aisle = [0, 1].map(k => x + SIDE + k * CELL_W + 66);
+    const bottoms = aisle.map((ax, k) => node(`aisle:${index}:${k}`, ax, innY).node);
+    chain([bottoms[0], inn, bottoms[1]]);
+    const desks: DeskSpot[] = Array.from({ length: DESKS }, (_, slot) => {
+      const dx = x + SIDE + (slot % 2) * CELL_W, dy = floorY + Math.floor(slot / 2) * CELL_H;
+      const stand = node(`stand:${index}:${slot}`, dx + 66, dy + 66), ap = node(`ap:${index}:${slot}`, dx + 66, dy + 26), seat = node(`seat:${index}:${slot}`, dx + 28, dy + 26);
+      edges.push([ap.node, seat.node]);
+      return { slot, x: dx, y: dy, seat, stand };
+    });
+    // One aisle per desk column, top to bottom: row-0 approach, row-0 stand, row-1 approach, row-1 stand, room floor.
+    for (let k = 0; k < 2; k++) chain([`ap:${index}:${k}`, desks[k].stand.node, `ap:${index}:${2 + k}`, desks[2 + k].stand.node, bottoms[k]]);
+    return { project, index, x, y, w: ROOM_W, h: ROOM_H, floorY, doorX, desks };
+  });
+
+  // Band along the bottom: lobby | coffee lounge | "you" desk. The lobby column is the spine itself, so the front door sits under it.
+  const lobbyW = Math.round(innerW * 0.36), loungeW = Math.round(innerW * 0.4);
+  const lobby: Rect = { x: WALL, y: by, w: lobbyW, h: BAND_H }, lounge: Rect = { x: WALL + lobbyW, y: by, w: loungeW, h: BAND_H }, you: Rect = { x: WALL + lobbyW + loungeW, y: by, w: innerW - lobbyW - loungeW, h: BAND_H };
+  const last = rr - 1, laneY = by + BAND_H - 12;
+  node("door", spineX, height + 26);
+  node("entry", spineX, by + BAND_H - 14);
+  node("recep", spineX, by + 54);
+  chain(["door", "entry", "recep", `spine:${last}`]);
+  for (let k = last; k > 0; k--) edges.push([`spine:${k}`, `spine:${k - 1}`]);
+  const reception: Rect = { x: lobby.x + 38, y: by + 24, w: 86, h: 13 };
+  const nBench = Math.max(2, Math.min(LOBBY_MAX, Math.floor((lobbyW - 78) / 26) + 1));
+  const benches: Spot[] = [];
+  const bn: string[] = ["recep"];
+  for (let i = 0; i < nBench; i++) {
+    const bx = lobby.x + 72 + i * 26;
+    bn.push(node(`bench:${i}`, bx, by + 54).node);
+    benches.push(node(`lobby:${i}`, bx, by + 78));
+    edges.push([`bench:${i}`, `lobby:${i}`]);
+  }
+  chain(bn);
+
+  const hubLounge = node("hub:lounge", lounge.x + 14, corridors[last].line), laneLounge = node("lane:lounge", lounge.x + 14, laneY);
+  edges.push([hubLounge.node, laneLounge.node]);
+  const nSpot = Math.max(2, Math.min(LOUNGE_MAX, Math.floor((loungeW - 52) / 24) + 1));
+  const loungeSpots: Spot[] = [], lane: string[] = [laneLounge.node];
+  for (let i = 0; i < nSpot; i++) {
+    const sx = lounge.x + 44 + i * 24;
+    lane.push(node(`lounge:lane:${i}`, sx, laneY).node);
+    loungeSpots.push(node(`lounge:${i}`, sx, by + 86));
+    edges.push([`lounge:lane:${i}`, `lounge:${i}`]);
+  }
+  chain(lane);
+  const coffee: Rect = { x: lounge.x + 34, y: by + 8, w: 78, h: 22 };
+  const tables: Point[] = [{ x: lounge.x + 62, y: by + 52 }, { x: lounge.x + 62 + Math.min(80, loungeW - 120), y: by + 52 }];
+
+  const trayW = 104, trayX = you.x + Math.round((you.w - trayW) / 2) + 6;
+  const hubYou = node("hub:you", you.x + 10, corridors[last].line), laneYou = node("lane:you", you.x + 10, laneY);
+  const trayStand = node("tray", trayX + trayW / 2, laneY);
+  edges.push([hubYou.node, laneYou.node], [laneYou.node, trayStand.node]);
+  const tray = { x: trayX, y: by + 46, w: trayW, h: 38, stand: trayStand, cells: Array.from({ length: TRAY_MAX }, (_, i) => ({ x: trayX + 6 + (i % TRAY_COLS) * 24, y: by + 55 + Math.floor(i / TRAY_COLS) * 14 })) };
+  const deskUser: Rect = { x: trayX - 2, y: by + 18, w: trayW + 4, h: 12 };
+
+  onLine[last].push(hubLounge.node, hubYou.node);
+  onLine.forEach(names => chain(sorted(names)));
+  return { width, height, innerW, cols: c, rows, spineX, rooms, corridors, band: { x: WALL, y: by, w: innerW, h: BAND_H }, lobby, lounge, you, door: { x: spineX - 14, y: height - WALL, w: 28, h: WALL }, reception, benches, coffee, tables, loungeSpots, deskUser, tray, nav: makeNav(nodes, edges) };
+}
+
+/**
+ * Mini card plan: starts from one row up to six rooms, otherwise two balanced rows (the widest sensible map), and only widens
+ * further when the map, scaled to the full card width `w`, would be taller than `maxH`. Depends on project count and viewport only.
+ */
+export function miniCols(count: number, w = 0, maxH = 0): number {
+  const top = Math.max(1, Math.min(count, MAX_COLS)), first = Math.min(top, count <= 6 ? count : Math.ceil(count / 2));
+  if (w <= 0 || maxH <= 0) return first;
+  for (let cols = first; cols <= top; cols++) { const s = sizeFor(count, cols); if ((s.height * w) / s.width <= maxH) return cols; }
+  return top;
+}
+
+/** Full overlay plan: the column count that scales the whole map largest into the real stage box (scale may exceed 1). */
+export const bestFullLayout = (projects: readonly PlanProject[], w: number, h: number): Layout => floorPlan(projects, planCols(projects.length, w, h));

@@ -1,6 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Concurrent implementation threads share the bundle output. Serialize the full
+# build/sign/install transaction so one build cannot remove another's signing input.
+if [ "${FREDDAI_INSTALL_SERIALIZED:-}" != "1" ]; then
+  exec python3 - "$0" "$@" <<'LOCK'
+import fcntl, os, pathlib, subprocess, sys
+pathlib.Path('target').mkdir(exist_ok=True)
+with open('target/.native-install.lock', 'a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    env = dict(os.environ, FREDDAI_INSTALL_SERIALIZED='1')
+    sys.exit(subprocess.call(['bash', sys.argv[1], *sys.argv[2:]], env=env))
+LOCK
+fi
 # Non-login shells may lack cargo and the corepack pnpm shim.
 export PATH="$HOME/.cargo/bin:$PATH"
 if ! command -v pnpm >/dev/null; then
@@ -19,6 +31,7 @@ if [ -z "$identity" ]; then
     exit 1
   fi
 fi
+codesign --force --options runtime --timestamp --identifier com.freddai.computer --sign "$identity" "target/release/bundle/macos/Freddai.app/Contents/Resources/computer-use/Freddai Computer.app"
 codesign --force --options runtime --entitlements apps/native/src-tauri/Entitlements.plist --timestamp --identifier com.freddai.desktop --sign "$identity" target/release/bundle/macos/Freddai.app
 python3 - <<'PY'
 import os, subprocess, tempfile, uuid

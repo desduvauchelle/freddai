@@ -99,3 +99,21 @@ mod tests {
         assert_eq!(host_of("nonsense"),"unknown");
     }
 }
+
+/// Only replay read-only snapshots after a response has arrived. Mutations may already have run.
+pub fn retry_snapshot_via_relay(route:&str,has_relay:bool,error:&str)->bool {
+    route=="/v1/snapshot" && has_relay && error.starts_with(INVALID)
+}
+#[cfg(test)] mod recovery_tests {
+    use super::*;
+    #[test] fn interrupted_snapshot_can_recover_without_replaying_mutations_or_auth_errors() {
+        for detail in ["body cut off (read failed)","response timed out after 8s","HTTP 502 (text/html)","missing result"] {
+            let error=format!("{INVALID}: {detail}");
+            assert!(retry_snapshot_via_relay("/v1/snapshot",true,&error));
+            assert!(!retry_snapshot_via_relay("/v1/reply",true,&error));
+            assert!(!retry_snapshot_via_relay("/v1/start",true,&error));
+            assert!(!retry_snapshot_via_relay("/v1/snapshot",false,&error));
+        }
+        assert!(!retry_snapshot_via_relay("/v1/snapshot",true,"Device revoked"));
+    }
+}

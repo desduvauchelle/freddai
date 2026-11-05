@@ -152,9 +152,13 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             rt.project(serde_json::from_value(p["project"].clone()).map_err(|e| e.to_string())?)?
         ),
         "save_preferences" => {
-            rt.preferences(
-                serde_json::from_value(p["preferences"].clone()).map_err(|e| e.to_string())?,
-            )?;
+            if p["patch"].is_object() {
+                rt.preferences_patch(p["patch"].clone())?;
+            } else {
+                rt.preferences(
+                    serde_json::from_value(p["preferences"].clone()).map_err(|e| e.to_string())?,
+                )?;
+            }
             Value::Null
         }
         "consume_reset" => json!(rt.consume_reset(
@@ -219,6 +223,9 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
                 text(&p, "prompt")?,
                 serde_json::from_value(p["options"].clone()).map_err(|e| e.to_string())?,
             )?;
+            // Persist first, then dispatch eligible FIFO work now rather than waiting
+            // for the two-second scheduler tick. Busy and paused queues stay queued.
+            rt.queue_tick();
             Value::Null
         }
         "steer_message" => {

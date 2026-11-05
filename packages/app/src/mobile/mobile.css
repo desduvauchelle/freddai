@@ -863,3 +863,55 @@
 .companion-composer .permission-control > svg { position: absolute; left: 13px; top: 13px; width: 18px; height: 18px; pointer-events: none; }
 .companion-composer .permission-select { width: 44px; height: 44px; padding: 0; color: transparent; appearance: none; }
 .companion-composer .permission-select option { color: var(--foreground); }
+
+.companion-connecting { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 300px; }
+.companion-connecting-scene { position: relative; width: 210px; height: 174px; }
+.companion-connecting-cloud { position: absolute; width: 84px; height: 56px; left: 105px; top: 0; fill: var(--muted, #302e39); stroke: var(--muted-foreground, #a29ba9); stroke-width: 1.5; animation: companion-cloud-tug 2.8s ease-in-out infinite; }
+.companion-cloud-smile { fill: none; stroke-linecap: round; }
+.companion-connecting-string { position: absolute; inset: 0; width: 210px; height: 174px; fill: none; stroke: var(--muted-foreground, #a29ba9); stroke-width: 1.5; animation: companion-string-tug 2.8s ease-in-out infinite; transform-origin: 105px 123px; }
+.companion-connecting-mouse { position: absolute; left: 16px; bottom: 0; transform-origin: 56px 100px; animation: companion-mouse-tug 2.8s ease-in-out infinite; }
+.companion-connecting[data-waiting="true"] :is(.companion-connecting-cloud, .companion-connecting-string, .companion-connecting-mouse),
+.companion-connecting:has([data-mascot-mode="static"]) :is(.companion-connecting-cloud, .companion-connecting-string, .companion-connecting-mouse) { animation: none; }
+.companion-transcript-loading { padding: 24px 0; color: var(--muted-foreground); text-align: center; }
+@keyframes companion-cloud-tug { 0%, 70%, 100% { transform: translateY(0); } 35%, 45% { transform: translateY(12px) rotate(-3deg); } }
+@keyframes companion-string-tug { 0%, 70%, 100% { transform: scaleY(1); } 35%, 45% { transform: scaleY(.84); } }
+@keyframes companion-mouse-tug { 0%, 70%, 100% { transform: rotate(0); } 35%, 45% { transform: rotate(-6deg) translateY(3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .companion-connecting :is(.companion-connecting-cloud, .companion-connecting-string, .companion-connecting-mouse) { animation: none; }
+}
+
+.companion-dashboard { display: grid; gap: 16px; padding: 16px; }
+.companion-dashboard > h2 { font-size: 22px; font-weight: 600; }
+.companion-dashboard article { min-width: 0; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+.companion-dashboard article header { display: flex; align-items: center; gap: 8px; }
+.companion-dashboard h3 { min-width: 0; flex: 1; overflow-wrap: anywhere; font-weight: 600; }
+.companion-dashboard article p { margin: 12px 0; font-size: 13px; color: var(--muted-foreground); }
+
+.companion-project-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.companion-project-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.companion-project-agent { display: grid; gap: 4px; flex: 1 1 160px; min-width: 0; font-size: 12px; color: var(--muted-foreground); }
+.companion-project-agent select { width: 100%; min-width: 0; min-height: 40px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); font: inherit; font-size: 14px; }
+.companion-project-card > header { flex-wrap: wrap; }
+@media (min-width: 680px) {
+  .companion-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 900px) and (orientation: landscape) {
+  .companion-project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 680px) {
+  html[data-companion-sidebar="true"] .companion-project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.companion[data-screen="dashboard"] { width: 100%; max-width: none; }
+.companion-dashboard-heading { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.companion-dashboard-heading h2 { flex: 1; font-size: 22px; font-weight: 600; }
+.companion-dashboard-heading .companion-project-agent { flex: 0 1 220px; }
+.companion-project-card { padding: 0 !important; }
+.companion-project-open { width: 100%; height: 100%; padding: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; text-align: left; border-radius: inherit; cursor: pointer; }
+.companion-project-open p { flex-basis: 100%; }
+.companion-project-open:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.companion-project-panel { width: min(100%, 480px); max-width: 480px; padding: 16px; overflow-y: auto; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+/* Dashboard controls open below their card header, inside the scrollable content. */
+.companion-project-controls .agent-controls-panel { top: calc(100% + 8px); bottom: auto; }
+.companion-project-agent { flex-basis: 100%; }
+.companion-project-controls .agent-controls { flex: 1 1 140px; min-width: 120px; }
+.companion-project-controls .agent-model-label { max-width: 160px; }

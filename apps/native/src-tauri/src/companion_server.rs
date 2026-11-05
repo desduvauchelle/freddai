@@ -7,10 +7,24 @@ use subtle::ConstantTimeEq;
 use fs2::FileExt;
 use tiny_http::{Header, Method, Response, Server, SslConfig, StatusCode};
 
+/// Only presentation fields cross the companion boundary, independent of host upgrades.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadListSettings {
+    pub project_order: Vec<String>,
+    pub grouped: bool,
+    pub hide_read: bool,
+    pub recent_finished: usize,
+}
+
 const PORT: u16 = 49744;
 const LIMIT: u64 = 128 * 1024;
 
 pub fn project_snapshot(db: &Database) -> Value {
+    project_snapshot_selection(db, None, false)
+}
+/// Scoped clients fetch summaries plus only the open transcript. Legacy clients retain their full snapshot.
+fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool) -> Value {
     let projects: Vec<_> = db.projects.iter().map(|p| json!({
         "id":p.id, "name":p.name, "color":p.color,
         "provider":resolve(db,p,None).ok().and_then(|id|db.accounts.iter().find(|a|a.id==id).map(|a|a.provider.clone())),
@@ -20,8 +34,19 @@ pub fn project_snapshot(db: &Database) -> Value {
     })).collect();
     let threads: Vec<_> = db.sessions.iter().filter(|s| !s.archived && s.deleted_at.is_none() && s.status != "archived").map(|s| {
         let queue = db.queues.iter().find(|q| q.session == s.id);
+        let include_history = !scoped || thread == Some(s.id.as_str());
+        if !include_history {
+            // Keep the searchable title index and attention/read badges, not conversation payloads.
+            // An empty pending object is a presence marker; messagesLoaded=false prevents acting on it.
+            return json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,
+                "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,
+                "messages":[],"messagesLoaded":false,"canReply":false,"error":null,
+                "pending":s.pending.as_ref().map(|_|json!({})),
+                "queued":queue.map(|q|q.messages.len()).unwrap_or(0)});
+        }
         json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,
-            "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":s.messages,"tasks":s.tasks,"error":s.error,
+            "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
+            "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
             "usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
             "options":{"model":s.options.model,"effort":s.options.effort,"permission_mode":s.options.permission_mode},
@@ -183,13 +208,24 @@ fn voice_composer(root: &Path, p: &Value) -> Result<Value,String> {
     }
 }
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("day_summary"|"summarize_day")) {
+        return host::call(root, text(&p,"operation")?, p["input"].clone());
+    }
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
     // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
     if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
     let db = snapshot(root)?;
     if route == "/v1/composer" { return composer(root, &db, &p); }
-    if route == "/v1/snapshot" { return Ok(project_snapshot(&db)); }
+    if route == "/v1/snapshot" {
+        let mut result = project_snapshot_selection(&db,p["thread"].as_str(),p["scoped"].as_bool().unwrap_or(false));
+        if let Ok(bytes) = fs::read(root.join("companion/thread-list.json")) {
+            if let Ok(settings) = serde_json::from_slice::<ThreadListSettings>(&bytes) {
+                result["threadList"] = json!(settings);
+            }
+        }
+        return Ok(result);
+    }
     if route=="/v1/action" {
         let thread=text(&p,"thread")?;
         let session=db.sessions.iter().find(|s|s.id==thread && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")?;
@@ -302,7 +338,8 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
             let response=Response::from_string(text).with_status_code(StatusCode(status))
                 .with_header(Header::from_bytes("Content-Type","application/json").unwrap())
                 .with_header(Header::from_bytes("Cache-Control","no-store").unwrap());
-            let _=req.respond(response);
+            let delivered=req.respond(response);
+            eprintln!("companion.server.delivery op={route} scoped={} elapsed_ms={} delivered={} error={:?}",route=="/v1/snapshot" && payload["result"]["threads"].as_array().is_some_and(|threads|threads.iter().any(|t|t["messagesLoaded"]==false)),started.elapsed().as_millis(),delivered.is_ok(),delivered.err().map(|e|e.to_string()));
         }});
     }
     Ok(true)
@@ -470,5 +507,90 @@ mod tests {
         assert!(v["projects"][0].get("path").is_none());
         assert!(v["threads"][0].get("account").is_none());
         assert!(v["threads"][0].get("provider_id").is_none());
+    }
+}
+
+#[cfg(test)] mod snapshot_scale_tests {
+    use super::*;
+    #[test] fn unopened_threads_carry_only_list_metadata_but_opened_threads_keep_every_detail() {
+        let mut db=Database::default();
+        db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"p","account":"none","title":"Waiting task","status":"running","updated":9,"read_at":4,"last_user_message_at":7,"provider_id":null,
+            "messages":[{"id":"m","role":"assistant","text":"TRANSCRIPT_DETAIL"}],
+            "pending":{"id":3,"params":{"command":"APPROVAL_DETAIL"}},"error":"ERROR_DETAIL",
+            "options":{"model":"MODEL_DETAIL"},"usage":{"context_tokens":42,"context_window":100}})).unwrap());
+        db.queues.push(serde_json::from_value(json!({"session":"thread","paused":true,"error":"QUEUE_ERROR_DETAIL","messages":[{"id":"q","prompt":"QUEUE_PROMPT_DETAIL","options":{}}]})).unwrap());
+        let overview=project_snapshot_selection(&db,None,true);
+        let row=&overview["threads"][0];
+        assert_eq!(row["title"],"Waiting task");
+        assert_eq!(row["pending"],json!({}),"only an attention marker belongs in the title index");
+        assert_eq!(row["queued"],1);
+        assert_eq!(row["read_at"],4);
+        assert_eq!(row["last_user_message_at"],7);
+        assert_eq!(row["messagesLoaded"],false);
+        assert_eq!(row["canReply"],false);
+        for field in ["usage","options","queue","queueError","tasks"] { assert!(row.get(field).is_none(),"{field} belongs to the opened conversation"); }
+        assert!(!overview.to_string().contains("_DETAIL"));
+        let full=project_snapshot_selection(&db,Some("thread"),true);
+        let full=&full["threads"][0];
+        assert_eq!(full["messages"],json!(db.sessions[0].messages));
+        assert_eq!(full["pending"],json!(db.sessions[0].pending));
+        assert_eq!(full["usage"]["context_tokens"],42);
+        assert_eq!(full["options"]["model"],"MODEL_DETAIL");
+        assert_eq!(full["queue"][0]["prompt"],"QUEUE_PROMPT_DETAIL");
+        assert_eq!(full["queueError"],"QUEUE_ERROR_DETAIL");
+        assert_eq!(full["messagesLoaded"],true);
+    }
+    #[test] fn home_snapshot_does_not_download_every_conversation() {
+        let mut db=Database::default();
+        for n in 0..124 {
+            db.sessions.push(serde_json::from_value(json!({"id":format!("thread-{n}"),"project":"p","account":"none","title":"Synthetic thread","status":"done","updated":1,"provider_id":null,"messages":[{"id":"m","role":"assistant","text":"synthetic history ".repeat(20_000)}],"pending":null,"error":null})).unwrap());
+        }
+        let result=project_snapshot_selection(&db,None,true);
+        let bytes=serde_json::to_vec(&result).unwrap().len();
+        assert!(bytes<256*1024,"Home loaded all transcripts: {bytes} bytes");
+        assert_eq!(result["threads"].as_array().unwrap().len(),124);
+        assert_eq!(result["threads"][0]["messagesLoaded"],false);
+        let selected=project_snapshot_selection(&db,Some("thread-73"),true);
+        assert!(serde_json::to_vec(&selected).unwrap().len()<1024*1024);
+        assert_eq!(selected["threads"][73]["messages"],json!(db.sessions[73].messages));
+        assert_eq!(selected["threads"][73]["messagesLoaded"],true);
+        assert_eq!(selected["threads"][0]["messages"],json!([]));
+        // Older clients continue to receive every transcript, with no silent history loss.
+        assert_eq!(project_snapshot(&db)["threads"][0]["messages"],json!(db.sessions[0].messages));
+        eprintln!("Scoped home snapshot: {bytes} bytes for 124 threads");
+    }
+}
+
+#[cfg(test)]
+mod summary_transport_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+
+    #[test]
+    fn mobile_summary_commands_pass_the_guard_and_reach_the_host() {
+        let root = std::env::temp_dir().join(format!("fr-sum-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let cached = json!({"date":"2026-11-04","summary":{"date":"2026-11-04","markdown":"Cached summary","generated_at":1,"provider":"","account":"","model":"","threads":2},"running":false,"threads":2,"error":null});
+        let expected = cached.clone();
+        let host = std::thread::spawn(move || {
+            for operation in ["day_summary", "summarize_day"] {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], operation);
+                assert_eq!(request["params"]["date"], "2026-11-04");
+                if operation == "summarize_day" { assert_eq!(request["params"]["force"], false); }
+                writeln!(connection, "{}", json!({"result":cached})).unwrap();
+            }
+        });
+        for operation in ["day_summary", "summarize_day"] {
+            crate::companion_operations::validate(operation).unwrap();
+            let result = dispatch(&root, "/v1/composer", json!({"operation":operation,"input":{"date":"2026-11-04","force":false}})).unwrap();
+            assert_eq!(result, expected);
+        }
+        host.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }

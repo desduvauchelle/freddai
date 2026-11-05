@@ -198,6 +198,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
+            sidebar.addView(button("Dashboard") { event("dashboard"); closeDrawer() })
             sidebar.addView(search)
             val filters = LinearLayout(host)
             filters.addView(button("Project") { filter("projectOptions", "project") })
@@ -232,7 +233,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private fun applyMode() {
         val visible = mode != "other"
         navigation.visibility = if (visible) View.VISIBLE else View.GONE
-        composer.visibility = if (visible) View.VISIBLE else View.GONE
+        composer.visibility = if (mode == "conversation" || mode == "new") View.VISIBLE else View.GONE
         drawer.setDrawerLockMode(if (visible) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
         back?.isEnabled = visible
     }

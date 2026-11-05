@@ -29,7 +29,7 @@ export function MessageQueue({ queue, active, disabled, canSteer, onAction }: {
         </form> : <p>{message.prompt}</p>}
       </div>
       <div className="message-queue-actions">
-        <button type="button" aria-label="Steer instead" title={canSteer && active ? "Steer the current turn instead" : "Steering requires an active Codex turn"} disabled={disabled || !active || !canSteer} onClick={() => void onAction("steer", message.id)}><CornerUpLeft size={13}/><span className="message-queue-action-label">Steer</span></button>
+        <button type="button" aria-label="Steer instead" title={canSteer && active ? "Send now: steer or interrupt and continue the current turn" : "Steering requires an active turn"} disabled={disabled || !active || !canSteer} onClick={() => void onAction("steer", message.id)}><CornerUpLeft size={13}/><span className="message-queue-action-label">Steer</span></button>
         <button type="button" aria-label="Edit queued message" title="Edit queued message" disabled={disabled} onClick={() => { setEditing(message.id); setDraft(message.prompt); }}><Pencil size={13}/></button>
         {index === 0 && <button type="button" aria-label={toggleLabel} title={`${toggleLabel} · ${state}`} disabled={disabled} onClick={() => onAction(queue.paused ? "resume" : "pause")}>
           {queue.paused ? <Play size={13}/> : <Pause size={13}/>}<span className="message-queue-action-label">{queue.paused ? "Resume" : "Pause"}</span>

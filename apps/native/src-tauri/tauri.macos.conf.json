@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeBuildCommand": "bash ../../scripts/build-computer-use.sh && pnpm build"
+  },
+  "bundle": {
+    "resources": {
+      "../computer-use/.build/Freddai Computer.app/": "computer-use/Freddai Computer.app/"
+    }
+  }
+}

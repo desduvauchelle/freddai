@@ -472,11 +472,20 @@ async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, Strin
     .await
 }
 #[tauri::command]
-async fn save_preferences(h: State<'_, Host>, preferences: Value) -> Result<Value, String> {
+async fn save_thread_list(h: State<'_, Host>, settings: crate::companion_server::ThreadListSettings) -> Result<(), String> {
+    let dir = h.root.join("companion");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("thread-list.json");
+    let temporary = dir.join("thread-list.json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec(&settings).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(temporary, path).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn save_preferences(h: State<'_, Host>, preferences: Option<Value>, patch: Option<Value>) -> Result<Value, String> {
     rpc(
         h.inner().clone(),
         "save_preferences",
-        json!({"preferences":preferences}),
+        json!({"preferences":preferences,"patch":patch}),
     )
     .await
 }
@@ -872,6 +881,7 @@ pub fn run() {
             import_candidates,
             import_sessions,
             save_preferences,
+            save_thread_list,
             login,
             login_state,
             cancel_login,

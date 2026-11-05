@@ -251,6 +251,22 @@ enum Control {
     Reply(Value),
     Steer(QueuedMessage, mpsc::Sender<Result<()>>),
 }
+/// Non-Codex steering waits for cancellation before sending a new prompt on the same pipe.
+struct SteeringHandoff {
+    message: QueuedMessage,
+    ack: mpsc::Sender<Result<()>>,
+    input: Value,
+    started: std::time::Instant,
+    interrupt_ack: bool,
+    turn_ended: bool,
+}
+fn cancelled_permission(provider: &str, frame: &Value) -> Result<Value> {
+    if is_acp(provider) {
+        Ok(json!({"jsonrpc":"2.0","id":frame["id"],"result":{"outcome":{"outcome":"cancelled"}}}))
+    } else {
+        protocol::approval_response(provider, frame, false, &json!({}))
+    }
+}
 fn write_file(root: &Path, db: &Database, seq: u64, file: &Mutex<u64>) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(db).map_err(|e| e.to_string())?;
     let mut last = file.lock().unwrap();
@@ -267,6 +283,43 @@ fn write_file(root: &Path, db: &Database, seq: u64, file: &Mutex<u64>) -> Result
     Ok(())
 }
 /// Immediate, synchronous persistence for user mutations and state transitions.
+/// One line per event to stderr and to `<root>/logs/preferences.log` (Finder launches lose stderr).
+fn preferences_log(root: &Path, line: &str) {
+    let line = format!(
+        "{} pid={} {line}",
+        crate::timing::wall_ms(),
+        std::process::id()
+    );
+    eprintln!("{line}");
+    let dir = root.join("logs");
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("preferences.log");
+    if fs::metadata(&path)
+        .map(|m| m.len() > 512 * 1024)
+        .unwrap_or(false)
+    {
+        let _ = fs::rename(&path, dir.join("preferences.log.1"));
+    }
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
+}
+fn prefs_diag(p: &Preferences) -> String {
+    format!(
+        "policy={:?} last_selected={:?} fallback={:?} prefer_last={}",
+        p.new_thread_policy.map(|v| match v {
+            NewThreadPolicy::LastSelected => "last_selected",
+            NewThreadPolicy::Project => "project",
+            NewThreadPolicy::Default => "default",
+        }),
+        p.last_selected,
+        p.fallback,
+        p.prefer_last
+    )
+}
 fn write_db(inner: &Inner) -> Result<()> {
     let seq = inner.seq.fetch_add(1, Ordering::SeqCst) + 1;
     write_file(&inner.root, &inner.db, seq, &inner.file)?;
@@ -663,6 +716,14 @@ impl Runtime {
         for queue in &mut db.queues {
             queue.paused = true;
         }
+        preferences_log(
+            &root,
+            &format!(
+                "preferences.load path={} {}",
+                root.join("workspace.json").display(),
+                prefs_diag(&db.preferences)
+            ),
+        );
         let inner = Inner {
             root,
             db,
@@ -1046,16 +1107,46 @@ impl Runtime {
         write_db(&i)?;
         Ok(p)
     }
-    pub fn preferences(&self, mut p: Preferences) -> Result<()> {
+    pub fn preferences(&self, p: Preferences) -> Result<()> {
         let mut i = self.0.lock().unwrap();
+        Self::apply_preferences(&mut i, p, "replace")
+    }
+    /// Merge only the supplied fields into the current preferences under the lock, so a
+    /// stale client snapshot can never overwrite fields it did not change. `null` clears a field.
+    pub fn preferences_patch(&self, patch: Value) -> Result<()> {
+        let Value::Object(fields) = patch else {
+            return Err("Preferences patch must be an object.".into());
+        };
+        let mut i = self.0.lock().unwrap();
+        let mut merged = serde_json::to_value(&i.db.preferences).map_err(|e| e.to_string())?;
+        for (key, value) in fields {
+            merged[key] = value;
+        }
+        let p: Preferences = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+        Self::apply_preferences(&mut i, p, "patch")
+    }
+    fn apply_preferences(i: &mut Inner, mut p: Preferences, mode: &str) -> Result<()> {
         p.last = i.db.preferences.last.clone();
         if let Some(account) = &p.last_selected {
             if !i.db.accounts.iter().any(|a| &a.id == account) {
                 return Err("The selected account no longer exists.".into());
             }
         }
+        preferences_log(
+            &i.root,
+            &format!(
+                "preferences.save mode={mode} before={{{}}} after={{{}}}",
+                prefs_diag(&i.db.preferences),
+                prefs_diag(&p)
+            ),
+        );
         i.db.preferences = p;
-        write_db(&i)
+        let result = write_db(i);
+        preferences_log(
+            &i.root,
+            &format!("preferences.save.written ok={}", result.is_ok()),
+        );
+        result
     }
     pub fn login(&self, account_id: &str) -> Result<()> {
         let i = self.0.lock().unwrap();
@@ -2001,13 +2092,13 @@ impl Runtime {
                     .iter()
                     .find(|a| a.id == session.account)
                     .ok_or("Account was removed")?;
-            if account.provider != "codex" {
-                return Err("Mid-turn steering is currently supported for Codex only".into());
+            if account.provider == "codex" {
+                message.prompt = crate::commands::expand_codex_prompt(
+                    &message.prompt,
+                    crate::commands::default_home("codex", account.config_home.as_deref())
+                        .as_deref(),
+                )?;
             }
-            message.prompt = crate::commands::expand_codex_prompt(
-                &message.prompt,
-                crate::commands::default_home("codex", account.config_home.as_deref()).as_deref(),
-            )?;
             if session.archived || session.deleted_at.is_some() {
                 return Err("Restore or unarchive this thread first".into());
             }
@@ -2018,9 +2109,40 @@ impl Runtime {
                 .map_err(|e| e.to_string())?;
         }
         rx.recv_timeout(Duration::from_secs(30)).map_err(|error| match error {
-            mpsc::RecvTimeoutError::Timeout => "Steering confirmation timed out. Check the conversation before retrying; Codex may still accept this message.".to_string(),
+            mpsc::RecvTimeoutError::Timeout => "Steering confirmation timed out. Check the conversation before retrying; the agent may still accept this message.".to_string(),
             mpsc::RecvTimeoutError::Disconnected => "The active turn ended before steering was accepted. Your message has been kept.".to_string(),
         })?
+    }
+    // Record delivery once, for every protocol. Failed handoffs leave queued messages intact.
+    fn record_steering(&self, sid: &str, message: QueuedMessage) -> Result<()> {
+        let mut i = self.0.lock().unwrap();
+        let attached = message
+            .options
+            .attachments
+            .iter()
+            .map(|key| crate::attachments::load(&i.root, key).map(|x| x.0))
+            .collect::<Result<Vec<_>>>()?;
+        let session =
+            i.db.sessions
+                .iter_mut()
+                .find(|s| s.id == sid)
+                .ok_or("Thread not found")?;
+        if session.requests.contains(&message.id) {
+            return Ok(());
+        }
+        session.requests.push(message.id.clone());
+        session.last_user_message_at = Some(now());
+        session.updated = now();
+        session.messages.push(Message {
+            id: message.id.clone(),
+            role: "user".into(),
+            text: message.prompt,
+            attachments: attached,
+        });
+        if let Some(queue) = i.db.queues.iter_mut().find(|q| q.session == sid) {
+            queue.messages.retain(|m| m.id != message.id);
+        }
+        write_db(&i)
     }
     pub fn queue_action(&self, sid: &str, action: &str, message: Option<&str>) -> Result<()> {
         let _guard = QUEUE_LOCK.lock().unwrap();
@@ -2353,6 +2475,7 @@ impl Runtime {
                 cmd.args(["--resume", resume]);
             }
         }
+        crate::computer_use::configure(&mut cmd, &a.provider);
         self.run_protocol(s, a, p, prompt, control, cmd)
     }
     fn run_protocol(
@@ -2431,11 +2554,50 @@ impl Runtime {
                 String,
                 (QueuedMessage, mpsc::Sender<Result<()>>),
             >::new();
-            let turn_key = id();
+            let mut turn_key = id();
+            let mut handoff: Option<SteeringHandoff> = None;
+            let mut claude_turn_active = true;
+            let mut acp_prompt_id = 104_u64;
             let mut pending_queue = std::collections::VecDeque::<Value>::new();
             let mut claude_stream = crate::claude_stream::TextStream::default();
             let mut claude_blocks = crate::claude_stream::BlockIndex::default();
             loop {
+                // Expire before sending anything, even when the provider emits a continuous stream.
+                if handoff
+                    .as_ref()
+                    .is_some_and(|h| h.started.elapsed() >= Duration::from_secs(25))
+                {
+                    let h = handoff.take().unwrap();
+                    let _ = h.ack.send(Err("The agent did not finish interrupting in time. Your update was not sent; retry when the turn settles.".into()));
+                    if h.turn_ended && tracker.pending() == 0 {
+                        self.update(&s.id, |s| {
+                            s.status = "interrupted".into();
+                            s.pending = None;
+                        });
+                        return Ok(());
+                    }
+                }
+                if handoff
+                    .as_ref()
+                    .is_some_and(|h| h.interrupt_ack && h.turn_ended)
+                {
+                    let h = handoff.take().unwrap();
+                    // Clear old permission cards and give the new response separate transcript keys.
+                    pending_queue.clear();
+                    self.update(&s.id, |s| {
+                        s.pending = None;
+                        s.status = "running".into();
+                        s.error = None;
+                    });
+                    turn_key = id();
+                    claude_stream = crate::claude_stream::TextStream::default();
+                    claude_blocks = crate::claude_stream::BlockIndex::default();
+                    let result = send(&mut stdin, h.input)
+                        .and_then(|_| self.record_steering(&s.id, h.message));
+                    let _ = h.ack.send(result.clone());
+                    result?;
+                    claude_turn_active = true;
+                }
                 match control.try_recv() {
                     Ok(Control::Cancel) => {
                         self.update(&s.id, |s| {
@@ -2445,7 +2607,88 @@ impl Runtime {
                         return Ok(());
                     }
                     Ok(Control::Steer(message, ack)) => {
-                        if a.provider != "codex" || codex_turn.is_empty() {
+                        if a.provider != "codex" {
+                            if !ready || handoff.is_some() {
+                                let _ = ack.send(Err("The agent is starting or already interrupting. Try again when it is running.".into()));
+                                continue;
+                            }
+                            // Validate attachments before interrupting any work.
+                            let blocks = crate::attachments::blocks(
+                                &root,
+                                &message.options.attachments,
+                                &a.provider,
+                            );
+                            let input = blocks.and_then(|blocks| {
+                                if is_acp(&a.provider)
+                                    && blocks.iter().any(|b| b["type"] == "image")
+                                    && acp_init["agentCapabilities"]["promptCapabilities"]["image"]
+                                        != true
+                                {
+                                    return Err(
+                                        "This agent version does not accept image attachments."
+                                            .into(),
+                                    );
+                                }
+                                let mut content =
+                                    vec![json!({"type":"text","text":message.prompt})];
+                                content.extend(blocks);
+                                if is_acp(&a.provider) {
+                                    Ok(crate::acp::request(
+                                        acp_prompt_id + 1000,
+                                        "session/prompt",
+                                        json!({"sessionId":acp_session,"prompt":content}),
+                                    ))
+                                } else {
+                                    let session = self
+                                        .snapshot()
+                                        .sessions
+                                        .into_iter()
+                                        .find(|x| x.id == s.id)
+                                        .and_then(|x| x.provider_id)
+                                        .unwrap_or_default();
+                                    let mut input =
+                                        protocol::user_message("claude", &message.prompt, &session);
+                                    input["message"]["content"] = json!(content);
+                                    input["uuid"] = json!(message.id);
+                                    Ok(input)
+                                }
+                            });
+                            let input = match input {
+                                Ok(input) => input,
+                                Err(error) => {
+                                    let _ = ack.send(Err(error));
+                                    continue;
+                                }
+                            };
+                            let interrupt = if is_acp(&a.provider) {
+                                json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":acp_session}})
+                            } else {
+                                json!({"type":"control_request","request_id":format!("interrupt-{}", message.id),"request":{"subtype":"interrupt"}})
+                            };
+                            send(&mut stdin, interrupt)?;
+                            // ACP requires cancelled responses for every outstanding permission.
+                            let current = self
+                                .snapshot()
+                                .sessions
+                                .into_iter()
+                                .find(|x| x.id == s.id)
+                                .and_then(|x| x.pending);
+                            for frame in current.into_iter().chain(pending_queue.drain(..)) {
+                                send(&mut stdin, cancelled_permission(&a.provider, &frame)?)?;
+                            }
+                            self.update(&s.id, |s| {
+                                s.pending = None;
+                                s.status = "running".into();
+                            });
+                            handoff = Some(SteeringHandoff {
+                                message,
+                                ack,
+                                input,
+                                started: std::time::Instant::now(),
+                                interrupt_ack: is_acp(&a.provider),
+                                turn_ended: !is_acp(&a.provider) && !claude_turn_active,
+                            });
+                        } else if codex_turn.is_empty() {
                             let _ = ack.send(Err("The Codex turn is still starting or has ended. Try again when it is running.".into()));
                         } else {
                             let input = crate::attachments::blocks(
@@ -2478,6 +2721,9 @@ impl Runtime {
                         }
                     }
                     Ok(Control::Reply(v)) => {
+                        if handoff.is_some() {
+                            continue;
+                        }
                         send(&mut stdin, v)?;
                         if let Some(next) = pending_queue.pop_front() {
                             self.update(&s.id, |s| {
@@ -2513,6 +2759,14 @@ impl Runtime {
                                     .unwrap_or("response")
                             ),
                         );
+                        if handoff.is_some()
+                            && (v["method"] == "session/request_permission"
+                                || (v["type"] == "control_request"
+                                    && v["request"]["subtype"] == "can_use_tool"))
+                        {
+                            send(&mut stdin, cancelled_permission(&a.provider, &v)?)?;
+                            continue;
+                        }
                         if is_acp(&a.provider) {
                             if !v["error"].is_null() {
                                 return Err(v["error"]["message"]
@@ -2699,7 +2953,12 @@ impl Runtime {
                                     _ => {}
                                 }
                             }
-                            if v["id"] == 104 && !v["result"].is_null() {
+                            if v["id"] == acp_prompt_id && !v["result"].is_null() {
+                                if let Some(h) = handoff.as_mut() {
+                                    h.turn_ended = true;
+                                    acp_prompt_id += 1000;
+                                    continue;
+                                }
                                 let reason =
                                     v["result"]["stopReason"].as_str().unwrap_or("unknown");
                                 self.update(&s.id, |s| {
@@ -2728,37 +2987,7 @@ impl Runtime {
                                         .unwrap_or("Steering was rejected")
                                         .into()));
                                 } else {
-                                    let attached = message
-                                        .options
-                                        .attachments
-                                        .iter()
-                                        .map(|key| {
-                                            crate::attachments::load(&root, key).map(|x| x.0)
-                                        })
-                                        .collect::<Result<Vec<_>>>();
-                                    let result = attached.and_then(|attached| {
-                                        let mut i = self.0.lock().unwrap();
-                                        let session =
-                                            i.db.sessions
-                                                .iter_mut()
-                                                .find(|x| x.id == s.id)
-                                                .ok_or("Thread not found")?;
-                                        session.requests.push(message.id.clone());
-                                        session.last_user_message_at = Some(now());
-                                        session.updated = now();
-                                        session.messages.push(Message {
-                                            id: message.id.clone(),
-                                            role: "user".into(),
-                                            text: message.prompt,
-                                            attachments: attached,
-                                        });
-                                        if let Some(q) =
-                                            i.db.queues.iter_mut().find(|q| q.session == s.id)
-                                        {
-                                            q.messages.retain(|m| m.id != message.id);
-                                        }
-                                        write_db(&i)
-                                    });
+                                    let result = self.record_steering(&s.id, message);
                                     let _ = ack.send(result);
                                 }
                                 continue;
@@ -2944,6 +3173,32 @@ impl Runtime {
                                 return Ok(());
                             }
                         } else {
+                            if v["type"] == "control_response"
+                                && handoff.as_ref().is_some_and(|h| {
+                                    v["response"]["request_id"]
+                                        == format!("interrupt-{}", h.message.id)
+                                })
+                            {
+                                if v["response"]["subtype"] == "error" {
+                                    let h = handoff.take().unwrap();
+                                    let _ = h.ack.send(Err(v["response"]["error"].as_str().unwrap_or("The agent rejected interruption; your update was not sent.").into()));
+                                    if h.turn_ended {
+                                        self.update(&s.id, |s| {
+                                            s.status = "interrupted".into();
+                                            s.pending = None;
+                                        });
+                                        return Ok(());
+                                    }
+                                } else {
+                                    handoff.as_mut().unwrap().interrupt_ack = true;
+                                }
+                                continue;
+                            }
+                            if matches!(v["type"].as_str(), Some("assistant" | "stream_event"))
+                                && v["parent_tool_use_id"].is_null()
+                            {
+                                claude_turn_active = true;
+                            }
                             if tracker.observe(&v, std::time::Instant::now()) {
                                 crate::timing::log("host", format_args!("ev=background_tasks.changed session={} pending={} tasks={}", s.id, tracker.pending(), tracker.tasks().len()));
                                 self.update(&s.id, |s| s.tasks = tracker.tasks().to_vec());
@@ -3102,6 +3357,11 @@ impl Runtime {
                                 }
                             }
                             if v["type"] == "result" {
+                                claude_turn_active = false;
+                                if let Some(h) = handoff.as_mut() {
+                                    h.turn_ended = true;
+                                    continue;
+                                }
                                 let failed = v["is_error"].as_bool().unwrap_or(true);
                                 if !failed
                                     && tracker.on_result() == crate::background_tasks::Settle::Hold
@@ -3125,7 +3385,9 @@ impl Runtime {
                         return Err("Agent disconnected before confirming completion".into())
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        if tracker.wake_overdue(Duration::from_secs(90), std::time::Instant::now())
+                        if handoff.is_none()
+                            && tracker
+                                .wake_overdue(Duration::from_secs(90), std::time::Instant::now())
                         {
                             crate::timing::log(
                                 "host",
@@ -3423,9 +3685,11 @@ impl Runtime {
                 i.db.projects.push(project);
                 pid
             }
-            None => return Err(format!(
+            None => {
+                return Err(format!(
                 "No Freddai project for {canonical}. Confirm creating it to import this session."
-            )),
+            ))
+            }
         };
         let updated = head.updated;
         let session: Session = serde_json::from_value(json!({
@@ -3917,6 +4181,27 @@ mod tests {
         assert!(resolve(&d, &p, None).is_err());
     }
     #[test]
+    fn preference_patches_merge_and_survive_restart() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        rt.0.lock().unwrap().db = db();
+        rt.preferences_patch(json!({"new_thread_policy":"last_selected"}))
+            .unwrap();
+        rt.preferences_patch(json!({"last_selected":"a"})).unwrap();
+        rt.preferences_patch(json!({"use_worktree":true})).unwrap();
+        assert!(rt
+            .preferences_patch(json!({"last_selected":"missing"}))
+            .is_err());
+        drop(rt);
+        let d = Runtime::open(root.clone()).unwrap().snapshot();
+        assert!(d.preferences.new_thread_policy == Some(NewThreadPolicy::LastSelected));
+        assert_eq!(d.preferences.last_selected.as_deref(), Some("a"));
+        assert!(d.preferences.use_worktree);
+        let log = fs::read_to_string(root.join("logs/preferences.log")).unwrap();
+        assert!(log.contains("preferences.save mode=patch") && log.contains("preferences.load"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn selected_connection_and_policy_survive_restart_without_launching() {
         let root = std::env::temp_dir().join(id());
         let rt = Runtime::open(root.clone()).unwrap();
@@ -4003,6 +4288,51 @@ mod tests {
             .is_err());
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn host_queue_dispatches_without_waiting_for_scheduler_and_preserves_pauses() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            // Offline fixture: absent project guarantees no provider can execute.
+            i.db.accounts.push(
+                serde_json::from_value(
+                    json!({"id":"fixture","name":"Offline","provider":"claude","color":"#fff"}),
+                )
+                .unwrap(),
+            );
+            i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"missing","account":"fixture","title":"Offline","status":"done","updated":0,"provider_id":null,"messages":[],"pending":null,"error":null})).unwrap());
+        }
+        crate::host::dispatch(
+            &rt,
+            "queue_message",
+            json!({"session":"thread","prompt":"First","options":{"request_id":"first"}}),
+        )
+        .unwrap();
+        let q = rt.snapshot().queues[0].clone();
+        assert_eq!(q.error.as_deref(), Some("Project not found"));
+        assert!(q.paused);
+        crate::host::dispatch(
+            &rt,
+            "queue_message",
+            json!({"session":"thread","prompt":"Second","options":{"request_id":"second"}}),
+        )
+        .unwrap();
+        crate::host::dispatch(
+            &rt,
+            "queue_message",
+            json!({"session":"thread","prompt":"Second","options":{"request_id":"second"}}),
+        )
+        .unwrap();
+        let q = rt.snapshot().queues[0].clone();
+        assert!(q.paused);
+        assert_eq!(
+            q.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn queue_failure_retains_message_and_pauses_without_provider_execution() {
         let root = std::env::temp_dir().join(id());
@@ -4651,6 +4981,193 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn non_codex_steering_interrupts_and_continues_same_session() {
+        for provider in [
+            "claude",
+            "gemini",
+            "antigravity",
+            "grok",
+            "opencode",
+            "cursor",
+        ] {
+            steering_fixture(provider, "normal");
+        }
+        steering_fixture("claude", "ack-first");
+        steering_fixture("claude", "reject");
+        steering_fixture("claude", "timeout");
+        steering_fixture("claude", "background-idle");
+        steering_fixture("claude", "background-woke");
+    }
+    fn steering_fixture(provider: &str, scenario: &str) {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        let p = project();
+        let mut a = db().accounts[0].clone();
+        a.provider = provider.into();
+        let sample = root.join("sample.txt");
+        fs::write(&sample, "ATTACHMENT_FIXTURE_CONTENT").unwrap();
+        let attached = rt
+            .stage_attachments(vec![sample.to_string_lossy().into()])
+            .unwrap();
+        fs::remove_file(sample).unwrap();
+        let s = Session {
+            archived: false,
+            deleted_at: None,
+            execution_project: None,
+            read_at: None,
+            id: "test-session".into(),
+            project: p.id.clone(),
+            account: a.id.clone(),
+            title: "Test".into(),
+            title_manual: Some(false),
+            status: "starting".into(),
+            updated: 0,
+            last_user_message_at: None,
+            provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor") {
+                Some("provider-session".into())
+            } else {
+                None
+            },
+            options: LaunchOptions {
+                model: Some("fixture-model".into()),
+                effort: Some("xhigh".into()),
+                attachments: vec![attached[0].id.clone()],
+                ..Default::default()
+            },
+            working_dir: None,
+            requests: vec![],
+            tasks: vec![],
+            usage: None,
+            messages: vec![],
+            pending: None,
+            error: None,
+        };
+        let (tx, rx) = mpsc::channel();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.accounts.push(a.clone());
+            i.db.projects.push(p.clone());
+            i.db.sessions.push(s.clone());
+            i.running.insert(s.id.clone(), tx);
+        }
+        let mut cmd = Command::new("python3");
+        cmd.args([
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/steering_agent.py"
+            ),
+            provider,
+            scenario,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        let runner = rt.clone();
+        let sid = s.id.clone();
+        let handle = std::thread::spawn(move || runner.run_protocol(&s, &a, &p, "Test", rx, cmd));
+
+        for _ in 0..100 {
+            if rt.snapshot().sessions[0].pending.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(rt.snapshot().sessions[0].pending.is_some());
+        if scenario.starts_with("background-") {
+            for _ in 0..100 {
+                if rt.snapshot().sessions[0]
+                    .tasks
+                    .iter()
+                    .any(|t| t.id == "ready-marker")
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        let invalid = rt.steer_message(
+            &sid,
+            "Do not interrupt".into(),
+            LaunchOptions {
+                attachments: vec!["missing-attachment".into()],
+                ..Default::default()
+            },
+        );
+        assert!(invalid.is_err());
+        assert!(
+            rt.snapshot().sessions[0].pending.is_some(),
+            "validation must happen before interruption"
+        );
+        let options = LaunchOptions {
+            request_id: Some("redirect".into()),
+            attachments: vec![attached[0].id.clone()],
+            ..Default::default()
+        };
+        rt.queue_message(&sid, "Revised direction".into(), options.clone())
+            .unwrap();
+        let outcome = rt.queue_action(&sid, "steer", Some("redirect"));
+        if outcome.is_err() {
+            assert_eq!(rt.snapshot().queues[0].messages.len(), 1);
+            assert!(!rt.snapshot().sessions[0]
+                .requests
+                .contains(&"redirect".to_string()));
+            rt.stop(&sid).unwrap();
+            handle.join().unwrap().unwrap();
+        } else {
+            // Acknowledged retries must not interrupt or deliver a second time.
+            rt.steer_message(&sid, "Revised direction".into(), options)
+                .unwrap();
+            for _ in 0..100 {
+                if rt.snapshot().sessions[0].pending.is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let snapshot = rt.snapshot();
+            let session = &snapshot.sessions[0];
+            assert_eq!(session.provider_id.as_deref(), Some("provider-session"));
+            let frame = session.pending.as_ref().expect("new turn permission");
+            let key = if provider == "claude" {
+                &frame["request_id"]
+            } else {
+                &frame["id"]
+            };
+            rt.respond(&sid, &key.to_string(), true, json!({})).unwrap();
+            handle.join().unwrap().unwrap();
+            let snapshot = rt.snapshot();
+            assert_eq!(snapshot.sessions[0].status, "done");
+            assert!(snapshot.queues[0].messages.is_empty());
+            let users: Vec<_> = snapshot.sessions[0]
+                .messages
+                .iter()
+                .filter(|m| m.role == "user")
+                .collect();
+            assert_eq!(users.len(), 1);
+            assert_eq!(users[0].text, "Revised direction");
+            assert_eq!(users[0].attachments.len(), 1);
+            let replies: Vec<_> = snapshot.sessions[0]
+                .messages
+                .iter()
+                .filter(|m| m.role == "assistant")
+                .map(|m| m.text.as_str())
+                .collect();
+            assert_eq!(replies, ["Before interruption", "After interruption"]);
+        }
+        fs::remove_dir_all(root).unwrap();
+        if scenario == "timeout" {
+            assert!(outcome.unwrap_err().contains("did not finish interrupting"));
+        } else if scenario == "reject" {
+            assert!(outcome
+                .unwrap_err()
+                .contains("Synthetic interruption rejection"));
+        } else {
+            assert!(outcome.is_ok(), "{provider}: {outcome:?}");
+        }
+    }
+
     #[test]
     fn delete_waiting_session_reaps_fixture_process() {
         for provider in ["codex", "claude", "grok"] {

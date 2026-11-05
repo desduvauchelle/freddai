@@ -1,3 +1,4 @@
+import { connectionHistory } from './connection-diagnostics';
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Loader2, X } from 'lucide-react';
 import { Button } from '@freddai/ui/components/button';
@@ -33,7 +34,7 @@ export function ConnectionBanner({ status, client, onTryAgain, onPairAgain, onDi
     onTryAgain();
   };
   const copy = () => {
-    const text = connectionReport(status, now());
+    const text = connectionReport(status, now()) + '\nrecentHistory: ' + connectionHistory();
     void Promise.resolve(navigator.clipboard?.writeText(text)).then(() => setCopied('Copied'), () => setCopied('Copy failed'));
   };
 
@@ -58,7 +59,7 @@ export function ConnectionBanner({ status, client, onTryAgain, onPairAgain, onDi
       </div>
       <Button variant="ghost" size="icon" className="companion-banner-x" aria-label="Dismiss connection alert" onClick={onDismiss}><X size={18} /></Button>
     </div>
-    {status.kind === 'protocol' && <div className="companion-banner-details">
+    {status.error && <div className="companion-banner-details">
       <button type="button" className="companion-banner-toggle" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(v => !v)}>Details <ChevronDown size={16} data-open={detailsOpen} aria-hidden /></button>
       {detailsOpen && <div className="companion-banner-detail-body">
         <code>{info.details || 'The Mac did not include any specifics.'}</code>

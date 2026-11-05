@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
 <key>NSLocalNetworkUsageDescription</key><string>Freddai connects to your Mac to show projects, conversations, and agent progress, and send your instructions.</string>
 <key>NSCameraUsageDescription</key><string>Freddai uses the camera only when you choose Take Photo to attach a picture to a message.</string>
-<key>NSMicrophoneUsageDescription</key><string>Freddai records your voice while you hold the mic button and sends it to your Mac to be transcribed.</string>
+<key>NSMicrophoneUsageDescription</key><string>Freddai records your voice when you use the mic button and sends it to your Mac to be transcribed.</string>
 <key>NSPhotoLibraryUsageDescription</key><string>Freddai reads the photos you pick so you can attach them to a message.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 <key>UIRequiresFullScreen</key><false/>

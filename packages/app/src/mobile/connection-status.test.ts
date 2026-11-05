@@ -63,11 +63,11 @@ const down = (error = 'timeout') => onFailure(onFailure(ok(), error, 0).status, 
 
 it('classifies protocol errors separately and extracts the specifics', () => {
   expect(classifyError('Invalid response from your Mac')).toBe('protocol');
-  expect(classifyError('Invalid response from your Mac: HTTP 502 (text/html)')).toBe('protocol');
+  expect(classifyError('Invalid response from your Mac: HTTP 502 (text/html)')).toBe('network');
   expect(protocolDetail('Invalid response from your Mac: HTTP 502 (text/html)')).toBe('HTTP 502 (text/html)');
   expect(protocolDetail('Invalid response from your Mac')).toBe('');
-  const info = describeConnection(down('Invalid response from your Mac: HTTP 502 (text/html)'));
-  expect(info).toMatchObject({ title: "Can't reach your Mac", pair: false, details: 'HTTP 502 (text/html)' });
+  const info = describeConnection(down('Invalid response from your Mac: missing result'));
+  expect(info).toMatchObject({ title: "Can't reach your Mac", pair: false, details: 'missing result' });
   expect(info.reason).toMatch(/Updating both apps/);
   expect(describeConnection(down('Relay unavailable')).reason).toMatch(/Freddai is open on your Mac/);
   expect(describeConnection(onFailure(ok(), 'Device revoked', 0).status).reason).toMatch(/pair again/);
@@ -104,7 +104,7 @@ it('manual checks flag checking, record the outcome, and log the attempt reason'
 it('never reports down during the grace period, including for protocol errors', () => {
   const s = onFailure(ok(), 'Invalid response from your Mac: HTTP 502', 0);
   expect(s.status.state).toBe('ok'); expect(s.transition).toBeUndefined();
-  expect(onTick(s.status, CONNECTION_GRACE_MS).transition).toMatchObject({ to: 'down', kind: 'protocol' });
+  expect(onTick(s.status, CONNECTION_GRACE_MS).transition).toMatchObject({ to: 'down', kind: 'network' });
 });
 
 it('formats history and the copied report', () => {
@@ -116,4 +116,23 @@ it('formats history and the copied report', () => {
   expect(describeHistory({ ...s, lastOkAt: null, failureCount: 1 }, 0)).toBe('Not connected yet this session · tried 1 time');
   const report = connectionReport(s, 0);
   expect(report).toMatch(/error: timeout/); expect(report).toMatch(/kind: network/); expect(report).toMatch(/failureCount: 5/); expect(report).toMatch(/lastConnectedAt: 1970/);
+});
+
+
+it('quietly recovers from three interrupted snapshots over thirty seconds', () => {
+  let s = onSuccess(initialConnectionStatus, 0).status;
+  for (const time of [8_000, 19_000, 32_000]) {
+    s = onFailure(s, 'Invalid response from your Mac: body cut off (read failed)', time).status;
+    expect(s.state).toBe('ok');
+    expect(s.kind).toBe('network');
+  }
+  expect(onTick(s, 60_000).status.state).toBe('ok');
+  expect(onSuccess(s, 61_000).status.failureCount).toBe(0);
+});
+
+it('does not mistake interrupted bodies and gateway errors for incompatible apps', () => {
+  for (const detail of ['response timed out after 8s', 'body cut off (read failed)', 'empty body', 'HTTP 502 (text/html)', 'HTTP 503 (empty body)']) {
+    expect(classifyError(`Invalid response from your Mac: ${detail}`)).toBe('network');
+  }
+  expect(classifyError('Invalid response from your Mac: missing result')).toBe('protocol');
 });

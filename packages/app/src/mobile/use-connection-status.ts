@@ -1,3 +1,4 @@
+import { recordConnection } from './connection-diagnostics';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { graceRemaining, initialConnectionStatus, onAttempt, onFailure, onSuccess, onTick, pollDelay, type AttemptReason, type ConnectionStatus, type ConnectionStep } from './connection-status';
 
@@ -18,8 +19,16 @@ export function useConnectionStatus(now: () => number = Date.now) {
     if (wait !== null) timer.current = setTimeout(() => apply(onTick(current.current, clock.current())), wait);
   }, []);
   const attempt = useCallback((reason: AttemptReason) => apply({ status: onAttempt(current.current, reason, clock.current()) }), [apply]);
-  const succeeded = useCallback(() => apply(onSuccess(current.current, clock.current())), [apply]);
-  const failed = useCallback((error: string) => apply(onFailure(current.current, error, clock.current())), [apply]);
+  const succeeded = useCallback(() => {
+    if (current.current.failureCount) recordConnection(current.current, 'recovered', clock.current());
+    else if (current.current.lastOkAt === null) recordConnection(current.current, 'connected', clock.current());
+    apply(onSuccess(current.current, clock.current()));
+  }, [apply]);
+  const failed = useCallback((error: string) => {
+    const step = onFailure(current.current, error, clock.current());
+    recordConnection(step.status, 'failure', clock.current());
+    apply(step);
+  }, [apply]);
   /** Delay before the next poll, from the latest status (backs off while the Mac is unreachable). */
   const nextDelay = useCallback((visible: boolean) => pollDelay(current.current, visible), []);
   useEffect(() => () => clearTimeout(timer.current), []);

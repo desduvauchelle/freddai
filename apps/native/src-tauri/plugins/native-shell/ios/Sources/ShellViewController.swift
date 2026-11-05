@@ -3,7 +3,7 @@ import WebKit
 
 /// Hosts the Tauri WKWebView, an optional native navigation bar (via the enclosing
 /// UINavigationController) and an optional native composer that tracks the keyboard.
-enum ShellMode { case conversation, new, other }
+enum ShellMode { case conversation, new, dashboard, other }
 
 struct PickerOption: Decodable {
   let id: String
@@ -35,7 +35,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   private let composer = ComposerView()
   private var mode: ShellMode = .other
   private var conversation: Bool { mode == .conversation }
-  private var composerVisible: Bool { mode != .other }
+  private var composerVisible: Bool { mode == .conversation || mode == .new }
   private var barVisible: Bool { mode != .other }
 
   private var webTopSafe: NSLayoutConstraint!
@@ -133,32 +133,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     navigationItem.leftBarButtonItem?.accessibilityHint = open ? "Hides the thread list" : "Opens the thread list"
   }
 
-  /// Mascot as a circular avatar (square, aspect-fill, clipped, hairline border).
-  static func avatarView(size: CGFloat) -> UIImageView {
-    let view = UIImageView(image: mascot())
-    view.contentMode = .scaleAspectFill
-    view.clipsToBounds = true
-    view.layer.cornerRadius = size / 2
-    view.layer.borderWidth = 0.5
-    view.layer.borderColor = UIColor.separator.cgColor
-    view.translatesAutoresizingMaskIntoConstraints = false
-    view.widthAnchor.constraint(equalToConstant: size).isActive = true
-    view.heightAnchor.constraint(equalToConstant: size).isActive = true
-    view.isAccessibilityElement = false
-    return view
-  }
-
-  static func mascot() -> UIImage? {
-    let scale = UIScreen.main.scale
-    let encoded = scale >= 3 ? MascotImage.x3 : MascotImage.x2
-    guard let data = Data(base64Encoded: encoded) else { return nil }
-    return UIImage(data: data, scale: scale >= 3 ? 3 : 2)
-  }
-
-  /// Mascot avatar, then a left-aligned two-line stack: thread title, and [connection glyph] [state ·] project.
+  /// Left-aligned thread title and connection/state/project subtitle, without a header avatar.
   private func makeTitleView() -> UIView {
     let container = NavTitleView()
-    let icon = ShellViewController.avatarView(size: 28)
     titleLabel.font = .preferredFont(forTextStyle: .headline)
     titleLabel.textColor = .label
     titleLabel.lineBreakMode = .byTruncatingTail
@@ -180,7 +157,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     lines.axis = .vertical
     lines.alignment = .leading
     lines.spacing = 0
-    let row = UIStackView(arrangedSubviews: [icon, lines])
+    let row = UIStackView(arrangedSubviews: [lines])
     row.axis = .horizontal
     row.alignment = .center
     row.spacing = 8
@@ -280,7 +257,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     if modeChanged {
       updateLayout()
       navigationController?.setNavigationBarHidden(!barVisible, animated: false)
-      if mode == .other { _ = composer.resignFirstResponder() }
+      if !composerVisible { _ = composer.resignFirstResponder() }
       view.layoutIfNeeded()
     }
   }

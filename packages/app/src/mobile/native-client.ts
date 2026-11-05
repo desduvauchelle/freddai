@@ -11,8 +11,8 @@ function refreshWakeInfo() {
   invoke('companion_wake_refresh').catch(e => { wakeRefreshedAt = 0; console.warn('Wake details unavailable:', e); });
 }
 export const nativeCompanionClient: CompanionClient = {
-  async snapshot(signal) {
-    const value = await invoke<CompanionSnapshot>('companion_snapshot');
+  async snapshot(signal, thread) {
+    const value = await invoke<CompanionSnapshot>('companion_snapshot', { thread: thread || null });
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     refreshWakeInfo();
     return value;
@@ -20,6 +20,19 @@ export const nativeCompanionClient: CompanionClient = {
   wake: () => invoke<number>('companion_wake'),
   hasWakeInfo: async () => !!(await invoke<unknown>('companion_wake_info')),
   models: target => composer<Model[]>('models', target),
+  summaries: {
+    get: date => composer('day_summary', { date }),
+    generate: (date, force) => composer('summarize_day', { date, force }),
+  },
+  async transcribeAudio(audio) {
+    if (!audio.size || audio.size > 10 * 1024 * 1024) throw new Error('Record between 1 byte and 10 MB of audio.');
+    const id = await composer<string>('upload', { action: 'begin', name: audio.type.includes('mp4') ? 'dictation.m4a' : 'dictation.webm' });
+    for (let offset = 0; offset < audio.size; offset += 24 * 1024) {
+      const bytes = new Uint8Array(await audio.slice(offset, offset + 24 * 1024).arrayBuffer());
+      await composer('upload', { action: 'chunk', id, offset, data: Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('') });
+    }
+    return composer<{ text: string }>('transcribe', { id, size: audio.size });
+  },
   voice: () => composer<{ enabled: boolean; ready: boolean }>('voice', {}),
   transcribe: file => invoke<{ text: string; durationMs: number; model: string }>('companion_transcribe_path', { path: file.path }),
   queue: input => composer<void>('queue', input),

@@ -135,12 +135,25 @@ async fn call_slow(h:&Companion,route:&str,body:Value,local_timeout:Option<Durat
     let response=request.send().await;
     match response {
         Ok(response)=> {
-            h.relay_active.store(false,Ordering::Relaxed);
             let status=response.status().as_u16();
             let ct=response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
-            let value=read_json(response,route,&host,started,limit).await?;
-            let result=remember_relay(h,c,&value).await;
-            if let Err(e)=&result {if e.starts_with(INVALID) {log_client_error(route,"direct",&host,Some(status),&ct,None,Some(value.to_string().len()),started,e,&value.to_string());}}
+            let result=match read_json(response,route,&host,started,limit).await {
+                Ok(value)=>remember_relay(h,c.clone(),&value).await,
+                Err(error)=>Err(error),
+            };
+            if let Err(error)=&result {
+                if crate::client_diag::retry_snapshot_via_relay(route,c.relay.is_some(),error) {
+                    log_client_error(route,"direct",&host,Some(status),&ct,None,None,started,&format!("snapshot recovery via relay: {error}"),"");
+                    let recovered=remote(h,&c,route,body,polls).await;
+                    if recovered.is_ok() {
+                        h.relay_active.store(true,Ordering::Relaxed);
+                        eprintln!("companion.client.recovered transport=relay op={route} elapsed_ms={}",started.elapsed().as_millis());
+                    }
+                    return recovered;
+                }
+            } else {
+                h.relay_active.store(false,Ordering::Relaxed);
+            }
             result
         },
         Err(error) if error.is_connect() || route=="/v1/snapshot"=> {
@@ -154,14 +167,18 @@ async fn call_slow(h:&Companion,route:&str,body:Value,local_timeout:Option<Durat
     }
 }
 #[tauri::command]
-async fn companion_snapshot(h:State<'_,Companion>)->Result<Value,String> {call(&h,"/v1/snapshot",json!({})).await}
+async fn companion_snapshot(h:State<'_,Companion>,thread:Option<String>)->Result<Value,String> {
+    // A bounded read-only refresh: relay polling must not leave initial sync spinning for minutes.
+    tokio::time::timeout(Duration::from_secs(20),call(&h,"/v1/snapshot",json!({"scoped":true,"thread":thread})))
+        .await.map_err(|_|"Connection check timed out. Retrying your Mac connection.".to_string())?
+}
 #[tauri::command]
 async fn companion_start(h:State<'_,Companion>,project:String,prompt:String,request_id:String,options:Option<Value>,assistant:Option<String>)->Result<Value,String> {call(&h,"/v1/start",json!({"project":project,"assistant":assistant,"prompt":prompt,"requestId":request_id,"options":options})).await}
 #[tauri::command]
 async fn companion_reply(h:State<'_,Companion>,thread:String,prompt:String,request_id:String,options:Option<Value>)->Result<Value,String> {call(&h,"/v1/reply",json!({"thread":thread,"prompt":prompt,"requestId":request_id,"options":options})).await}
 #[tauri::command]
 async fn companion_composer(h:State<'_,Companion>,operation:String,input:Value)->Result<Value,String> {
-    if !["models","queue","upload","voice","transcribe"].contains(&operation.as_str()) { return Err("Unknown composer operation".into()); }
+    crate::companion_operations::validate(&operation)?;
     if operation=="transcribe" {return call_slow(&h,"/v1/composer",json!({"operation":operation,"input":input}),Some(Duration::from_secs(150)),150).await;}
     call(&h,"/v1/composer",json!({"operation":operation,"input":input})).await
 }

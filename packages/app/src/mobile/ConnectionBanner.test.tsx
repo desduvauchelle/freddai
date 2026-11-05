@@ -2,10 +2,10 @@ import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest';
 import { disconnectedClient } from './companion';
 import { ConnectionBanner } from './ConnectionBanner';
-import { initialConnectionStatus, onAttempt, onFailure, onSuccess, type ConnectionStatus } from './connection-status';
+import { CONNECTION_GRACE_MS, initialConnectionStatus, onAttempt, onFailure, onSuccess, type ConnectionStatus } from './connection-status';
 
 afterEach(cleanup);
-const downWith = (error: string): ConnectionStatus => onFailure(onFailure(onSuccess(initialConnectionStatus, 0).status, error, 1).status, error, 20_000).status;
+const downWith = (error: string): ConnectionStatus => onFailure(onFailure(onSuccess(initialConnectionStatus, 0).status, error, 1).status, error, CONNECTION_GRACE_MS + 1).status;
 const props = (status: ConnectionStatus, extra = {}) => ({ status, client: disconnectedClient, onTryAgain: vi.fn(), onDismiss: vi.fn(), now: () => 12 * 60_000, ...extra });
 
 it('explains a network outage with history and a primary Try again', () => {
@@ -59,14 +59,14 @@ it('makes Pair again primary only for auth failures', () => {
 it('shows protocol specifics in an expandable Details row and copies a report', async () => {
   const writeText = vi.fn(async () => {});
   Object.assign(navigator, { clipboard: { writeText } });
-  render(<ConnectionBanner {...props(downWith('Invalid response from your Mac: HTTP 502 (text/html)'))} />);
+  render(<ConnectionBanner {...props(downWith('Invalid response from your Mac: missing result'))} />);
   expect(screen.getByText(/Updating both apps usually fixes this/)).toBeTruthy();
-  expect(screen.queryByText('HTTP 502 (text/html)')).toBeNull();
+  expect(screen.queryByText('missing result')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-  expect(screen.getByText('HTTP 502 (text/html)')).toBeTruthy();
+  expect(screen.getByText('missing result')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Copy details' }));
   expect(writeText).toHaveBeenCalledTimes(1);
   const text = (writeText.mock.calls as unknown as string[][])[0][0];
-  expect(text).toMatch(/kind: protocol/); expect(text).toMatch(/HTTP 502/); expect(text).toMatch(/failureCount: 2/);
+  expect(text).toMatch(/kind: protocol/); expect(text).toMatch(/missing result/); expect(text).toMatch(/failureCount: 2/);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy());
 });

@@ -313,7 +313,7 @@ export function AccountSetup({
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={pending || !native || !signed || (!db.preferences.prefer_last && db.preferences.fallback === a.id)}
                 onSelect={() => void run(async () => {
-                  await invoke("save_preferences", { preferences: { ...db.preferences, prefer_last: false, fallback: a.id } });
+                  await invoke("save_preferences", { patch: { prefer_last: false, fallback: a.id } });
                   await onRefresh();
                 })}>Set as default</DropdownMenuItem>
               <DropdownMenuSeparator />

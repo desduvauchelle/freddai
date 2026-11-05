@@ -1,15 +1,17 @@
-import { compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, splitOlderThreads, threadInActiveList, threadListStatus } from '../desktop/types.ts';
+import { bucketThreads, compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, threadListStatus } from '../desktop/types.ts';
 import type { ConversationUsage } from '../desktop/conversation-usage';
 import type { Model } from '../desktop/agent-selection';
 import type { BackgroundTask, Message, Pending, Attachment } from '../desktop/types';
 
 // Intentionally excludes account credentials, filesystem paths and settings.
 export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[] };
-export type CompanionThread = { id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
-export type CompanionSnapshot = { projects: CompanionProject[]; threads: CompanionThread[] };
+export type CompanionThread = { id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
+export type CompanionSnapshot = { projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; recentFinished?: number } };
 export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
 export type ComposerTarget = { thread?: string; project?: string; assistant?: string };
 export type CompanionClient = {
+  summaries?: import("../desktop/DaySummaries").DaySummariesClient;
+  transcribeAudio?(audio: Blob): Promise<{ text: string }>;
   models?(target: ComposerTarget): Promise<Model[]>;
   attach?(file: File): Promise<Attachment>;
   /** Uploads a file the native composer copied to the app's tmp dir; Rust reads it by path and runs the chunked upload. */
@@ -26,7 +28,7 @@ export type CompanionClient = {
   wake?(): Promise<number>;
   /** Whether the Mac has reported its wake details to this phone yet. */
   hasWakeInfo?(): Promise<boolean>;
-  snapshot(signal: AbortSignal): Promise<CompanionSnapshot>;
+  snapshot(signal: AbortSignal, thread?: string): Promise<CompanionSnapshot>;
   start(input: { assistant?: string; project: string; prompt: string; requestId: string; options?: ComposerOptions }): Promise<string>;
   respond(input: { thread: string; requestId: string; allow: boolean; answers: Record<string, unknown> }): Promise<void>;
   reply(input: { thread: string; prompt: string; requestId: string; options?: ComposerOptions }): Promise<void>;
@@ -47,18 +49,24 @@ export function groupCompanionThreads(snapshot: CompanionSnapshot, threads: Comp
   read: Record<string, number>; selected: string; filter: ThreadFilter; pages: Record<string, number>;
   includeEmpty?: boolean; project?: string;
 }) {
-  const visible = threads.filter(t => threadInActiveList(t, options.read, options.selected, true, options.filter, t.queued));
-  const visibleIds = new Set(visible.map(t => t.id));
-  const order = [...new Set([
+  const settings = snapshot.threadList;
+  const grouped = settings?.grouped ?? true;
+  const buckets = bucketThreads(threads, {
+    read: options.read, selected: options.selected, filter: options.filter,
+    hideRead: settings?.hideRead ?? true, recentCount: settings?.recentFinished ?? RECENT_FINISHED_DEFAULT,
+    scope: grouped ? 'grouped' : 'flat', queued: t => t.queued,
+  });
+  const defaults = [...new Set([
     ...threads.map(t => t.project),
     ...(options.includeEmpty ? snapshot.projects.filter(p => (!options.project || p.id === options.project) && !snapshot.threads.some(t => t.project === p.id)).map(p => p.id) : []),
   ])];
+  const order = grouped ? [...new Set([...(settings?.projectOrder ?? []), ...defaults])].filter(id => defaults.includes(id)) : [''];
   return order.map(id => {
-    // Phone has no setting for this: the newest RECENT_FINISHED_DEFAULT non-live rows stay visible after the live rows (as on Mac).
-    const { recent, rest: older } = splitOlderThreads(threads.filter(t => t.project === id && !visibleIds.has(t.id)), RECENT_FINISHED_DEFAULT);
+    const belongs = (t: CompanionThread) => !grouped || t.project === id;
+    const recent = buckets.recent.filter(belongs), older = buckets.older.filter(belongs);
     const pageCount = options.pages[id] || 0;
     const shownOlder = older.slice(0, pageCount * OLDER_PAGE_SIZE);
-    return { id, project: snapshot.projects.find(p => p.id === id), active: [...visible.filter(t => t.project === id), ...recent],
+    return { id, project: grouped ? snapshot.projects.find(p => p.id === id) : { id: '', name: 'All threads', color: '', canStart: false }, active: [...buckets.active.filter(belongs), ...recent],
       older: shownOlder, remaining: older.length - shownOlder.length, pageCount };
   });
 }

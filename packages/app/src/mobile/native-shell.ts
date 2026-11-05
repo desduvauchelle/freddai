@@ -44,7 +44,7 @@ export function useNativeShell(): boolean {
   return native;
 }
 
-export type NativeMode = 'conversation' | 'new' | 'other';
+export type NativeMode = 'conversation' | 'new' | 'dashboard' | 'other';
 /** 'conversation' and 'new' show the native bar and drawer; 'other' (pairing, loading) shows neither. */
 export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean } = {}): Promise<void> {
   if (!available) return Promise.resolve();
@@ -131,3 +131,5 @@ export const onSearch = (handler: (payload: { query?: unknown }) => void) => lis
 export const onSetFilter = (handler: (payload: { project?: unknown; status?: unknown }) => void) => listen<{ project?: unknown; status?: unknown }>('setFilter', handler);
 export const onNewThread = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('newThread', handler);
 export const onShowOlder = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('showOlder', handler);
+
+export const onDashboard = (handler: () => void) => listen<unknown>('dashboard', handler);

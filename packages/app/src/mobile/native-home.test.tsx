@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { disconnectedClient, type CompanionClient, type CompanionSnapshot } from './companion';
 
@@ -19,7 +19,7 @@ vi.mock('./native-shell', () => ({
   setVoice: shell.setVoice, appendComposerText: shell.appendComposerText, onVoiceRecorded: shell.on('voiceRecorded'), onVoiceError: shell.on('voiceError'),
   setConnection: vi.fn(async () => {}), setThreads: vi.fn(async () => {}), setThreadMeta: vi.fn(async () => {}),
   onNavBack: shell.on('navBack'), onComposerSend: shell.on('composerSend'), onConnectionTap: shell.on('connectionTap'), onThreadAction: shell.on('threadAction'), onSelectThread: shell.on('selectThread'),
-  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onShowOlder: shell.on('showOlder'),
+  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onShowOlder: shell.on('showOlder'), onDashboard: shell.on('dashboard'),
 }));
 import { MobileApp } from './MobileApp';
 
@@ -184,10 +184,11 @@ it('keeps real queued replies visible and shows the streamed response after the 
   await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
   await send('Next instruction');
   expect(screen.queryByText('Queued on your Mac')).toBeNull();
-  snapshot.threads[0].queue = [{ id: 'queued', prompt: 'Next instruction', attachments: 0 }];
+  snapshot.threads[0].queue = [{ id: `phone:${(client.reply as ReturnType<typeof vi.fn>).mock.calls[0][0].requestId}`, prompt: 'Next instruction', attachments: 0 }];
   snapshot.threads[0].queued = 1;
   await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
   await screen.findByRole('region', { name: 'Message queue' });
+  expect(screen.queryByRole('article', { name: 'Your message' })).toBeNull();
   snapshot.threads[0].messages = [
     { id: 'user', role: 'user', text: 'Next instruction' },
     { id: 'assistant', role: 'assistant', text: 'Working on it' },
@@ -230,4 +231,109 @@ it('warns and shows the error when transcription fails, without sending', async 
   expect(warn).toHaveBeenCalledWith('[voice]', 'transcribe failed', 'model missing');
   expect(shell.appendComposerText).not.toHaveBeenCalled();
   warn.mockRestore();
+});
+
+
+it('starts an idle reply immediately and never duplicates it in the dispatch queue', async () => {
+  const snapshot = structuredClone(data);
+  const client = clientWith({ snapshot: async () => structuredClone(snapshot), reply: vi.fn(async () => {}) });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  await send('Idle follow-up');
+  expect(screen.getByText('Starting…')).toBeTruthy();
+  expect(screen.queryByText('Completed')).toBeNull();
+  snapshot.threads[0].queue = [{ id: `phone:${(client.reply as ReturnType<typeof vi.fn>).mock.calls[0][0].requestId}`, prompt: 'Idle follow-up', attachments: 0 }];
+  snapshot.threads[0].queued = 1;
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+  await screen.findByText('Starting…');
+  expect(screen.getAllByText('Idle follow-up')).toHaveLength(1);
+  expect(screen.queryByRole('region', { name: 'Message queue' })).toBeNull();
+  snapshot.threads[0].status = 'running';
+  snapshot.threads[0].queue = []; snapshot.threads[0].queued = 0;
+  snapshot.threads[0].messages = [{ id: 'echo', role: 'user', text: 'Idle follow-up' }];
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+  await screen.findByText('Working…');
+  expect(screen.getAllByText('Idle follow-up')).toHaveLength(1);
+});
+
+
+it('restores an idle reply on failure and returns the avatar to its real state', async () => {
+  render(<MobileApp client={clientWith({ reply: vi.fn(async () => { throw new Error('Reply rejected'); }) })} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  await send('Keep my reply');
+  expect(await screen.findByText('Reply rejected')).toBeTruthy();
+  expect(screen.queryByRole('article', { name: 'Your message' })).toBeNull();
+  expect(screen.getByText('Completed')).toBeTruthy();
+  expect(shell.setComposerText).toHaveBeenCalledWith('Keep my reply', []);
+});
+
+it('shows a connection scene before projects are available, then replaces it with ready controls', async () => {
+  let finish!: (value: CompanionSnapshot) => void;
+  const pending = new Promise<CompanionSnapshot>(resolve => { finish = resolve; });
+  render(<MobileApp client={clientWith({ snapshot: () => pending })} />);
+  expect(await screen.findByText('Connecting to your Mac…')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Project:/ })).toBeNull();
+  expect(screen.queryByText('What should we work on today?')).toBeNull();
+  await act(async () => finish(structuredClone(data)));
+  expect(await screen.findByRole('button', { name: 'Project: First' })).toBeTruthy();
+  expect(screen.queryByText('Connecting to your Mac…')).toBeNull();
+});
+
+it('fetches the selected transcript immediately and does not mark an unloaded summary read', async () => {
+  let finish!: (value: CompanionSnapshot) => void;
+  const pending = new Promise<CompanionSnapshot>(resolve => { finish = resolve; });
+  const summary = structuredClone(data);
+  summary.threads[0].messagesLoaded = false;
+  const snapshot = vi.fn(async (_signal: AbortSignal, thread?: string) => thread ? pending : summary);
+  const markRead = vi.fn(async () => {});
+  render(<MobileApp client={clientWith({ snapshot, markRead })} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  expect(snapshot.mock.calls[0][1]).toBeUndefined();
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  expect(snapshot.mock.calls.at(-1)?.[1]).toBe('t1');
+  expect(await screen.findByText('Loading conversation…')).toBeTruthy();
+  expect(markRead).not.toHaveBeenCalled();
+  const full = structuredClone(data);
+  full.threads[0].messagesLoaded = true;
+  full.threads[0].messages = [{ id: 'm', role: 'assistant', text: 'Full conversation history is here' }];
+  await act(async () => finish(full));
+  expect(await screen.findByText('Full conversation history is here')).toBeTruthy();
+  await waitFor(() => expect(markRead).toHaveBeenCalledWith({ thread: 't1', at: 5 }));
+  expect(screen.queryByText('Loading conversation…')).toBeNull();
+});
+
+
+it('opens Dashboard from the native menu and navigates to project work', async () => {
+  render(<MobileApp client={clientWith()} />);
+  await screen.findByText('What should we work on today?');
+  await waitFor(() => expect(shell.handlers.dashboard).toBeTypeOf('function'));
+  await act(async () => { shell.handlers.dashboard(); });
+  expect(await screen.findByRole('heading', { name: 'Your projects' })).toBeTruthy();
+  expect(screen.getByRole('article', { name: 'Project Second' })).toBeTruthy();
+  await waitFor(() => expect(modeCalls().some(([mode]) => mode === 'dashboard')).toBe(true));
+  fireEvent.click(screen.getByRole('button', { name: 'Open project First' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Old thread' }));
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('conversation'));
+});
+
+it('carries dashboard project agent, model and effort through the native composer launch', async () => {
+  const client = clientWith();
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { shell.handlers.dashboard(); });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Coding agent' }), { target: { value: 'b' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Open project Second' }));
+  const card = within(screen.getByRole('dialog'));
+  const details = card.getByText('Model default').closest('details')!;
+  details.open = true;
+  fireEvent(details, new Event('toggle'));
+  fireEvent.change(card.getByRole('combobox', { name: /^Model$/ }), { target: { value: '__custom' } });
+  fireEvent.change(card.getByRole('textbox', { name: 'Custom model ID' }), { target: { value: 'offline-model' } });
+  fireEvent.change(card.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'high' } });
+  fireEvent.click(card.getByRole('button', { name: 'New thread in Second' }));
+  await screen.findByRole('button', { name: 'Coding agent: Codex · Work' });
+  await send('Offline dashboard launch');
+  expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p2', assistant: 'b', options: expect.objectContaining({ model: 'offline-model', effort: 'high' }) }));
 });

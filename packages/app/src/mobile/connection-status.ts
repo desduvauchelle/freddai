@@ -4,7 +4,7 @@
  * auth/pairing-type failures are not retryable by waiting, so they turn it `down` immediately.
  * The status also records when we last connected, how often we have failed, and why, so the banner can explain itself.
  */
-export const CONNECTION_GRACE_MS = 10_000;
+export const CONNECTION_GRACE_MS = 60_000;
 /** Poll delays while the Mac is unreachable: back off instead of hammering a dead host every second. */
 export const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 15_000];
 
@@ -33,7 +33,9 @@ export const initialConnectionStatus: ConnectionStatus = {
  * "Invalid response from your Mac[: specifics]" means the Mac answered with something we cannot parse: a version/protocol mismatch.
  */
 export function classifyError(message: string): FailureKind {
-  if (/^\s*invalid response from your mac/i.test(message)) return 'protocol';
+  if (/^\s*invalid response from your mac/i.test(message)) {
+    return /: (response timed out|body cut off|empty body|HTTP (408|429|5\d\d)\b)/i.test(message) ? 'network' : 'protocol';
+  }
   if (/unlock your iphone/i.test(message)) return 'network';
   return /device revoked|pair this iphone|pairing credentials|no longer paired|certificate|unauthori[sz]ed|forbidden|\b40[13]\b/i.test(message) ? 'auth' : 'network';
 }
@@ -95,7 +97,7 @@ const REASONS: Record<FailureKind, string> = {
 
 export function describeConnection(status: ConnectionStatus): { title: string; detail: string; pair: boolean; reason: string; details: string } {
   const kind = status.kind ?? 'network';
-  return { title: "Can't reach your Mac", detail: status.error, pair: kind === 'auth', reason: REASONS[kind], details: kind === 'protocol' ? protocolDetail(status.error) : '' };
+  return { title: "Can't reach your Mac", detail: status.error, pair: kind === 'auth', reason: REASONS[kind], details: protocolDetail(status.error) };
 }
 
 /** "just now", "12 min ago", "3 h ago", "2 d ago". */
