@@ -803,7 +803,7 @@ fn awake_set_settings(h: State<'_,Host>, while_working:bool, while_paired:bool) 
 
 
 pub fn run() {
-    tauri::Builder::default()
+    tauri::Builder::default().plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())

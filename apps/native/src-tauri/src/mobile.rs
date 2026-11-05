@@ -259,7 +259,7 @@ pub fn run() {
         Err(e) if e.code()==-25300=>(None,None),
         Err(_)=>(None,Some("Unlock your iPhone to read its pairing credentials".into())),
     };
-    tauri::Builder::default().plugin(tauri_plugin_native_shell::init()).setup(move |app| {
+    tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_native_shell::init()).setup(move |app| {
         use tauri::Manager;
         #[cfg(target_os = "android")]
         let (credential,storage_error)=match tauri_plugin_native_shell::read_credential(app.handle()) {

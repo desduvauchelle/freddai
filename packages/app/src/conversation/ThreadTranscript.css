@@ -154,3 +154,7 @@
 .todo-panel > summary::-webkit-details-marker { display: none; }
 .todo-panel > summary small { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .75; }
 .todo-panel .todo-list { max-height: 160px; overflow: auto; }
+
+.native-message a { color: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.native-message a:hover { opacity: 0.8; }
+.native-message a:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }
