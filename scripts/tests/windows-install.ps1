@@ -6,6 +6,15 @@ $installer = (Get-ChildItem 'target/release/bundle/nsis/*.exe' | Select-Object -
 $probe = (Resolve-Path 'target/debug/examples/host_probe.exe').Path
 $fixture = Join-Path $env:TEMP ('freddai-install-test-' + [guid]::NewGuid())
 $install = Join-Path $fixture 'app'
+function Close-TestApp($process) {
+  $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$process.Id)
+  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  $window = $windows | Where-Object { $_.Current.Name -eq 'Freddai' } | Select-Object -First 1
+  if (!$window) { throw 'Visible Freddai window missing before normal close' }
+  $pattern = $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+  $pattern.Close()
+  if (!$process.WaitForExit(10000)) { throw 'App did not exit after normal window close' }
+}
 $app = $null
 $root = $nativeRoot
 try {
@@ -32,7 +41,7 @@ try {
   if ((Get-FileHash $binary).Hash -ne (Get-FileHash $hello.build).Hash) { throw 'Host does not match installed build' }
   $snapshot = & $probe snapshot $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or $snapshot.accounts.Count -ne 0) { throw 'Empty-profile snapshot failed' }
-  if (!$app.CloseMainWindow() -or !$app.WaitForExit(10000)) { throw 'App did not close normally' }
+  Close-TestApp $app
   & $probe hello $root
   if ($LASTEXITCODE -ne 0) { throw 'Background host did not survive GUI exit' }
   $app = Start-Process $binary -PassThru
@@ -41,7 +50,8 @@ try {
   if ($app.HasExited -or $app.MainWindowHandle -eq 0) { throw 'App failed to reopen' }
   $reopened = & $probe hello $root | ConvertFrom-Json
   if ($reopened.build -ne $hello.build) { throw 'Reopened app attached to another build' }
-  if (!$app.CloseMainWindow() -or !$app.WaitForExit(10000)) { throw 'Reopened app did not close normally' }
+  ./scripts/tests/windows-ui.ps1 -AppProcessId $app.Id
+  Close-TestApp $app
   & $probe upgrade_idle $root
   if ($LASTEXITCODE -ne 0) { throw 'Test host could not shut down' }
   $root = $null # Shutdown succeeded; do not turn a second cleanup RPC into a failure.
