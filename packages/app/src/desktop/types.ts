@@ -26,7 +26,7 @@ export type Preferences = {
 export type Attachment = { id: string; name: string; bytes: number; mime: string; sha256: string };
 export type PermissionMode = "ask" | "bypass";
 export type LaunchOptions = { permission_mode?: PermissionMode | null; scheduled?: boolean; update_agent_controls?: boolean; worktree?: boolean; model?: string | null; effort?: string | null; attachments?: string[]; request_id?: string };
-export type BackgroundTask = { id: string; description: string; kind?: string | null; status: "running" | "completed" | "failed" | "stopped" | string; summary?: string | null };
+export type BackgroundTask = { id: string; tool_use_id?: string | null; description: string; kind?: string | null; status: "running" | "completed" | "failed" | "stopped" | string; summary?: string | null };
 export type Message = { delivery?: string; id: string; role: string; text: string; attachments?: Attachment[] };
 export type Pending = {
   id?: string | number;

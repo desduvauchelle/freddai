@@ -45,6 +45,39 @@ describe("ThreadTranscript", () => {
 });
 
 describe("ThreadTranscript background sub-agents", () => {
+  it("keeps sub-agents beside their launch when later replies and pending messages arrive", () => {
+    const messages = [
+      { id: "u1", role: "user", text: "Build it" },
+      { id: "launch", role: "tool", text: JSON.stringify({ type: "tool_use", id: "tu1", name: "Agent", input: { description: "Write docs" } }) },
+      { id: "a1", role: "assistant", text: "Done building" },
+      { id: "u2", role: "user", text: "Server is not running" },
+    ];
+    const tasks = [{ id: "agent1", tool_use_id: "tu1", description: "Write docs", status: "running" }];
+    const { container, rerender } = render(<ThreadTranscript messages={messages} tasks={tasks} pending={[{ id: "p", text: "Another reply" }]} />);
+    const order = () => [...container.querySelector(".thread-transcript")!.children].map(el => el.textContent);
+    expect(order().findIndex(t => t?.includes("Write docs"))).toBeLessThan(order().findIndex(t => t === "Done building"));
+    rerender(<ThreadTranscript messages={messages} tasks={[{ ...tasks[0], status: "completed" }]} />);
+    expect(order().findIndex(t => t?.includes("Completed"))).toBeLessThan(order().findIndex(t => t === "Server is not running"));
+  });
+
+  it("restores separate launch groups in compact threads without duplicating or hiding unmatched tasks", () => {
+    const launch = (id: string) => ({ id, role: "tool", text: JSON.stringify({ type: "tool_use", id, name: "Agent" }) });
+    const { container } = render(<ThreadTranscript density="compact" messages={[
+      launch("first"), { id: "reply", role: "user", text: "Next request" }, launch("second"),
+      { id: "end", role: "assistant", text: "Finished" },
+    ]} tasks={[
+      { id: "a", tool_use_id: "first", description: "First agent", status: "completed" },
+      { id: "b", tool_use_id: "second", description: "Second agent", status: "running" },
+      { id: "legacy", description: "Legacy agent", status: "stopped" },
+    ]} />);
+    const children = [...container.querySelector(".thread-transcript")!.children];
+    expect(children.map(el => el.className)).toEqual(["tool-activity", "background-tasks", "chat-user", "tool-activity", "background-tasks", "chat-assistant", "background-tasks"]);
+    expect(children[1].textContent).toContain("First agent");
+    expect(children[4].textContent).toContain("Second agent");
+    expect(container.querySelectorAll(".background-tasks li")).toHaveLength(3);
+    expect(container.querySelector("details .background-tasks")).toBeNull();
+  });
+
   it("shows each sub-agent as its own visible row with live status, outside tool activity", () => {
     const { container, rerender } = render(<ThreadTranscript messages={[{ id: "t", role: "tool", text: "Agent call" }]} tasks={[
       { id: "a", description: "Show subagents", kind: "general-purpose", status: "running" },

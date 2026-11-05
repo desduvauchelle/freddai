@@ -1,11 +1,11 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { Paperclip } from 'lucide-react';
 import type { Attachment, BackgroundTask, Message } from '../desktop/types';
 import { MessageMarkdown } from './MessageMarkdown';
 import { BackgroundTasks } from './BackgroundTasks';
 import { ToolActivity } from './ToolActivity';
 import { ReasoningBlock } from './ReasoningBlock';
-import { groupTranscript } from './transcript';
+import { groupTranscript, placeBackgroundTasks } from './transcript';
 import './ThreadTranscript.css';
 
 /** An outgoing message that the host has not yet echoed back in the thread's messages. */
@@ -19,7 +19,7 @@ export type ThreadTranscriptProps = {
   pending?: readonly PendingOutgoing[];
   /** Attachment chip content. The Mac supplies a previewing label; the default is a plain name. */
   renderAttachment?: (file: Attachment) => ReactNode;
-  /** Background sub-agents, shown as rows after the messages while they run and once they finish. */
+  /** Background sub-agents, shown beside their launch tool activity while running and after completion. */
   tasks?: readonly BackgroundTask[];
   /** The agent is working: the trailing reasoning block shows as live "Thinking…". */
   active?: boolean;
@@ -45,6 +45,7 @@ const defaultAttachment = (file: Attachment) => <><Paperclip size={12} /><span>{
 export function ThreadTranscript({ messages, density = 'comfortable', pending = [], renderAttachment = defaultAttachment, tasks = [], active = false, children }: ThreadTranscriptProps) {
   const chips = (files?: readonly Attachment[]) => files?.map(f => <span className="attachment-chip" key={f.id}>{renderAttachment(f)}</span>);
   const items = groupTranscript(messages);
+  const { placed, unplaced } = placeBackgroundTasks(items, tasks);
   const { fresh, echoed } = useEntering(
     [...items.map(i => i.kind === 'tools' ? i.id : i.message.id), ...pending.map(p => p.id)],
     pending.map(p => p.text),
@@ -54,7 +55,7 @@ export function ThreadTranscript({ messages, density = 'comfortable', pending = 
       if (item.kind === 'message' && item.message.role === 'reasoning') {
         return item.message.text.trim() ? <ReasoningBlock key={item.id} message={item.message} live={active && index === items.length - 1} className={fresh.has(item.id) ? 'transcript-enter' : undefined} /> : null;
       }
-      if (item.kind === 'tools') return <ToolActivity key={item.id} messages={item.messages} className={fresh.has(item.id) ? 'transcript-enter' : undefined} />;
+      if (item.kind === 'tools') return <Fragment key={item.id}><ToolActivity messages={item.messages} className={fresh.has(item.id) ? 'transcript-enter' : undefined} /><BackgroundTasks tasks={placed.get(item.id) ?? []} /></Fragment>;
       const m = item.message;
       const enter = fresh.has(m.id) && !(m.role === 'user' && echoed.has(m.text));
       return <article
@@ -71,6 +72,7 @@ export function ThreadTranscript({ messages, density = 'comfortable', pending = 
         </div>
       </article>;
     })}
+    <BackgroundTasks tasks={unplaced} />
     {pending.map(p => <article key={p.id} data-role="user" aria-label="Your message" className={`chat-user${fresh.has(p.id) ? ' transcript-enter' : ''}`}>
       <div className="native-message">
         {chips(p.attachments)}
@@ -78,7 +80,6 @@ export function ThreadTranscript({ messages, density = 'comfortable', pending = 
         {p.status && <small role="status">{p.status}</small>}
       </div>
     </article>)}
-    <BackgroundTasks tasks={tasks} />
     {children}
   </div>;
 }
