@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Path $root | Out-Null
 # Exercise a response larger than a named-pipe buffer without creating any account or agent turn.
 $largeName = 'x' * 200000
 @{
-  accounts = @(); sessions = @(); preferences = @{}
+  accounts = @(); sessions = @(); preferences = @{ prefer_last = $true; fallback = $null; last = $null }
   projects = @(@{ id = 'fixture'; name = $largeName; path = $root; color = 'blue'; policy = 'p'; account = $null; last = $null })
 } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM (Join-Path $root 'workspace.json')
 $hostProcess = $null
