@@ -12,8 +12,16 @@ fn main() {
     let behavior: isize = unsafe { msg_send![&config, writingToolsBehavior] };
     assert_eq!(behavior, -1);
     let preferences: Retained<AnyObject> = unsafe { msg_send![&config, preferences] };
-    let feature = writing_tools::selection_updates_feature(&preferences)
-        .expect("this regression check requires WebKit's selection-update feature");
+    let Some(feature) = writing_tools::selection_updates_feature(&preferences) else {
+        // Older WebKit retains the public opt-out when this private feature is absent.
+        let copy: Retained<AnyObject> = unsafe { msg_send![&config, copy] };
+        let copied_behavior: isize = unsafe { msg_send![&copy, writingToolsBehavior] };
+        assert_eq!(copied_behavior, -1);
+        let copied_preferences: Retained<AnyObject> = unsafe { msg_send![&copy, preferences] };
+        assert!(writing_tools::selection_updates_feature(&copied_preferences).is_none());
+        println!("PASS: public Writing Tools opt-out survives copying on WebKit without selection updates");
+        return;
+    };
     let enabled: bool = unsafe { msg_send![&preferences, _isEnabledForFeature: &*feature] };
     assert!(
         !enabled,
