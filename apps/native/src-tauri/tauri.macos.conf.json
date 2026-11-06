@@ -3,6 +3,9 @@
     "beforeBuildCommand": "bash ../../scripts/build-computer-use.sh && pnpm build"
   },
   "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
     "resources": {
       "../computer-use/.build/Freddai Computer.app/": "computer-use/Freddai Computer.app/"
     }

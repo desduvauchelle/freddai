@@ -94,3 +94,5 @@ Verified preview: [Windows installer artifact](https://github.com/desduvauchelle
 ## 0.1.1 release preparation (November 5, 2026)
 
 The accumulated desktop, companion, Windows runtime, scheduling, MCP bridge, office and UI changes are being released as 0.1.1. The existing local updater key and its Keychain password were configured as GitHub Actions secrets without rotating keys. Public desktop installers must come from the matching tag workflow; a source push alone does not update downloads. Verification and publication results are recorded after packaging.
+
+The macOS distribution minimum is explicitly 10.15 because the voice library uses C++17 filesystem APIs; Tauri’s implicit 10.13 build target cannot compile that dependency. The bundled computer-use helper remains a macOS 14+ feature. Release preparation also corrected clean-runner helper ordering, schedule snapshot expectations, long-hostname certificate generation and the older-WebKit regression fallback.
