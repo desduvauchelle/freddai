@@ -46,7 +46,7 @@ The separate iOS frontend bundles only companion screens. A disconnected UI prev
 - `packages/ui`: shared styles and shadcn component destination.
 - `crates/core`: platform-independent Rust domain logic.
 
-The website uses Next.js, Tailwind CSS, daisyUI themes, and the Recursive Engine client/server SDK foundation. The landing page is static content; CMS credentials and public downloads remain unconfigured. See [website setup](apps/web/README.md). Read the Orca reference policy in the specification before implementing related features.
+The website uses Next.js, Tailwind CSS, daisyUI themes, and the Recursive Engine client/server SDK foundation. The landing page uses published GitHub release metadata for desktop downloads and a configured Android beta URL; CMS credentials remain unconfigured. See [website setup](apps/web/README.md). Read the Orca reference policy in the specification before implementing related features.
 
 ## Desktop setup
 

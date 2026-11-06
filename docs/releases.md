@@ -32,9 +32,9 @@ Each release also publishes Tauri v2 updater artifacts and a `latest.json` manif
 - `latest.json` is generated in the draft job by `scripts/generate-updater-manifest.mjs` (test: `node --test scripts/tests/updater-manifest/`). `darwin-aarch64` and `darwin-x86_64` both point at the universal tar.gz, `linux-x86_64` at the AppImage; URLs are `https://github.com/desduvauchelle/freddai/releases/download/<tag>/<asset>`.
 - Clients fetch `https://github.com/desduvauchelle/freddai/releases/latest/download/latest.json`. GitHub's `/releases/latest` only resolves a published, non-draft, non-prerelease release, so users receive an update only after you publish it.
 - Linux `.deb` installs cannot self-update; they are shown a link to the release instead. Only the AppImage updates in place.
-- The initial `desktop-0.1.0` release has no `latest.json` or signed updater assets; the feed returns HTTP 404 until an updater-enabled release is published. Local builds log automatic check failures quietly; manual checks and distributed builds still report failures.
+- The initial `desktop-0.1.0` release had no updater feed. The public feed became available with v0.1.1. Local builds log automatic check failures quietly; manual checks and distributed builds still report failures.
 - v0.1.0 has no updater: users must install the first updater-enabled version manually.
-- Not verified without a real tag run: the exact bundle output paths and the quoting of the `--config` JSON through tauri-action.
+- Verified by the successful v0.1.1 tag run: the exact bundle output paths, updater signatures, manifest generation and `--config` JSON quoting through tauri-action.
 
 ## Local checks
 
@@ -98,3 +98,16 @@ The accumulated desktop, companion, Windows runtime, scheduling, MCP bridge, off
 The macOS distribution minimum is explicitly 10.15 because the voice library uses C++17 filesystem APIs; Tauri’s implicit 10.13 build target cannot compile that dependency. The bundled computer-use helper remains a macOS 14+ feature. Release preparation also corrected clean-runner helper ordering, schedule snapshot expectations, long-hostname certificate generation and the older-WebKit regression fallback.
 
 Nested macOS code is signed before Tauri seals the parent app: release CI imports the existing Developer ID using the pinned Apple-Actions certificate import action, and `build-computer-use.sh` applies hardened-runtime Developer ID signing plus a secure timestamp when `FREDDAI_COMPUTER_SIGNING_IDENTITY` is set. Local `native:install` retains its existing explicit helper/parent signing path. The missing nested signature was detected by Apple notarization; distribution must wait for a successful notarization result.
+
+## Published 0.1.1 verification (November 5, 2026)
+
+Release: https://github.com/desduvauchelle/freddai/releases/tag/v0.1.1. Native release source: `fc19bb9`. Successful packaging and notarization: https://github.com/desduvauchelle/freddai/actions/runs/42150224026. The release is published as latest stable. Android 0.1.1 is the separate prerelease at https://github.com/desduvauchelle/freddai/releases/tag/android-beta-0.1.1.
+
+- Source: the starting workspace changes were committed and pushed, followed by the release fixes. New work created concurrently after the release snapshot remains in the working tree.
+- Tests: workspace typechecking, 390 frontend tests, Rust workspace tests and production website integration checks passed. The website copy update also passed typechecking, download tests and production build.
+- Build: universal macOS, Linux AppImage/Debian and Windows x64 NSIS packaging passed. Android production APK generation, non-fixture checks, alignment and signature verification passed.
+- Signature: the downloaded universal Mac app passed strict recursive verification across both architectures, stapled notarization-ticket validation and Gatekeeper assessment as Notarized Developer ID. Both the parent and computer-use helper use the existing Developer ID. Windows remains an unsigned beta and its website card says so. Android 0.1.1 retains the 0.1.0 signing certificate and increases versionCode from 1000 to 1001.
+- Install: `pnpm native:install` rebuilt, Developer ID signed and installed `/Applications/Freddai.app`, with strict installed-signature verification. The final Linux artifact passed clean Debian installation and process startup in https://github.com/desduvauchelle/freddai/actions/runs/42151207194. Windows installer validation passed in the packaging run; the separate Windows runtime workflow previously verified visible launch/reopen with the same Windows application source.
+- Launch: the local GUI still maps an older preserved bundle. Approved `orca` native-app controls are unavailable, so no local GUI relaunch was performed. Save drafts, quit Freddai normally, and reopen `/Applications/Freddai.app`. Linux validation establishes process startup, not interactive behavior. Mac release Gatekeeper checks do not establish installed GUI launch.
+- Live providers: not tested; no connected accounts, sign-ins or live agent turns were used as fixtures. Physical Android pairing and iPhone/iPad external availability remain unverified/pending.
+- Public downloads: all nine desktop release assets were downloaded without authentication and matched the staged CI artifacts by SHA-256. The anonymous Android APK matched SHA-256 `bfda9eaff43cb458715171d639aa9015e8cc151bcd3aa0a1d6c4566e5a0481a7`. The public `releases/latest/download/latest.json` feed returns version 0.1.1 and signed Mac/Linux platform entries. `SHA256SUMS` is included in the desktop release. The Windows installer is deliberately published as `Freddai-windows-x64-setup.exe`, enabling the existing website discovery path.

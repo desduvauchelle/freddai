@@ -36,7 +36,7 @@ SDK 0.1.178 has an upstream packaging warning for the optional `growth-engine-pu
 
 ## Marketing product views
 
-The landing page leads with switching connected coding agents/accounts and seeing provider usage in one workspace. It also covers the Mac-paired companion, thread grouping/read visibility, Home capture and user-generated daily recaps. Windows remains coming soon; iPhone/iPad remain pending Apple approval. Published release discovery still controls download availability.
+The landing page leads with switching connected coding agents/accounts and seeing provider usage in one workspace. It also covers the Mac-paired companion, thread grouping/read visibility, Home capture and user-generated daily recaps. Windows is available as an unsigned beta; iPhone/iPad remain pending Apple approval. Published release discovery still controls download availability.
 
 The two product captures use the actual HomeView and MobileApp with illustrative projects and no accounts, credentials or live-provider requests. `packages/app/tests/fixtures/marketing.tsx` is a Vite-only capture surface, excluded from application entry points. Dispatch is disabled; only read-only illustrative daily summaries are supplied. Captions identify the previews as illustrative.
 
