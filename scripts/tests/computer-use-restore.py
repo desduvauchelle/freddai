@@ -30,15 +30,8 @@ try:
  if '--allow-human-motion' not in sys.argv: assert after['mouse']==before['mouse'],f'Pointer moved: {before} -> {after}'
  print('PASS: foreground accessible action changed target, preserved foreground app')
  o=call('computer_observe',window_id=w['window_id'])
- if '--editing' in sys.argv:
-  seq+=1
-  p.stdin.write(json.dumps(dict(jsonrpc='2.0',id=seq,method='tools/call',params=dict(name='computer_action',arguments=dict(observation=o['observation'],action='key',key='tab',mode='foreground'))))+'\n');p.stdin.flush()
-  r=json.loads(p.stdout.readline())['result']
-  assert r.get('isError') and 'user is editing text' in r['content'][0]['text'],r
-  print('PASS: foreground keyboard takeover refused while witness text field focused')
- else:
-  call('computer_action',observation=o['observation'],action='key',key='tab',mode='foreground')
-  print('PASS: foreground keyboard action dispatched and original focus restored')
+ call('computer_action',observation=o['observation'],action='key',key='tab',mode='foreground')
+ print('PASS: foreground keyboard action dispatched with idle witness, including focused editor; original focus restored')
  after=state()
  assert after['pid']==before['pid'],(before,after)
  if '--allow-human-motion' not in sys.argv: assert after['mouse']==before['mouse'],(before,after)

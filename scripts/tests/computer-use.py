@@ -34,6 +34,9 @@ try:
     assert rpc('tools/call', {'name':'computer_observe','arguments':{}})['result']['isError']
     status = json.loads(rpc('tools/call', {'name':'computer_status'})['result']['content'][0]['text'])
     assert isinstance(status['accessibility'],bool) and isinstance(status['screen_recording'],bool)
+    assert status['foreground_requires_idle_seconds'] == 2
+    assert status['foreground_allows_idle_focused_editor'] is True
+    assert status['foreground_protects_editing'] is False
     print('MCP initialize, notifications, ping, schemas, errors and permission status passed.')
     print('Native permissions:', json.dumps(status))
     if not all(status[k] for k in ('accessibility','screen_recording')):
