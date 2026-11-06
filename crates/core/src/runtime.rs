@@ -111,11 +111,11 @@ impl LaunchOptions {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
     pub role: String,
-    pub text: String,
+    pub text: crate::message_text::MessageText,
     #[serde(default)]
     pub attachments: Vec<crate::attachments::Attachment>,
 }
@@ -140,6 +140,9 @@ pub struct Session {
     pub title: String,
     #[serde(default)]
     pub title_manual: Option<bool>,
+    /// Origin remains after manual replies or deletion of the routine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_id: Option<String>,
     pub status: String,
     pub updated: u64,
     #[serde(default)]
@@ -197,6 +200,7 @@ struct Inner {
     floor: u64,
     /// Revision at which each session last changed through a fine-grained `update`.
     session_rev: HashMap<String, u64>,
+    message_rev: HashMap<String, HashMap<String, u64>>,
     /// In-memory state is newer than workspace.json (debounced persister will flush it).
     dirty: AtomicBool,
     /// Ticket for each write attempt; a stale ticket never overwrites a newer file.
@@ -215,6 +219,16 @@ struct Guard<'a> {
     g: MutexGuard<'a, Inner>,
     wide: bool,
 }
+impl Guard<'_> {
+    /// Timer housekeeping changes only queues/schedules, never transcript bodies.
+    fn metadata_changed(&mut self, changed: bool) {
+        self.wide = false;
+        if changed {
+            self.g.revision += 1;
+            self.g.dirty.store(true, Ordering::SeqCst);
+        }
+    }
+}
 impl std::ops::Deref for Guard<'_> {
     type Target = Inner;
     fn deref(&self) -> &Inner {
@@ -232,6 +246,7 @@ impl Drop for Guard<'_> {
         if self.wide {
             self.g.revision += 1;
             self.g.floor = self.g.revision;
+            self.g.message_rev.clear();
             self.g.dirty.store(true, Ordering::SeqCst);
         }
     }
@@ -273,14 +288,17 @@ fn cancelled_permission(provider: &str, frame: &Value) -> Result<Value> {
     }
 }
 fn write_file(root: &Path, db: &Database, seq: u64, file: &Mutex<u64>) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(db).map_err(|e| e.to_string())?;
     let mut last = file.lock().unwrap();
     if seq < *last {
         return Ok(()); // a newer state already reached disk
     }
     let path = root.join("workspace.json");
     let tmp = root.join("workspace.tmp");
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    let output = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    let mut writer = std::io::BufWriter::new(output);
+    serde_json::to_writer_pretty(&mut writer, db).map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())?;
+    drop(writer);
     #[cfg(unix)]
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     fs::rename(tmp, path).map_err(|e| e.to_string())?;
@@ -331,7 +349,7 @@ fn write_db(inner: &Inner) -> Result<()> {
     inner.dirty.store(false, Ordering::SeqCst);
     Ok(())
 }
-/// Clone the database under the lock (about 1 ms for a 13 MB workspace; serializing it takes ~9 ms),
+/// Clone metadata under the lock, sharing transcript bodies with copy-on-write text,
 /// then serialize and write with the lock released. Returns whether a write happened.
 fn persist_if_dirty(store: &Store) -> bool {
     let (root, db, seq, file) = {
@@ -692,7 +710,12 @@ impl Runtime {
             }
         }
         for queue in &mut db.queues {
-            queue.paused = true;
+            // Completed turns have no uncertain work to inspect. Preserve their FIFO intent
+            // across idle host upgrades; interrupted/failed/missing threads still require resume.
+            if !queue.messages.is_empty() && (!db.sessions.iter().any(|s| s.id == queue.session && s.status == "done"
+                && !s.archived && s.deleted_at.is_none()) || queue.error.is_some()) {
+                queue.paused = true;
+            }
         }
         preferences_log(
             &root,
@@ -710,6 +733,7 @@ impl Runtime {
             revision: 1,
             floor: 1,
             session_rev: HashMap::new(),
+            message_rev: HashMap::new(),
             dirty: AtomicBool::new(false),
             seq: AtomicU64::new(0),
             file: Arc::new(Mutex::new(0)),
@@ -728,6 +752,8 @@ impl Runtime {
         write_db(&i)
     }
     pub fn prepare_upgrade(&self) -> Result<()> {
+        // Do not enter shutdown between a FIFO candidate check and its launch.
+        let _guard = QUEUE_LOCK.lock().unwrap();
         let mut i = self.0.lock().unwrap();
         if !i.running.is_empty() || i.db.accounts.iter().any(|a| self.1.pending(&a.id)) {
             return Err(
@@ -804,6 +830,18 @@ impl Runtime {
         revision: u64,
         host_id: Option<&str>,
     ) -> (Value, f64, f64, usize, usize) {
+        self.snapshot_since_with_messages(revision, host_id, false)
+    }
+    /// Message-level deltas are opt-in so older clients still receive complete sessions.
+    pub fn snapshot_since_with_messages(
+        &self, revision: u64, host_id: Option<&str>, message_deltas: bool,
+    ) -> (Value, f64, f64, usize, usize) {
+        self.snapshot_since_options(revision, host_id, message_deltas, None)
+    }
+    pub fn snapshot_for_desktop(&self, revision: u64, host_id: Option<&str>, open: &[String]) -> (Value, f64, f64, usize, usize) {
+        self.snapshot_since_options(revision, host_id, true, Some(open))
+    }
+    fn snapshot_since_options(&self, revision: u64, host_id: Option<&str>, message_deltas: bool, open: Option<&[String]>) -> (Value, f64, f64, usize, usize) {
         let t0 = std::time::Instant::now();
         let guard = self.0.lock().unwrap();
         let wait = crate::timing::ms(t0);
@@ -823,6 +861,7 @@ impl Runtime {
         let full = !same_host || revision == 0 || revision > current;
         let total = guard.db.sessions.len();
         let ids: Vec<String> = guard.db.sessions.iter().map(|s| s.id.clone()).collect();
+        let mut message_ids = HashMap::<String, Vec<String>>::new();
         let sessions: Vec<Session> = guard
             .db
             .sessions
@@ -833,7 +872,15 @@ impl Runtime {
                     .max(guard.session_rev.get(&s.id).copied().unwrap_or(0))
                     > revision
             })
-            .cloned()
+            .map(|s| {
+                let mut copy = s.clone();
+                if message_deltas && !full && guard.floor <= revision && open.is_none_or(|ids| ids.contains(&s.id)) {
+                    message_ids.insert(s.id.clone(), s.messages.iter().map(|m| m.id.clone()).collect());
+                    let changed = guard.message_rev.get(&s.id);
+                    copy.messages.retain(|m| changed.and_then(|revs| revs.get(&m.id)).copied().unwrap_or(0) > revision);
+                }
+                copy
+            })
             .collect();
         let rest = (
             guard.db.queues.clone(),
@@ -845,19 +892,43 @@ impl Runtime {
         let held = crate::timing::ms(t1);
         drop(guard);
         let sent = sessions.len();
-        let value = json!({
+        let sessions: Vec<Value> = sessions.into_iter().map(|s| match open {
+            Some(ids) => { let loaded = ids.contains(&s.id); crate::desktop_snapshot::session_value(s, loaded) },
+            None => json!(s),
+        }).collect();
+        let mut value = json!({
             "revision": current,
             "hostId": self.0.boot_id,
             "full": full,
             "sessionIds": ids,
-            "sessions": sessions,
             "queues": rest.0,
             "accounts": rest.1,
             "projects": rest.2,
             "preferences": rest.3,
             "schedules": rest.4,
         });
+        value["sessions"] = Value::Array(sessions);
+        if open.is_some() { value["desktopProjection"] = json!(true); }
+        if !message_ids.is_empty() { value["messageIds"] = json!(message_ids); }
         (value, wait, held, sent, total)
+    }
+    pub fn generated_file(&self, thread: &str, href: &str, offset: u64) -> Result<Value> {
+        let db = {
+            let guard = self.0.lock().unwrap();
+            let session = guard.db.sessions.iter().find(|s| s.id == thread).ok_or("Thread unavailable")?.clone();
+            let projects = guard.db.projects.iter().filter(|p| p.id == session.project).cloned().collect();
+            Database { sessions: vec![session], projects, ..Default::default() }
+        };
+        crate::generated_files::chunk(&db, thread, href, offset)
+    }
+    pub fn tool_text(&self, thread: &str, message: &str, offset: usize, hash: Option<&str>) -> Result<Value> {
+        let text = {
+            let guard = self.0.lock().unwrap();
+            guard.db.sessions.iter().find(|s| s.id == thread)
+                .and_then(|s| s.messages.iter().find(|m| m.id == message && m.role == "tool"))
+                .ok_or("Tool output unavailable")?.text.clone()
+        };
+        crate::desktop_snapshot::text_chunk(&text, offset, hash)
     }
     pub(crate) fn root_dir(&self) -> PathBuf {
         self.0.lock().unwrap().root.clone()
@@ -1433,7 +1504,9 @@ impl Runtime {
                     dispatch.push((s.clone(), occurrence, manual.is_some()));
                 }
             }
-            if write_db(&i).is_err() {
+            let changed = serde_json::to_value(&db.schedules).unwrap() != serde_json::to_value(&i.db.schedules).unwrap();
+            i.metadata_changed(changed);
+            if changed && write_db(&i).is_err() {
                 return;
             }
         }
@@ -1713,13 +1786,13 @@ impl Runtime {
                 .messages
                 .iter()
                 .filter(|m| m.role == "user")
-                .map(|m| m.text.clone())
+                .map(|m| m.text.to_string())
                 .collect();
             let assistant = cur
                 .messages
                 .iter()
                 .find(|m| m.role == "assistant")
-                .map(|m| m.text.clone())
+                .map(|m| m.text.to_string())
                 .unwrap_or_default();
             (cur.title.clone(), cur.title_manual, users, assistant)
         };
@@ -1837,6 +1910,8 @@ impl Runtime {
                     return Ok(existing.id.clone());
                 }
             }
+            let routine = options.request_id.as_ref().filter(|_| options.scheduled)
+                .and_then(|request| i.db.schedules.iter().find(|schedule| schedule.runs.iter().any(|run| &run.id == request)));
             let mut s = if let Some(ref sid) = existing {
                 let s =
                     i.db.sessions
@@ -1861,8 +1936,9 @@ impl Runtime {
                     id: id(),
                     project: p.id.clone(),
                     account: resolve(&i.db, &p, explicit)?,
-                    title: crate::thread_title::from_prompt(&prompt),
-                    title_manual: Some(false),
+                    title: routine.map(|s| s.name.trim().to_owned()).unwrap_or_else(|| crate::thread_title::from_prompt(&prompt)),
+                    title_manual: Some(routine.is_some()),
+                    schedule_id: routine.map(|s| s.id.clone()),
                     status: "starting".into(),
                     updated: now(),
                     last_user_message_at: None,
@@ -2007,7 +2083,7 @@ impl Runtime {
             s.messages.push(Message {
                 id: id(),
                 role: "user".into(),
-                text: prompt.clone(),
+                text: prompt.clone().into(),
                 attachments: attached,
             });
             let (tx, rx) = mpsc::channel();
@@ -2034,20 +2110,23 @@ impl Runtime {
                     s.pending = None;
                 });
             }
-            let mut i = rt.0.lock().unwrap();
-            i.running.remove(&session.id);
-            if i.db
-                .sessions
-                .iter()
-                .any(|s| s.id == session.id && s.status != "done")
-            {
-                if let Some(q) = i.db.queues.iter_mut().find(|q| q.session == session.id) {
+            rt.finish_turn(&session.id);
+        });
+        Ok(sid)
+    }
+    fn finish_turn(&self, sid: &str) {
+        {
+            let mut i = self.0.lock().unwrap();
+            i.running.remove(sid);
+            if !i.db.sessions.iter().any(|s| s.id == sid && s.status == "done") {
+                if let Some(q) = i.db.queues.iter_mut().find(|q| q.session == sid && !q.messages.is_empty()) {
                     q.paused = true;
                 }
             }
             let _ = write_db(&i);
-        });
-        Ok(sid)
+        }
+        // Handoff follows confirmed process cleanup, independent of the schedule timer or UI.
+        self.queue_tick();
     }
     pub fn queue_message(
         &self,
@@ -2195,7 +2274,7 @@ impl Runtime {
         session.messages.push(Message {
             id: message.id.clone(),
             role: "user".into(),
-            text: message.prompt,
+            text: message.prompt.into(),
             attachments: attached,
         });
         if let Some(queue) = i.db.queues.iter_mut().find(|q| q.session == sid) {
@@ -2244,6 +2323,7 @@ impl Runtime {
             if i.shutting_down {
                 return;
             }
+            let before = serde_json::to_value(&i.db.queues).unwrap();
             let sessions = i.db.sessions.clone();
             let running: Vec<_> = i.running.keys().cloned().collect();
             for q in &mut i.db.queues {
@@ -2251,7 +2331,9 @@ impl Runtime {
                     q.messages.retain(|m| !s.requests.contains(&m.id));
                 }
             }
-            let _ = write_db(&i);
+            let changed = before != serde_json::to_value(&i.db.queues).unwrap();
+            i.metadata_changed(changed);
+            if changed { let _ = write_db(&i); }
             i.db.queues
                 .iter()
                 .filter(|q| {
@@ -2381,7 +2463,16 @@ impl Runtime {
         let mut found = false;
         if let Some(s) = i.db.sessions.iter_mut().find(|s| s.id == sid) {
             let (status, provider) = (s.status.clone(), s.provider_id.clone());
+            let before: HashMap<_, _> = s.messages.iter().map(|m| (m.id.clone(), m.clone())).collect();
             f(s);
+            let revisions = i.message_rev.entry(sid.to_string()).or_default();
+            let ids: std::collections::HashSet<_> = s.messages.iter().map(|m| &m.id).collect();
+            revisions.retain(|id, _| ids.contains(id));
+            for message in &s.messages {
+                if before.get(&message.id) != Some(message) {
+                    revisions.insert(message.id.clone(), i.revision + 1);
+                }
+            }
             s.updated = now();
             critical = s.status != status || s.provider_id != provider;
             found = true;
@@ -2418,7 +2509,7 @@ impl Runtime {
                 if append {
                     m.text.push_str(&text)
                 } else {
-                    m.text = text
+                    m.text = text.into()
                 }
                 new_len = m.text.chars().count();
             } else {
@@ -2426,7 +2517,7 @@ impl Runtime {
                 s.messages.push(Message {
                     id: key,
                     role: role.into(),
-                    text,
+                    text: text.into(),
                     attachments: vec![],
                 })
             }
@@ -2452,7 +2543,7 @@ impl Runtime {
                 s.messages.push(Message {
                     id: key,
                     role: "reasoning".into(),
-                    text: body,
+                    text: body.into(),
                     attachments: vec![],
                 });
             }
@@ -4063,6 +4154,28 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_identity_survives_auto_titles_rename_and_restart() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({
+                "id":"scheduled","project":"p","account":"removed",
+                "title":"Morning review","title_manual":true,"schedule_id":"routine",
+                "status":"done","updated":42,"provider_id":null,"messages":[],
+                "pending":null,"error":null
+            })).unwrap());
+        }
+        rt.auto_title("scheduled", "test", "Prompt summary");
+        assert_eq!(rt.snapshot().sessions[0].title, "Morning review");
+        rt.rename_session("scheduled", "My review").unwrap();
+        let reopened = Runtime::open(root.clone()).unwrap();
+        assert_eq!(reopened.snapshot().sessions[0].title, "My review");
+        assert_eq!(reopened.snapshot().sessions[0].schedule_id.as_deref(), Some("routine"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn automatic_titles_preserve_manual_names_and_legacy_custom_names() {
         let root = std::env::temp_dir().join(id());
         let rt = Runtime::open(root.clone()).unwrap();
@@ -4329,6 +4442,88 @@ mod tests {
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn queue_completion_handoff_and_restart_preserve_user_intent() {
+        for (status, paused, error) in [
+            ("done", false, None), ("done", true, None),
+            ("done", false, Some("Previous dispatch failed")),
+            ("failed", false, None), ("interrupted", false, None),
+            ("running", false, None), ("waiting", false, None),
+        ] {
+            let root = std::env::temp_dir().join(id());
+            let rt = Runtime::open(root.clone()).unwrap();
+            {
+                let mut i = rt.0.lock().unwrap();
+                i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"missing","account":"missing","title":"Offline","status":status,"updated":0,"messages":[]})).unwrap());
+                i.db.queues.push(ThreadQueue { session: "thread".into(), paused, error: error.map(str::to_owned),
+                    messages: vec![QueuedMessage { id: "next".into(), prompt: "Next".into(), options: LaunchOptions::default() }] });
+                let (tx, _rx) = mpsc::channel();
+                i.running.insert("thread".into(), tx);
+                write_db(&i).unwrap();
+            }
+            let reopened = Runtime::open(root.clone()).unwrap();
+            let eligible = status == "done" && !paused && error.is_none();
+            assert_eq!(!reopened.snapshot().queues[0].paused, eligible, "restart: {status}/{paused}/{error:?}");
+            // Reproduce completion handoff without a timer, UI, account or provider process.
+            if error.is_none() {
+                rt.finish_turn("thread");
+                assert!(rt.0.lock().unwrap().running.is_empty());
+                let q = rt.snapshot().queues[0].clone();
+                assert_eq!(q.error.as_deref(), if eligible { Some("Project not found") } else { None }, "handoff: {status}/{paused}");
+                assert_eq!(q.messages[0].id, "next");
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn empty_queue_does_not_gain_an_automatic_pause() {
+        for status in ["failed", "interrupted", "running"] {
+            let root = std::env::temp_dir().join(id());
+            let rt = Runtime::open(root.clone()).unwrap();
+            {
+                let mut i = rt.0.lock().unwrap();
+                i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"missing","account":"missing","title":"Offline","status":status,"updated":0,"messages":[]})).unwrap());
+                i.db.queues.push(ThreadQueue { session: "thread".into(), paused: false, error: None, messages: vec![] });
+                write_db(&i).unwrap();
+            }
+            rt.finish_turn("thread");
+            assert!(!rt.snapshot().queues[0].paused, "empty completion: {status}");
+            let reopened = Runtime::open(root.clone()).unwrap();
+            assert!(!reopened.snapshot().queues[0].paused, "empty restart: {status}");
+            // A subsequent accepted FIFO entry must still reach dispatch without Resume.
+            {
+                let mut i = reopened.0.lock().unwrap();
+                i.db.sessions[0].status = "done".into();
+                i.db.queues[0].messages.push(QueuedMessage { id: "phone:next".into(), prompt: "Next".into(), options: LaunchOptions::default() });
+            }
+            reopened.queue_tick();
+            assert_eq!(reopened.snapshot().queues[0].error.as_deref(), Some("Project not found"));
+            drop(reopened);
+            drop(rt);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn completed_queue_survives_idle_host_upgrade() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"missing","account":"missing","title":"Offline","status":"done","updated":0,"messages":[]})).unwrap());
+            i.db.queues.push(ThreadQueue { session: "thread".into(), paused: false, error: None,
+                messages: vec![QueuedMessage { id: "next".into(), prompt: "Next".into(), options: LaunchOptions::default() }] });
+            write_db(&i).unwrap();
+        }
+        // No account or provider: reaching Project not found proves automatic dispatch was attempted.
+        let reopened = Runtime::open(root.clone()).unwrap();
+        assert!(!reopened.snapshot().queues[0].paused, "completed FIFO must stay enabled across host restart");
+        reopened.queue_tick();
+        assert_eq!(reopened.snapshot().queues[0].error.as_deref(), Some("Project not found"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn queue_controls_persist_and_restart_requires_resume() {
         let root = std::env::temp_dir().join(id());
@@ -4780,6 +4975,7 @@ mod tests {
                 account: "a".into(),
                 title: "t".into(),
                 title_manual: Some(false),
+                schedule_id: None,
                 status: "waiting".into(),
                 updated: 0,
                 last_user_message_at: None,
@@ -5072,6 +5268,7 @@ mod tests {
             account: a.id.clone(),
             title: "Test".into(),
             title_manual: Some(false),
+            schedule_id: None,
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
@@ -5279,6 +5476,7 @@ mod tests {
             account: a.id.clone(),
             title: "Test".into(),
             title_manual: Some(false),
+            schedule_id: None,
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
@@ -5533,7 +5731,7 @@ mod tests {
             .messages
             .iter()
             .filter(|m| m.role == "assistant")
-            .map(|m| m.text.clone())
+            .map(|m| m.text.to_string())
             .collect();
         assert_eq!(
             texts,
@@ -5638,6 +5836,75 @@ mod tests {
         assert!(on_disk.contains("Interrupted by a Freddai update"));
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn desktop_snapshot_does_not_ship_closed_or_large_tool_outputs() {
+        let (rt, root) = delta_runtime();
+        for id in ["a", "b", "c"] {
+            rt.message(id, "large".into(), "tool", "output".repeat(200_000), false);
+        }
+        let home = crate::host::dispatch(&rt, "snapshot_since", json!({"revision":0,"openThreads":[]})).unwrap();
+        assert!(home.to_string().len() < 16_000, "Home must not download every tool result");
+        let open = crate::host::dispatch(&rt, "snapshot_since", json!({"revision":0,"openThreads":["b"]})).unwrap();
+        assert!(open.to_string().len() < 16_000, "Open threads defer large tool bodies until inspected");
+        assert_eq!(open["sessions"][1]["messages"][1]["toolTextBytes"], 1_200_000);
+        assert_eq!(open["sessions"][0]["messages"].as_array().unwrap().len(), 1);
+        // Legacy native projection yields the same session transport without changing storage.
+        let mut legacy = rt.snapshot_since(0, None).0;
+        crate::desktop_snapshot::project_legacy(&mut legacy, &["b".into()]);
+        assert_eq!(legacy["sessions"], open["sessions"]);
+        let revision = open["revision"].as_u64().unwrap();
+        let hash = open["sessions"][1]["messages"][1]["toolTextHash"].as_str().unwrap();
+        let page = rt.tool_text("b", "large", 0, Some(hash)).unwrap();
+        assert_eq!(page["text"].as_str().unwrap().len(), crate::desktop_snapshot::TOOL_PAGE_BYTES);
+        assert!(rt.tool_text("missing", "large", 0, None).is_err());
+        assert!(rt.tool_text("b", "m", 0, None).is_err());
+        // Streaming another message must not retransmit deferred bodies.
+        rt.message("b", "m".into(), "assistant", " more".into(), true);
+        let delta = rt.snapshot_for_desktop(revision, Some(rt.boot_id()), &["b".into()]).0;
+        assert_eq!(delta["messageIds"]["b"], json!(["m", "large"]));
+        assert_eq!(delta["sessions"][0]["messages"].as_array().unwrap().len(), 1);
+        // Storage and older clients retain complete output.
+        assert_eq!(rt.snapshot().sessions[1].messages[1].text.len(), 1_200_000);
+        assert!(rt.snapshot_since(0, None).0.to_string().len() > 3_600_000);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn idle_housekeeping_does_not_invalidate_or_rewrite_transcripts() {
+        let (rt, root) = delta_runtime();
+        rt.flush().unwrap();
+        let revision = rt.revision();
+        let seq = rt.0.lock().unwrap().seq.load(Ordering::SeqCst);
+        for _ in 0..3 { rt.scheduler_tick(); rt.queue_tick(); }
+        assert_eq!(rt.revision(), revision, "idle timers must not force full-history snapshots");
+        assert_eq!(rt.0.lock().unwrap().seq.load(Ordering::SeqCst), seq, "idle timers must not rewrite the workspace");
+        assert_eq!(rt.snapshot_since(revision, Some(rt.boot_id())).0["unchanged"], true);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn message_deltas_do_not_retransmit_tool_history() {
+        let (rt, root) = delta_runtime();
+        rt.message("b", "large-tool".into(), "tool", "output".repeat(200_000), false);
+        let first = rt.snapshot_since_with_messages(0, None, true).0;
+        let revision = first["revision"].as_u64().unwrap();
+        rt.message("b", "m".into(), "assistant", " more".into(), true);
+        let delta = rt.snapshot_since_with_messages(revision, Some(rt.boot_id()), true).0;
+        assert!(delta.to_string().len() < 16_000, "streaming must not resend megabytes of unchanged tool history");
+        assert_eq!(delta["messageIds"]["b"], json!(["m", "large-tool"]));
+        assert_eq!(delta["sessions"][0]["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(delta["sessions"][0]["messages"][0]["text"], "hi more");
+        // Older clients still get full sessions, and cold clients get complete history.
+        assert!(rt.snapshot_since(revision, Some(rt.boot_id())).0.to_string().len() > 1_000_000);
+        assert!(rt.snapshot_since_with_messages(0, None, true).0.to_string().len() > 1_000_000);
+        let rev2 = delta["revision"].as_u64().unwrap();
+        rt.update("b", |s| { s.messages.remove(0); });
+        let removed = rt.snapshot_since_with_messages(rev2, Some(rt.boot_id()), true).0;
+        assert_eq!(removed["messageIds"]["b"], json!(["large-tool"]));
+        assert_eq!(removed["sessions"][0]["messages"], json!([]));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn snapshot_since_is_incremental_and_host_scoped() {
         let (rt, root) = delta_runtime();
@@ -5751,5 +6018,23 @@ mod tests {
         rt.flush().unwrap();
         assert_eq!(on_disk(&root).sessions[2].title, "renamed");
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod memory_regression_tests {
+    use super::*;
+
+    #[test]
+    fn transcript_snapshots_share_unchanged_text_and_isolate_writes() {
+        let original: Message = serde_json::from_value(json!({
+            "id": "tool", "role": "tool", "text": "output".repeat(200_000)
+        })).unwrap();
+        let mut copy = original.clone();
+        assert_eq!(original.text.as_ptr(), copy.text.as_ptr(), "snapshot must not duplicate large transcript buffers");
+        copy.text.push_str(" appended");
+        assert!(!original.text.ends_with(" appended"));
+        assert!(copy.text.ends_with(" appended"));
+        assert_eq!(serde_json::to_value(&original).unwrap()["text"], original.text.as_str());
     }
 }

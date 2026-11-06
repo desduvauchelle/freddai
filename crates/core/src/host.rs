@@ -62,11 +62,17 @@ pub fn call(root: &Path, method: &str, params: Value) -> Result<Value, String> {
         json!({"version":VERSION,"method":method,"params":params})
     )
     .map_err(|e| e.to_string())?;
-    let reply = read_json_line(socket, MAX_HOST_MESSAGE_BYTES, method)?;
+    let scope: Option<Vec<String>> = if matches!(method, "snapshot" | "snapshot_since") {
+        params.get("openThreads").filter(|v| v.is_array()).map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| format!("Invalid desktop scope: {e}"))?
+    } else { None };
+    let mut reply = if let Some(open) = scope {
+        crate::desktop_snapshot::read_reply(socket.take(MAX_HOST_MESSAGE_BYTES), &open)
+            .map_err(|e| format!("Invalid or truncated desktop snapshot: {e}"))?
+    } else { read_json_line(socket, MAX_HOST_MESSAGE_BYTES, method)? };
     if let Some(error) = reply["error"].as_str() {
         return Err(error.into());
     }
-    Ok(reply["result"].clone())
+    Ok(reply["result"].take())
 }
 pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
     fn text(p: &Value, key: &str) -> Result<String, String> {
@@ -122,8 +128,11 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
         }
         "snapshot_since" => {
             let revision = p["revision"].as_u64().unwrap_or(0);
-            let (mut value, wait, held, sent, total) =
-                rt.snapshot_since(revision, p["hostId"].as_str());
+            let open: Option<Vec<String>> = p.get("openThreads").filter(|v| !v.is_null()).map(|v| serde_json::from_value(v.clone())).transpose().map_err(|e| format!("Invalid thread scope: {e}"))?;
+            let (mut value, wait, held, sent, total) = match open {
+                Some(ids) => rt.snapshot_for_desktop(revision, p["hostId"].as_str(), &ids),
+                None => rt.snapshot_since_with_messages(revision, p["hostId"].as_str(), p["messageDeltas"].as_bool().unwrap_or(false)),
+            };
             value["build"] = json!(std::env::current_exe()
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned()));
@@ -137,6 +146,8 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             );
             value
         }
+        "generated_file" => rt.generated_file(&text(&p, "thread")?, &text(&p, "href")?, p["offset"].as_u64().unwrap_or(0))?,
+        "tool_text" => rt.tool_text(&text(&p, "thread")?, &text(&p, "message")?, p["offset"].as_u64().unwrap_or(0) as usize, p["hash"].as_str())?,
         "detect_agents" => json!(crate::runtime::detect_agents()),
         "detect_existing_sign_ins" => json!(crate::runtime::detect_existing_sign_ins()),
         "connect_existing" => json!(rt.connect_existing(&text(&p, "provider")?)?),
@@ -422,22 +433,30 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
                 dispatch(&rt, &method, req["params"].clone())
             })();
             let reply = match result {
-                Ok(result) => json!({"result":result}),
+                Ok(result) => {
+                    let mut envelope = serde_json::Map::new();
+                    envelope.insert("result".into(), result);
+                    Value::Object(envelope)
+                },
                 Err(error) => json!({"error":error}),
             };
             let t = std::time::Instant::now();
-            let text = reply.to_string();
+            let mut writer = std::io::BufWriter::new(&mut socket);
+            let written = serde_json::to_writer(&mut writer, &reply)
+                .map_err(std::io::Error::other)
+                .and_then(|_| writer.write_all(b"\n"))
+                .and_then(|_| writer.flush());
             if method.starts_with("snapshot") {
                 crate::timing::log(
                     "host",
                     format_args!(
-                        "ev=snapshot_reply method={method} serialize_ms={:.2} payload_bytes={}",
+                        "ev=snapshot_reply method={method} write_ms={:.2} success={}",
                         crate::timing::ms(t),
-                        text.len()
+                        written.is_ok()
                     ),
                 );
             }
-            let _ = writeln!(socket, "{text}");
+
         });
     }
     Ok(())

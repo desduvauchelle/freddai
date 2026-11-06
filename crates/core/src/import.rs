@@ -303,7 +303,7 @@ fn claude_transcript(path: &Path) -> Result<Transcript, String> {
         messages.push(Message {
             id: format!("imp-{n}"),
             role: role.into(),
-            text,
+            text: text.into(),
             attachments: vec![],
         });
     };
@@ -601,7 +601,7 @@ fn codex_transcript(path: &Path) -> Result<Transcript, String> {
         messages.push(Message {
             id: format!("imp-{n}"),
             role: role.into(),
-            text,
+            text: text.into(),
             attachments: vec![],
         });
     }

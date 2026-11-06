@@ -40,3 +40,9 @@ pub mod mcp;
 pub mod platform;
 #[cfg(windows)]
 pub mod windows_process;
+
+pub mod generated_files;
+
+pub mod message_text;
+
+pub mod desktop_snapshot;

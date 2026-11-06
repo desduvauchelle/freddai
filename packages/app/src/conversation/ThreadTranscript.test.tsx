@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ThreadTranscript } from "./ThreadTranscript";
 import { TodoPanel } from "./TodoList";
 import { latestTodos } from "./todos";
@@ -124,8 +124,14 @@ describe("ThreadTranscript reasoning", () => {
 });
 
 describe("todo list", () => {
-  it("renders the TodoWrite tool row as a checklist instead of raw JSON", () => {
+  it("renders the TodoWrite tool row as a checklist instead of raw JSON", async () => {
     const { container } = render(<ThreadTranscript messages={[{ id: "t", role: "tool", text: todoCall(todos) }]} />);
+    const group = container.querySelector<HTMLDetailsElement>("details.tool-activity")!;
+    group.open = true; fireEvent(group, new Event("toggle"));
+    const summary = await screen.findByText("Call 1 · Task list");
+    const call = summary.closest("details")!;
+    call.open = true; fireEvent(call, new Event("toggle"));
+    await waitFor(() => expect(container.querySelectorAll(".tool-activity-call .todo-list li")).toHaveLength(3));
     const items = container.querySelectorAll(".tool-activity-call .todo-list li");
     expect(items).toHaveLength(3);
     expect(items[0].getAttribute("data-status")).toBe("completed");

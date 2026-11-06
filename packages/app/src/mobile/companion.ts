@@ -11,6 +11,7 @@ export type CompanionSnapshot = { schedules?: import("../desktop/types").Schedul
 export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
 export type ComposerTarget = { thread?: string; project?: string; assistant?: string };
 export type CompanionClient = {
+  generatedFile?(thread: string, href: string, offset: number): Promise<import("../conversation/GeneratedFile").FileChunk>;
   scheduleCommand?: import("../desktop/ScheduleManager").ScheduleCommand;
   summaries?: import("../desktop/DaySummaries").DaySummariesClient;
   transcribeAudio?(audio: Blob): Promise<{ text: string }>;

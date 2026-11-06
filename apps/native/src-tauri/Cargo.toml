@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 serde_json = "1"
 tauri-plugin-dialog = "2"
 sha2 = "0.10"
@@ -59,4 +59,8 @@ harness = false
 
 [[test]]
 name = "thread_windows"
+harness = false
+
+[[test]]
+name = "browser_sessions"
 harness = false

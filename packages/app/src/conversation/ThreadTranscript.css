@@ -175,3 +175,5 @@
 .outgoing-sending svg { flex: none; animation: outgoing-send-spin 1s linear infinite; }
 @keyframes outgoing-send-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .outgoing-sending svg { animation: none; } }
+
+.generated-file-link { color: var(--adaptive-text, #bcb2ed); text-decoration: underline; background: none; border: 0; padding: 4px 0; font: inherit; cursor: pointer; overflow-wrap: anywhere; text-align: left; }

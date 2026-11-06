@@ -1,0 +1,6 @@
+.message-web-link{overflow-wrap:anywhere}
+.message-link-actions{display:inline-flex;vertical-align:middle;gap:2px;margin-inline:4px;white-space:nowrap}
+.message-link-actions button{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:3px;border:1px solid transparent;border-radius:5px;background:transparent;color:inherit;opacity:.7;cursor:pointer}
+.message-link-actions button:hover{opacity:1;background:var(--adaptive-surface,var(--muted,#303138));border-color:var(--adaptive-border,var(--border,#454650))}
+.message-link-actions button:focus-visible{opacity:1;outline:2px solid currentColor;outline-offset:2px}
+@media(pointer:coarse){.message-link-actions button{width:36px;height:36px}}

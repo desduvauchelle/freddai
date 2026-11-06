@@ -1,4 +1,12 @@
 :root { --bar-h: 52px; --bar-pad: 12px; --bar-sep: color-mix(in oklab, var(--border) 70%, transparent); }
+/* Lock the desktop document itself; panes keep their own scrolling viewports. */
+html:has(.native-workspace),
+body:has(.native-workspace),
+#root:has(.native-workspace) {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 .native-workspace .thread-detail {
   height: 100%;
   display: flex;
@@ -895,7 +903,7 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 }
 
 /* Thread list: tight project headings, day separators, agent-left / status-right rows. */
-.native-workspace .thread-list > section:not(:first-of-type) { padding-top: 28px; }
+.native-workspace .thread-list section[data-project-id]:not(:first-of-type) { padding-top: 28px; }
 .native-workspace .project-group-heading { padding-bottom: 0; }
 .native-workspace .thread-day-label {
   padding: 10px var(--navigator-inset) 4px var(--navigator-text-inset);
@@ -1270,3 +1278,17 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 /* The count overlays the existing icon button without taking layout space. */
 .native-workspace .project-group-heading .project-schedule-button { position: relative; }
 .project-schedule-count { position: absolute; top: -2px; right: -2px; color: var(--adaptive-text, #dedee3); font-size: 9px; line-height: 11px; font-weight: 500; font-variant-numeric: tabular-nums; pointer-events: none; }
+
+/* Keep expanded projects distinct while folded projects remain compact. */
+.native-workspace .thread-list section[data-project-id]:first-of-type { padding-top: 14px; }
+.native-workspace .thread-list section[data-project-id][data-collapsed="true"]:not(:first-of-type) { padding-top: 11px; }
+.native-workspace .thread-list section[data-project-id][data-collapsed="true"]:first-of-type { padding-top: 7px; }
+
+.settings-project-row { display: flex; align-items: center; gap: 8px; }
+.settings-project-row > button:last-child { flex: 1; justify-content: flex-start; }
+
+/* Workspace destination, visually separate from project/thread rows. */
+.dashboard-navigation { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.dashboard-link { display: inline-flex; align-items: center; gap: 8px; padding: 5px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground); font: inherit; font-size: 13px; cursor: pointer; }
+.dashboard-link:hover, .dashboard-link[aria-current="page"] { color: var(--foreground); background: var(--accent); }
+.dashboard-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }

@@ -88,6 +88,7 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     let input = &p["input"];
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
+        "generated_file" => freddai_core::generated_files::chunk(db, text(input,"thread")?, text(input,"href")?, input["offset"].as_u64().unwrap_or(0)),
         "models" => {
             let account = if let Some(s)=session {s.account.clone()} else {
                 let project=db.projects.iter().find(|x|Some(x.id.as_str())==input["project"].as_str()).ok_or("Project not found")?;

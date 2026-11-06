@@ -310,7 +310,7 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                 // A host started by an older build has no incremental snapshot; use the full one.
                 // Revision 0 and host id "legacy" make the client replace its whole state each poll.
                 Err(e) if method == "snapshot_since" && e.contains("Unknown host command") => {
-                    let mut full = call_with_recovery(&host, "snapshot", json!({}))?;
+                    let mut full = call_with_recovery(&host, "snapshot", p.clone())?;
                     full["revision"] = json!(0);
                     full["hostId"] = json!("legacy");
                     full["full"] = json!(true);
@@ -345,6 +345,12 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                     gap.map(|g| format!("{g:.1}")).unwrap_or_else(|| "none".into())
                 ),
             );
+            if result["desktopProjection"] != true {
+                if let Some(open) = p.get("openThreads").filter(|v| v.is_array()) {
+                    let ids: Vec<String> = serde_json::from_value(open.clone()).map_err(|e| e.to_string())?;
+                    freddai_core::desktop_snapshot::project_legacy(&mut result, &ids);
+                }
+            }
             return Ok(result);
         }
         freddai_core::host::call(&host.root, method, p)
@@ -446,8 +452,25 @@ async fn snapshot(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "snapshot", json!({})).await
 }
 #[tauri::command]
-async fn snapshot_since(h: State<'_, Host>, revision: u64, host_id: Option<String>) -> Result<Value, String> {
-    rpc(h.inner().clone(), "snapshot_since", json!({"revision": revision, "hostId": host_id})).await
+async fn snapshot_since(h: State<'_, Host>, revision: u64, host_id: Option<String>, open_threads: Option<Vec<String>>) -> Result<Value, String> {
+    // Older hosts ignore openThreads; request whole changed sessions so compatibility projection is lossless.
+    rpc(h.inner().clone(), "snapshot_since", json!({"revision": revision, "hostId": host_id, "messageDeltas": open_threads.is_none(), "openThreads":open_threads})).await
+}
+#[tauri::command]
+async fn tool_text(h: State<'_, Host>, thread: String, message: String, offset: u64, hash: Option<String>) -> Result<Value, String> {
+    let host = h.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        match call_with_recovery(&host, "tool_text", json!({"thread":thread,"message":message,"offset":offset,"hash":hash})) {
+            Err(e) if e.contains("Unknown host command") => {
+                let db = call_with_recovery(&host, "snapshot", json!({}))?;
+                let text = db["sessions"].as_array().and_then(|sessions| sessions.iter().find(|s| s["id"] == thread))
+                    .and_then(|s| s["messages"].as_array()).and_then(|messages| messages.iter().find(|m| m["id"] == message && m["role"] == "tool"))
+                    .and_then(|m| m["text"].as_str()).ok_or("Tool output unavailable")?;
+                freddai_core::desktop_snapshot::text_chunk(text, offset as usize, hash.as_deref())
+            }
+            other => other,
+        }
+    }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn detect_agents(h: State<'_, Host>) -> Result<Value, String> {
@@ -651,6 +674,15 @@ async fn stage_attachments(h: State<'_, Host>, paths: Vec<String>) -> Result<Val
         json!({"paths":paths}),
     )
     .await
+}
+#[tauri::command]
+async fn generated_file(h: State<'_, Host>, thread: String, href: String, offset: u64) -> Result<Value, String> {
+    match rpc(h.inner().clone(), "generated_file", json!({"thread":thread,"href":href,"offset":offset})).await {
+        Err(e) if e.contains("Unknown host command") => {}, // preserved older host: retain existing preview compatibility
+        other => return other,
+    }
+    let db: freddai_core::runtime::Database = serde_json::from_value(rpc(h.inner().clone(), "snapshot", json!({})).await?).map_err(|e|e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || freddai_core::generated_files::chunk(&db, &thread, &href, offset)).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 async fn preview_attachment(h: State<'_, Host>, id: String) -> Result<String, String> {
@@ -934,6 +966,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::browser::browser_view,
             platform,
             open_thread_window,
             companion_devices,
@@ -965,6 +998,7 @@ pub fn run() {
             crate::terminal::terminal_close,
             snapshot,
             snapshot_since,
+            tool_text,
             detect_agents,
             detect_existing_sign_ins,
             connect_existing,
@@ -996,6 +1030,7 @@ pub fn run() {
             respond,
             stage_attachments,
             preview_attachment,
+            generated_file,
             capture_screenshot,
             rename_session,
             mark_read,

@@ -1,24 +1,31 @@
+import { useMemo, useState } from 'react';
 import { ScrollArea } from '@freddai/ui/components/scroll-area';
 import type { Message } from '../desktop/types';
 import { parseTodos } from './todos';
 import { TodoChecklist } from './TodoList';
+import { ToolText } from './ToolText';
 
-// Shared disclosure structure keeps tool visibility identical on Mac and iPhone.
+function ToolCall({ call, index }: { call: Message; index: number }) {
+  const [open, setOpen] = useState(false);
+  const todos = useMemo(() => parseTodos(call.text), [call.text]);
+  // Tool calls only exist while the outer disclosure is open.
+  return <details className="tool-activity-call" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>Call {index + 1}{todos ? ' · Task list' : ''}</summary>
+    {open && (todos ? <TodoChecklist todos={todos} /> : <ToolOutput call={call} index={index} />)}
+  </details>;
+}
+
+function ToolOutput({ call, index }: { call: Message; index: number }) {
+  return <ScrollArea orientation="both" viewportProps={{ style: { maxHeight: 240 }, 'aria-label': `Tool call ${index + 1} details` }}><>{call.toolTextBytes != null ? <ToolText key={call.toolTextHash} call={call} /> : <pre>{call.text}</pre>}</></ScrollArea>;
+}
+
+// Closed disclosures must release their children, not merely hide thousands of DOM nodes.
 export function ToolActivity({ messages, className }: { messages: readonly Message[]; className?: string }) {
-  return <details className={className ? `tool-activity ${className}` : "tool-activity"}>
+  const [open, setOpen] = useState(false);
+  return <details className={className ? `tool-activity ${className}` : 'tool-activity'} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>Tool activity · {messages.length} {messages.length === 1 ? 'call' : 'calls'}</summary>
-    <div className="tool-activity-calls">
-      {messages.map((call, index) => {
-        const todos = parseTodos(call.text);
-        if (todos) return <details key={call.id} className="tool-activity-call">
-          <summary>Call {index + 1} · Task list</summary>
-          <TodoChecklist todos={todos} />
-        </details>;
-        return <details key={call.id} className="tool-activity-call">
-          <summary>Call {index + 1}</summary>
-          <ScrollArea orientation="both" viewportProps={{ style: { maxHeight: 240 }, 'aria-label': `Tool call ${index + 1} details` }}><pre>{call.text}</pre></ScrollArea>
-        </details>;
-      })}
-    </div>
+    {open && <div className="tool-activity-calls">
+      {messages.map((call, index) => <ToolCall key={call.id} call={call} index={index} />)}
+    </div>}
   </details>;
 }

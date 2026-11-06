@@ -21,6 +21,7 @@ export function groupTranscript(messages: readonly Message[]): TranscriptItem[] 
 
 /** Match persisted task launch IDs to visible tool groups, including after reopening a thread. */
 export function placeBackgroundTasks(items: readonly TranscriptItem[], tasks: readonly BackgroundTask[]) {
+  if (!tasks.some(task => task.tool_use_id)) return { placed: new Map<string, BackgroundTask[]>(), unplaced: [...tasks] };
   const launches = new Map<string, string>();
   for (const item of items) {
     if (item.kind !== "tools") continue;

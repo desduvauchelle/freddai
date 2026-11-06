@@ -6,7 +6,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Attachment {
     pub id: String,
     pub name: String,

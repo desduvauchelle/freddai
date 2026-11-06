@@ -13,7 +13,14 @@ export function resetExpiry(credit: ResetCredit, now: number): string {
   const date = new Date(credit.expires_at * 1000).toLocaleString([], {
     year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
   });
-  return `${credit.expires_at * 1000 <= now ? "Expired" : "Expires"} ${date}`;
+  const remaining = credit.expires_at * 1000 - now;
+  if (remaining <= 0) return `Expired ${date}`;
+  const [count, unit] = remaining >= 86400000
+    ? [Math.floor(remaining / 86400000), "day"]
+    : remaining >= 3600000
+      ? [Math.floor(remaining / 3600000), "hour"]
+      : [Math.ceil(remaining / 60000), "minute"];
+  return `Expires in ${count} ${unit}${count === 1 ? "" : "s"} · ${date}`;
 }
 export function availableResets(resets: ResetCredits): ResetCredit[] {
   return (resets.credits || []).filter(c => c.status === "available").sort((a, b) =>

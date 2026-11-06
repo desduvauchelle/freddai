@@ -10,12 +10,14 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-it.each(["button", "shortcut"])("Home leaves Settings and displays the dashboard via %s", async navigation => {
+it.each(["button", "shortcut"])("Dashboard is reachable after Settings via %s", async navigation => {
   render(<DesktopApp />);
   fireEvent.keyDown(window, { key: ",", ctrlKey: true });
   expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Home" }).getAttribute("aria-pressed")).toBe("false");
-  if (navigation === "button") fireEvent.click(screen.getByRole("button", { name: "Home" }));
+  if (navigation === "button") {
+    fireEvent.click(screen.getByRole("button", { name: "Back to threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
+  }
   else fireEvent.keyDown(window, { key: "1", ctrlKey: true });
   expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
   expect(screen.getByRole("region", { name: "Home" })).toBeTruthy();

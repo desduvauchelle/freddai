@@ -33,7 +33,7 @@ it("keeps independent reply drafts when switching threads and visiting Home", as
   fireEvent.click(screen.getByText("Alpha"));
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Unsent Alpha");
   expect(screen.getByText("notes.txt")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Home" }));
+  fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
   fireEvent.click(screen.getByText("Beta"));
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Unsent Beta");
 });

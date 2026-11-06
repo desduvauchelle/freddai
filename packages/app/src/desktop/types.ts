@@ -32,7 +32,7 @@ export type Attachment = { id: string; name: string; bytes: number; mime: string
 export type PermissionMode = "ask" | "bypass";
 export type LaunchOptions = { permission_mode?: PermissionMode | null; scheduled?: boolean; update_agent_controls?: boolean; worktree?: boolean; model?: string | null; effort?: string | null; attachments?: string[]; request_id?: string };
 export type BackgroundTask = { id: string; tool_use_id?: string | null; description: string; kind?: string | null; status: "running" | "completed" | "failed" | "stopped" | string; summary?: string | null };
-export type Message = { delivery?: string; id: string; role: string; text: string; attachments?: Attachment[] };
+export type Message = { toolTextBytes?: number; toolTextHash?: string; delivery?: string; id: string; role: string; text: string; attachments?: Attachment[] };
 export type Pending = {
   id?: string | number;
   method?: string;
@@ -54,6 +54,7 @@ export type Session = {
   project: string;
   account: string;
   title: string;
+  schedule_id?: string | null;
   status: string;
   updated: number;
   last_user_message_at?: number | null;
@@ -64,6 +65,7 @@ export type Session = {
   working_dir?: string | null;
   options?: LaunchOptions;
   messages: Message[];
+  transcriptLoaded?: boolean;
   /** Background sub-agents launched by this thread; the thread stays running until all report back. */
   tasks?: BackgroundTask[];
   pending: Pending | null;

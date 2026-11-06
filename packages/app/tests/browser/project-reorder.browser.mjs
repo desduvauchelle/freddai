@@ -11,7 +11,7 @@ try {
    localStorage.setItem('freddai.read',JSON.stringify({t6:94,t7:93}));
    window.isTauri=true;
    window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(cmd)=>{
-     if(cmd==='platform')return 'macos'; if(cmd==='snapshot')return db;
+     if(cmd==='platform')return 'macos'; if(cmd==='snapshot')return db; if(cmd==='snapshot_since')return {...db,full:true,revision:1,hostId:'offline-reorder'};
      if(cmd.startsWith('plugin:event|'))return 1;
      if(cmd==='provider_installations')return [];
      throw new Error(`Offline test blocks ${cmd}`);
@@ -40,6 +40,35 @@ try {
  await page.getByRole('button',{name:'Reorder a',exact:true}).focus();
  await page.keyboard.press('Alt+ArrowUp');
  assert.deepEqual(await order(),['b','a','c']);
+ // Settings shares the saved order and supports pointer and keyboard moves.
+ await page.getByRole('button',{name:'More actions',exact:true}).click();
+ await page.getByRole('menuitem',{name:/^Settings/}).click();
+ await page.getByRole('button',{name:'Projects',exact:true}).click();
+ const settingsOrder=()=>page.locator('[data-settings-project-id]').evaluateAll(els=>els.map(e=>e.dataset.settingsProjectId));
+ assert.deepEqual(await settingsOrder(),['b','a','c']);
+ const settingsHandle=await page.getByRole('button',{name:'Reorder c',exact:true}).boundingBox();
+ const settingsTarget=await page.locator('[data-settings-project-id="b"]').boundingBox();
+ await page.mouse.move(settingsHandle.x+settingsHandle.width/2,settingsHandle.y+settingsHandle.height/2);
+ await page.mouse.down();
+ await page.mouse.move(settingsTarget.x+settingsTarget.width/2,settingsTarget.y+2,{steps:15});
+ await page.mouse.up();
+ assert.deepEqual(await settingsOrder(),['c','b','a']);
+ await page.getByRole('button',{name:'Reorder c',exact:true}).focus();
+ await page.keyboard.press('Alt+ArrowDown');
+ assert.deepEqual(await settingsOrder(),['b','c','a']);
+ // Releasing outside a project must leave the saved order alone.
+ const cancelHandle=await page.getByRole('button',{name:'Reorder a',exact:true}).boundingBox();
+ await page.mouse.move(cancelHandle.x+cancelHandle.width/2,cancelHandle.y+cancelHandle.height/2);
+ await page.mouse.down();
+ await page.mouse.move(settingsTarget.x+settingsTarget.width/2,settingsTarget.y+2,{steps:10});
+ await page.mouse.move(1100,850,{steps:10});
+ await page.mouse.up();
+ assert.deepEqual(await settingsOrder(),['b','c','a']);
+ await page.reload();
+ await page.getByRole('button',{name:'Projects',exact:true}).click();
+ assert.deepEqual(await settingsOrder(),['b','c','a']);
+ await page.getByRole('button',{name:'Back to threads',exact:true}).click();
+ assert.deepEqual(await order(),['b','c','a']);
  assert.deepEqual(errors,[]);
- console.log('PASS: pointer reorder, persisted reload, keyboard reorder; no accounts or provider turns.');
+ console.log('PASS: sidebar and Settings pointer reorder, persisted reload, keyboard reorder, canceled drop; no accounts or provider turns.');
 } finally {await browser.close();}

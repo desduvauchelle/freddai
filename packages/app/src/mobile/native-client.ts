@@ -11,6 +11,7 @@ function refreshWakeInfo() {
   invoke('companion_wake_refresh').catch(e => { wakeRefreshedAt = 0; console.warn('Wake details unavailable:', e); });
 }
 export const nativeCompanionClient: CompanionClient = {
+  generatedFile: (thread, href, offset) => composer("generated_file", { thread, href, offset }),
   async snapshot(signal, thread) {
     const value = await invoke<CompanionSnapshot>('companion_snapshot', { thread: thread || null });
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');

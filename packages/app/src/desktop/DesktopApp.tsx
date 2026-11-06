@@ -1,3 +1,5 @@
+import { BrowserWorkspace, BrowserToggle } from "./BrowserWorkspace";
+import { useNavigationState } from '../hooks/use-navigation-state';
 import { useThreadPins } from "./thread-pins";
 import { scheduleEnded } from "./schedule-end";
 import { agentDisplayName } from "./types";
@@ -146,19 +148,21 @@ function Picker({
   onChange,
   options,
   disabled = false,
+  dropdown = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
   disabled?: boolean;
+  dropdown?: boolean;
 }) {
   return (
     <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger aria-label={label}>
         <SelectValue placeholder={label} />
       </SelectTrigger>
-      <SelectContent className="dev-popup">
+      <SelectContent className="dev-popup" position={dropdown ? "popper" : "item-aligned"} side="bottom" align="start" avoidCollisions={!dropdown}>
         {options.map((o) => (
           <SelectItem key={o.value} value={o.value}>
             {o.label}
@@ -338,6 +342,7 @@ function ConversationPane({
       onFocusCapture={onFocus}
       onPointerDownCapture={onFocus}
     >
+      <BrowserWorkspace key={task.id} threadId={task.id}>
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}><DialogContent className="dark capture-panel"><DialogHeader><DialogTitle>Recurring tasks</DialogTitle><DialogDescription>Create from this thread or manage existing schedules.</DialogDescription></DialogHeader><ScheduleManager db={db} native={native} context={task} onRefresh={refresh} onSelect={id=>{setScheduleOpen(false);onOpenThread(id);}}/></DialogContent></Dialog>
       <div className="pane-title" data-tauri-drag-region={standalone || undefined} aria-current={split && focused ? "true" : undefined}>
         <span className="pane-project" title={project?.name}>
@@ -350,9 +355,11 @@ function ConversationPane({
           <span>{taskAccount ? agentDisplayName(taskAccount) : "Connection removed"}</span>
         </span>
         <span className="pane-sep" aria-hidden="true">/</span>
+        {(task.schedule_id || task.options?.scheduled) && <span title="Created by a scheduled task"><CalendarClock size={14} aria-label="Scheduled task" /></span>}
         <h1 className="pane-thread-title"><ThreadTitle key={task.id} title={task.title} onRename={onRename} editRequest={renameRequest} /></h1>
         <div className="conversation-header-actions">
           <span className="conversation-header-status" role="status"><Dot status={task.status}/><span className="status-label">{labelStatus(task.status)}</span></span>
+          {native && <BrowserToggle />}
           {native && terminalCwd && <Button variant="ghost" size="icon" aria-label="Toggle terminal" aria-pressed={terminalOpen} title="Toggle terminal (Ctrl+`)" onClick={terminalPanel.toggle}><SquareTerminal size={16} /></Button>}
           {canToggleSplit && <SplitToggle split={split} onToggle={onToggleSplit} />}
           <DropdownMenu>
@@ -387,7 +394,8 @@ function ConversationPane({
       <div className="chat-surface">
         <div className="chat-transcript-viewport">
         <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
-          <ThreadTranscript messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
+          {task.transcriptLoaded === false && <div role="status">Loading conversation details…</div>}
+          <ThreadTranscript readToolText={(message, offset, hash) => invoke("tool_text", { thread: task.id, message, offset, hash })} readGeneratedFile={(href, offset) => invoke("generated_file", { thread: task.id, href, offset })} messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
           {(task.error || task.status === "interrupted") && (
             <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={standalone ? undefined : openAccounts}
               onContinue={task.status === "interrupted" && capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
@@ -484,6 +492,7 @@ function ConversationPane({
         </p>
       </div>
       {native && terminalCwd && terminalOpen && (!split || focused) && <TerminalPanel cwd={terminalCwd} />}
+      </BrowserWorkspace>
     </section>
   );
 }
@@ -515,17 +524,22 @@ function EmptyPane({ side, focused, canToggleSplit, onFocus, onClose, onToggleSp
   );
 }
 export function DesktopApp() {
+  return <DesktopWorkspace />;
+}
+
+function DesktopWorkspace() {
   const native = isTauri();
+  const navigationRevision = useRef(0);
   const [windowThread] = useState(() => native ? new URLSearchParams(window.location.search).get("thread") || "" : "");
   const { theme, setTheme, saved: themeSaved, appearance } = useTheme();
   const fontSizes = useFontSizes();
   const [snapshot, setDb] = useState<Database>(empty),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [view, setView] = useState<SplitView>(() => windowThread ? { split: false, left: windowThread, right: "", focus: "left" } : restoreSplitView(readPreference<Partial<SplitPreference> | null>("freddai.split", null)));
+    [view, setView] = useNavigationState<SplitView>(() => windowThread ? { split: false, left: windowThread, right: "", focus: "left" } : restoreSplitView(readPreference<Partial<SplitPreference> | null>("freddai.split", null)), navigationRevision);
   // The focused pane's thread is "the selected thread"; selecting routes through the split-view state.
   const selected = focusedThread(view), secondary = otherThread(view);
-  const [scheduleView, setScheduleView] = useState<{project: string; id?: string} | null>(null);
+  const [scheduleView, setScheduleView] = useNavigationState<{project: string; id?: string} | null>(null, navigationRevision);
   const [scheduleProjects, setScheduleProjects] = useState<string[]>([]);
   const setSelected = (id: string) => { if (windowThread) return; setScheduleView(null); setView(current => selectThread(current, id)); };
   const selectScheduleRun = (id: string) => setView(current => selectThread(current, id));
@@ -533,11 +547,11 @@ export function DesktopApp() {
   const splitActive = view.split && !narrow;
   useEffect(() => { if (!windowThread) localStorage.setItem("freddai.split", JSON.stringify(splitPreference(view))); }, [view.split, view.right, windowThread]);
   // Non-thread main pane (git history). Cleared whenever a thread or the new-thread pane is chosen.
-  const [pane, setPane] = useState<PaneSelection>(null);
+  const [pane, setPane] = useNavigationState<PaneSelection>(null, navigationRevision);
   useEffect(() => { if (selected) setPane(null); }, [selected]);
   const [launching, setLaunching] = useState<Session | null>(null);
   // Home hub is the landing view; it yields to any thread, new-thread draft or git pane the user opens.
-  const [home, setHome] = useState(!windowThread);
+  const [home, setHome] = useNavigationState(!windowThread, navigationRevision);
   const lastSelected = useRef(selected);
   useEffect(() => { if (selected && selected !== lastSelected.current) setHome(false); lastSelected.current = selected; }, [selected]);
   useEffect(() => { if (pane) setHome(false); }, [pane]);
@@ -559,9 +573,9 @@ export function DesktopApp() {
   useEffect(() => {
     if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
   }, [snapshot, launching]);
-  const [dialog, setDialog] = useState<
+  const [dialog, setDialog] = useNavigationState<
       "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "background" | "companion" | "project" | "help" | "schedules" | "import" | null
-    >(null),
+    >(null, navigationRevision),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all");
@@ -668,6 +682,9 @@ export function DesktopApp() {
   const task = db.sessions.find((t) => t.id === selected),
     taskAccount = db.accounts.find((a) => a.id === task?.account);
   const openIds = openThreads(splitActive ? view : { ...view, split: false, left: selected });
+  const snapshotScope = useRef<string[]>([]);
+  const scopeKey = JSON.stringify(home || dialog === "new" ? [] : [...openIds].sort());
+  snapshotScope.current = JSON.parse(scopeKey);
   const openTasks = openIds.flatMap(id => db.sessions.find(t => t.id === id) ?? []);
   liveTargets.current = dialog === "new" ? ["new"] : openIds;
   const threadPaneLayout = useDefaultLayout({
@@ -705,12 +722,16 @@ export function DesktopApp() {
   }
   // Revision/host the next `snapshot_since` is relative to, and a tail so overlapping polls and
   // refreshes run one at a time (an older partial reply must never land after a newer one).
-  const syncCursor = useRef<{ revision: number; hostId: string | null; tail: Promise<unknown> }>({ revision: 0, hostId: null, tail: Promise.resolve() });
+  const syncCursor = useRef<{ revision: number; hostId: string | null; tail: Promise<unknown>; scope?: string }>({ revision: 0, hostId: null, tail: Promise.resolve() });
   function fetchSnapshot(): Promise<Database> {
     const cursor = syncCursor.current;
     const run = async (): Promise<Database> => {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const reply = await invoke<SnapshotReply>("snapshot_since", { revision: cursor.revision, hostId: cursor.hostId });
+        const openThreads = snapshotScope.current;
+        const scope = JSON.stringify(openThreads);
+        if (cursor.scope !== scope) { cursor.revision = 0; cursor.hostId = null; cursor.scope = scope; }
+        const reply = await invoke<SnapshotReply>("snapshot_since", { revision: cursor.revision, hostId: cursor.hostId, openThreads });
+        if (JSON.stringify(snapshotScope.current) !== scope) continue; // navigation changed while the request was in flight
         const next = applySnapshotDelta(rawSnapshot.current, reply);
         if (next) {
           cursor.revision = reply.revision;
@@ -729,6 +750,9 @@ export function DesktopApp() {
   async function refresh() {
     if (native) await fetchSnapshot();
   }
+  useEffect(() => {
+    if (native) void fetchSnapshot().catch(() => {}); // navigation hydrates immediately; regular polling handles retry/errors
+  }, [native, scopeKey]);
   async function action<T>(fn: () => Promise<T>): Promise<T | undefined> {
     if (actionLock.current) return;
     actionLock.current = true;
@@ -1044,7 +1068,6 @@ export function DesktopApp() {
       });
       setDraft("");
       setNewAttachments([]);
-      setDialog(null);
       await refresh();
     });
   }
@@ -1060,11 +1083,15 @@ export function DesktopApp() {
       updated: Date.now(), provider_id: null, pending: null, error: null,
       messages: [{ id: requestId, role: "user", text: prompt, attachments }],
     };
+    const sentNavigation = navigationRevision.current;
     setLaunching(preview);
     try {
       const sid = await invoke<string>("launch", { project, account, prompt, options, existing: null });
       setLaunching({ ...preview, id: sid });
-      if (select) setSelected(sid);
+      if (select && navigationRevision.current === sentNavigation) {
+        setSelected(sid);
+        setDialog(null);
+      }
       return sid;
     } catch (error) {
       setLaunching(null);
@@ -1293,7 +1320,7 @@ export function DesktopApp() {
         >
           {a?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
         </span>
-        <strong className="session-title"><ThreadTitle title={t.title} displayTitle={threadListTitle(t.title, t.messages)} onRename={title => renameThread(t.id, title)} /></strong>
+        <strong className="session-title"><ThreadTitle title={t.title} displayTitle={t.schedule_id ? t.title : threadListTitle(t.title, t.messages)} onRename={title => renameThread(t.id, title)} /></strong>
         {!grouped && (
           <span
             style={{
@@ -1303,6 +1330,7 @@ export function DesktopApp() {
             {db.projects.find((p) => p.id === t.project)?.name}
           </span>
         )}
+        {(t.schedule_id || t.options?.scheduled) && <span title="Created by a scheduled task"><CalendarClock size={12} aria-label="Scheduled task" /></span>}
         {t.pinned && <Pin size={12} aria-label="Pinned to project" className="thread-pin" />}
         <Dot status={threadListStatus(t, read)} />
       </div>
@@ -1427,17 +1455,6 @@ export function DesktopApp() {
           <Button
             variant="ghost"
             size="icon"
-            className="titlebar-home"
-            aria-label="Home"
-            aria-pressed={homeActive && !settingsVisible}
-            title="Home (⌘ 1)"
-            onClick={goHome}
-          >
-            <House size={16} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
             className="titlebar-sidebar-toggle"
             aria-label={listHidden ? "Show thread list" : "Hide thread list"}
             aria-pressed={!listHidden}
@@ -1534,6 +1551,18 @@ export function DesktopApp() {
                     <span>Folder names and your account defaults are used automatically.</span>
                   </div>}
                   {launching?.id === "pending-launch" && <div className="task-row compact-session" role="status" aria-label="Starting new thread"><Dot status="starting"/><span>{launching.title}</span><span>Starting…</span></div>}
+                  <div className="dashboard-navigation">
+                    <button
+                      type="button"
+                      className="dashboard-link"
+                      aria-current={homeActive && !settingsVisible ? "page" : undefined}
+                      title="Dashboard (⌘ 1)"
+                      onClick={goHome}
+                    >
+                      <House size={15} aria-hidden="true" />
+                      <span>Dashboard</span>
+                    </button>
+                  </div>
                   <div className="list-heading list-search-row">
                     <div className="toolbar-search">
                       <Search size={13} />
@@ -1558,6 +1587,7 @@ export function DesktopApp() {
                   <div className="thread-filter-row">
                     <Picker
                       label="Project filter"
+                      dropdown
                       value={projectFilter}
                       onChange={(v) => {
                         setProjectFilter(v);
@@ -1573,6 +1603,7 @@ export function DesktopApp() {
                     />
                     <Picker
                       label="Status filter"
+                      dropdown
                       value={filter}
                       onChange={(v) => {
                         setFilter(v);
@@ -1604,7 +1635,7 @@ export function DesktopApp() {
                         const projectSchedules = (db.schedules || []).filter(s => s.project === pid);
                         const attention = collapsed ? attentionCount(sorted.filter(t => t.project === pid), read, t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) : 0;
                         return (
-                          <section key={pid} data-project-id={pid} aria-label={`${p?.name} threads`}
+                          <section key={pid} data-project-id={pid} data-collapsed={collapsed} aria-label={`${p?.name} threads`}
                             className={projectDrag?.target === pid && projectDrag.id !== pid ? `project-reorder-${projectDrag.after ? "after" : "before"}` : undefined}>
 
                             <div className="project-group-heading">
@@ -2170,10 +2201,51 @@ export function DesktopApp() {
           {dialog === "projects" && (
               <div className="settings-projects">
                 {!db.projects.length && <p className="capture-help">Add a local folder to organize threads and choose project defaults.</p>}
-                {db.projects.map((p) => (
+                {!!db.projects.length && <p className="capture-help">Drag a handle to reorder projects. You can also focus a handle and press Alt+↑/↓.</p>}
+                {fullProjectOrder.map(id => db.projects.find(p => p.id === id)!).map((p) => (
+                  <div key={p.id} data-settings-project-id={p.id}
+                    className={`settings-project-row ${projectDrag?.target === p.id && projectDrag.id !== p.id ? `project-reorder-${projectDrag.after ? "after" : "before"}` : ""}`}>
+                  <button type="button" className="project-drag-handle" aria-label={`Reorder ${p.name}`}
+                    title="Drag to reorder · Alt+↑/↓ to move"
+                    onKeyDown={e => {
+                      if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+                      e.preventDefault();
+                      const offset = e.key === "ArrowUp" ? -1 : 1;
+                      const target = fullProjectOrder[fullProjectOrder.indexOf(p.id) + offset];
+                      if (target) moveProjectGroup(p.id, target, offset > 0);
+                    }}
+                    onPointerDown={e => {
+                      if (e.button !== 0) return;
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      setProjectDrag({ id: p.id, target: p.id, after: false });
+                    }}
+                    onPointerMove={e => {
+                      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                      const row = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-settings-project-id]");
+                      if (row) {
+                        const bounds = row.getBoundingClientRect();
+                        setProjectDrag({ id: p.id, target: row.dataset.settingsProjectId!, after: e.clientY > bounds.top + bounds.height / 2 });
+                      }
+                      const viewport = e.currentTarget.closest<HTMLElement>('[data-radix-scroll-area-viewport]');
+                      if (viewport) {
+                        const bounds = viewport.getBoundingClientRect();
+                        if (e.clientY < bounds.top + 35) viewport.scrollTop -= 16;
+                        if (e.clientY > bounds.bottom - 35) viewport.scrollTop += 16;
+                      }
+                    }}
+                    onPointerUp={e => {
+                      const row = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-settings-project-id]");
+                      if (row && projectDrag) {
+                        const bounds = row.getBoundingClientRect();
+                        moveProjectGroup(p.id, row.dataset.settingsProjectId!, e.clientY > bounds.top + bounds.height / 2);
+                      }
+                      setProjectDrag(null);
+                    }}
+                    onPointerCancel={() => setProjectDrag(null)}
+                    onLostPointerCapture={() => setProjectDrag(null)}
+                  ><GripVertical size={13} /></button>
                   <Button
                     variant="ghost"
-                    key={p.id}
                     onClick={() => {
                       setEditing(p);
                       setDialog("project");
@@ -2186,6 +2258,7 @@ export function DesktopApp() {
                     {p.name}
                     <Settings2 size={12} />
                   </Button>
+                  </div>
                 ))}
                 <Button variant="outline" onClick={addProject}>
                   Add project

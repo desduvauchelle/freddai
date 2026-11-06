@@ -37,3 +37,30 @@ describe("message links", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Couldn’t open the browser");
   });
 });
+
+it("offers generated images and PDFs as previews instead of losing local links", () => {
+  render(<MessageMarkdown text={'[Preview design](/tmp/design.png) [A4 PDF](file:///tmp/design.pdf) ![Design](sandbox:/mnt/data/design.png)'} />);
+  expect(screen.getByRole("button", { name: "Preview design" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "A4 PDF" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Design" })).toBeTruthy();
+});
+
+it('offers independent side-panel and default-browser buttons beside each desktop web link', async () => {
+  const { BrowserContext } = await import('./browser-context');
+  const side = vi.fn();
+  render(<BrowserContext.Provider value={side}><MessageMarkdown text="[Preview](http://localhost:3000/home)" /></BrowserContext.Provider>);
+  fireEvent.click(screen.getByRole('button', { name: 'Open in side panel: http://localhost:3000/home' }));
+  expect(side).toHaveBeenCalledWith('http://localhost:3000/home');
+  expect(openUrl).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Open in default browser: http://localhost:3000/home' }));
+  expect(openUrl).toHaveBeenCalledWith('http://localhost:3000/home');
+  expect(side).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('link', { name: 'Preview' }));
+  expect(side).toHaveBeenCalledTimes(2);
+});
+it('reports failure from the explicit default-browser button', async () => {
+  vi.mocked(openUrl).mockRejectedValueOnce(new Error('denied'));
+  render(<MessageMarkdown text="https://example.com" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Open in default browser: https://example.com' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Couldn’t open the browser');
+});

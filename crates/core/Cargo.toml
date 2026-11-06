@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 toml_edit = "0.25"
 uuid = { version = "1", features = ["v4"] }

@@ -1,0 +1,55 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { invoke } from '@tauri-apps/api/core';
+import { BrowserWorkspace, readBrowserProfiles } from './BrowserWorkspace';
+import { MessageMarkdown } from '../conversation/MessageMarkdown';
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke: vi.fn().mockResolvedValue(null) }));
+vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }));
+class Resize { observe() {} disconnect() {} }
+vi.stubGlobal('ResizeObserver', Resize);
+afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
+it('opens conversation links in the pane and persists distinct named sessions without changing the link', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 600, y: 150, width: 450, height: 500 } as DOMRect);
+  render(<BrowserWorkspace><MessageMarkdown text="http://localhost:3000" /></BrowserWorkspace>);
+  fireEvent.click(screen.getByRole('link'));
+  expect(screen.getByRole('complementary', { name: 'Browser' })).toBeTruthy();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'navigate', profile: 'default', url: 'http://localhost:3000' })));
+  fireEvent.click(screen.getByRole('button', { name: 'New session' }));
+  fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'Admin' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+  const saved = readBrowserProfiles();
+  expect(saved.map(p => p.name)).toEqual(['Personal', 'Admin']);
+  expect(saved[1].id).not.toBe('default');
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'hide', profile: 'default' })));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'show', profile: saved[1].id })));
+  fireEvent.click(screen.getByRole('button', { name: 'Close browser' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'hide', profile: saved[1].id })));
+  vi.restoreAllMocks();
+});
+it('recovers safely from invalid stored session preferences', () => {
+  localStorage.setItem('freddai.browser.sessions.v1', '[{"id":42}]');
+  expect(readBrowserProfiles()).toEqual([{ id: 'default', name: 'Personal' }]);
+});
+it('keeps pages, visibility, and native sessions isolated when switching threads', async () => {
+  const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 600, y: 150, width: 450, height: 500 } as DOMRect);
+  const pane = (id: string) => <BrowserWorkspace key={id} threadId={id}><MessageMarkdown text="http://localhost:3000" /></BrowserWorkspace>;
+  const view = render(pane('thread-a'));
+  fireEvent.click(screen.getByRole('link'));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'navigate', profile: 'thread:thread-a:default' })));
+  view.rerender(pane('thread-b'));
+  expect(screen.queryByRole('complementary', { name: 'Browser' })).toBeNull();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'hide', profile: 'thread:thread-a:default' })));
+  fireEvent.click(screen.getByRole('link'));
+  fireEvent.change(screen.getByLabelText('Browser address'), { target: { value: 'https://example.com/' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Go$/ }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'navigate', profile: 'thread:thread-b:default', url: 'https://example.com/' })));
+  view.rerender(pane('thread-a'));
+  expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe('http://localhost:3000');
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('browser_view', expect.objectContaining({ action: 'show', profile: 'thread:thread-a:default' })));
+  fireEvent.click(screen.getByRole('button', { name: 'Close browser' }));
+  view.rerender(pane('thread-b'));
+  expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe('https://example.com/');
+  view.rerender(pane('thread-a'));
+  expect(screen.queryByRole('complementary', { name: 'Browser' })).toBeNull();
+  bounds.mockRestore();
+});

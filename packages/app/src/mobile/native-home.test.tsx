@@ -422,3 +422,24 @@ it('keeps global Schedules out of an ordinary native conversation', async () => 
   await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
   expect(screen.queryByRole('button', { name: 'Schedules' })).toBeNull();
 });
+
+
+it.each(['thread', 'home', 'away-and-back'])('keeps newer %s navigation when an earlier dictated new-thread send is acknowledged late', async destination => {
+  let acknowledge!: (id: string) => void;
+  const client = clientWith({ start: vi.fn(() => new Promise<string>(resolve => { acknowledge = resolve; })) });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await send('Transcribed new task');
+  expect(client.start).toHaveBeenCalledTimes(1);
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  expect(modeCalls().at(-1)?.[1].title).toBe('Old thread');
+  if (destination !== 'thread') await act(async () => { shell.handlers.navBack(); });
+  const expected = modeCalls().at(-1);
+  await act(async () => acknowledge('new-thread'));
+  expect(modeCalls().at(-1)).toEqual(expected);
+  // The completed send is still tracked; only its stale navigation is suppressed.
+  if (destination === 'away-and-back') {
+    await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 'new-thread' }); });
+    expect(await screen.findByText('Transcribed new task')).toBeTruthy();
+  }
+});
