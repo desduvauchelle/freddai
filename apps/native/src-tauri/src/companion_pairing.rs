@@ -32,14 +32,18 @@ pub fn edit<T>(root:&Path,f:impl FnOnce(&mut Registry)->Result<T,String>)->Resul
 /// Provision on explicit Pair phone action, keeping existing Mac identities intact.
 pub fn provision(root:&Path)->Result<(),String> {
     use std::process::Command;
-    let dir=root.join("companion");fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
-    fs::set_permissions(&dir,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
-    let lock=fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(dir.join("provision.lock")).map_err(|e|e.to_string())?;
-    lock.lock_exclusive().map_err(|e|e.to_string())?;
     let host=Command::new("/usr/sbin/scutil").args(["--get","LocalHostName"]).output().map_err(|_|"Cannot read Mac network name")?;
     if !host.status.success(){return Err("Set your Mac’s local hostname in System Settings → Sharing".into());}
     let host=String::from_utf8_lossy(&host.stdout).trim().to_owned();
     if host.is_empty() || !host.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-') {return Err("Invalid Mac network name".into());}
+    provision_for_host(root,&host)
+}
+fn provision_for_host(root:&Path,host:&str)->Result<(),String> {
+    use std::process::Command;
+    let dir=root.join("companion");fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    fs::set_permissions(&dir,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+    let lock=fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).mode(0o600).open(dir.join("provision.lock")).map_err(|e|e.to_string())?;
+    lock.lock_exclusive().map_err(|e|e.to_string())?;
     let host=format!("{host}.local");
     if !dir.join("server.crt").exists() {
         if dir.join("ca.key").exists() || dir.join("server.key").exists() {return Err("Incomplete Mac identity. Restore your companion identity before pairing.".into());}
@@ -47,14 +51,14 @@ pub fn provision(root:&Path)->Result<(),String> {
         fs::set_permissions(&stage,fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
         let result=(||->Result<(),String>{
             fs::write(stage.join("ca.cnf"),"[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Freddai Companion Private CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n").map_err(|e|e.to_string())?;
-            fs::write(stage.join("openssl.cnf"),format!("[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN={host}\n[ext]\nsubjectAltName=DNS:{host}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")).map_err(|e|e.to_string())?;
+            fs::write(stage.join("openssl.cnf"),format!("[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=Freddai Companion\n[ext]\nsubjectAltName=DNS:{host}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")).map_err(|e|e.to_string())?;
             for args in [
                 vec!["req","-x509","-newkey","rsa:2048","-nodes","-days","3650","-config","ca.cnf","-keyout","ca.key","-out","ca.crt"],
                 vec!["req","-new","-newkey","rsa:2048","-nodes","-config","openssl.cnf","-keyout","server.key","-out","server.csr"],
                 vec!["x509","-req","-in","server.csr","-CA","ca.crt","-CAkey","ca.key","-CAcreateserial","-days","365","-extfile","openssl.cnf","-extensions","ext","-out","server.crt"],
             ] {
                 let out=Command::new("/usr/bin/openssl").args(args).current_dir(&stage).output().map_err(|_|"Cannot generate Mac connection certificate")?;
-                if !out.status.success(){return Err("Cannot generate Mac connection certificate".into());}
+                if !out.status.success(){return Err(format!("Cannot generate Mac connection certificate: {}",String::from_utf8_lossy(&out.stderr).trim()));}
             }
             let ca=fs::read(stage.join("ca.crt")).map_err(|e|e.to_string())?;
             fs::OpenOptions::new().append(true).open(stage.join("server.crt")).and_then(|mut f|f.write_all(&ca)).map_err(|e|e.to_string())?;
@@ -154,6 +158,16 @@ pub fn device(root:&Path,authorization:&str)->Result<Option<Device>,String> {edi
         assert!(parsed.endpoint.starts_with("https://"));parsed.client().unwrap();
         let mut invalid:Value=serde_json::from_str(setup).unwrap();invalid["device"]=json!({"key":"unexpected"});
         assert!(crate::companion_enrollment::Provision::parse(&invalid.to_string()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn long_mac_hostname_keeps_its_full_tls_subject_alternative_name() {
+        let root=root();let host="a".repeat(63);
+        provision_for_host(&root,&host).unwrap();
+        let provision=fs::read_to_string(root.join("companion/iphone-provision.json")).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&provision).unwrap()["endpoint"],format!("https://{host}.local:49744"));
+        let certificate=std::process::Command::new("/usr/bin/openssl").args(["x509","-in"]).arg(root.join("companion/server.crt")).args(["-noout","-text"]).output().unwrap();
+        assert!(certificate.status.success());
+        assert!(String::from_utf8_lossy(&certificate.stdout).contains(&format!("DNS:{host}.local")));
         fs::remove_dir_all(root).unwrap();
     }
     #[test] fn wrong_codes_expiry_and_cancellation_fail_closed() {

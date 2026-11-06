@@ -2435,3 +2435,5 @@ Recurring-task delivery verification: source/spec updated with existing work pre
 ## Desktop 0.1.1 distribution
 
 Version 0.1.1 packages the accumulated workspace changes through the existing signed and notarized universal macOS/Linux release workflow. The existing updater signing key is configured in Actions; published installer links remain driven by stable GitHub release metadata. Local delivery uses `pnpm native:install`. Release, download, native launch and live-provider verification are tracked separately in `docs/releases.md`.
+
+Release certificate compatibility: first-time Mac companion setup uses a short certificate common name and retains the complete Mac `.local` hostname in the TLS subject alternative name. This permits long valid local hostnames without exceeding X.509 common-name limits; existing identities remain unchanged. The regression exercises actual certificate generation and checks the full hostname in the resulting certificate.
