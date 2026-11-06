@@ -78,3 +78,82 @@ pub(crate) fn selection_updates_feature(
     }
     None
 }
+
+/// Opt Freddai's text-input client out of the native floating affordance as well.
+/// macOS 27 can query this independently of the configuration/selection opt-outs.
+/// Use an ivar-free subclass of the actual Wry class: existing input, navigation,
+/// delegates and destruction stay inherited, and unrelated webviews are untouched.
+#[cfg(target_os = "macos")]
+pub fn disable_affordance(view: &objc2::runtime::AnyObject) {
+    use objc2::{
+        msg_send,
+        runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
+        sel,
+    };
+    assert!(objc2::MainThreadMarker::new().is_some());
+    unsafe {
+        let supported: bool =
+            msg_send![view, respondsToSelector: sel!(allowsWritingToolsAffordance)];
+        if !supported {
+            return;
+        }
+        let base = view.class();
+        // AppKit can put a KVO subclass above ours. Do not replace that class
+        // or install a second affordance layer around it.
+        let mut ancestor = Some(base);
+        while let Some(class) = ancestor {
+            if class.name().to_bytes().starts_with(b"FreddaiNoWritingAffordance_") {
+                return;
+            }
+            ancestor = class.superclass();
+        }
+        let name = base.name().to_string_lossy();
+        let name = std::ffi::CString::new(format!("FreddaiNoWritingAffordance_{name}")).unwrap();
+        let subclass = AnyClass::get(&name).unwrap_or_else(|| {
+            let mut builder = ClassBuilder::new(&name, base).expect("unique affordance subclass");
+            unsafe extern "C-unwind" fn disallow(_: &AnyObject, _: Sel) -> Bool {
+                Bool::NO
+            }
+            // Preserve the class identity AppKit uses for cached dynamic view
+            // properties, as KVO subclasses do. The runtime subclass still owns
+            // the affordance override without invalidating NSView metadata.
+            unsafe extern "C-unwind" fn original_class(view: &AnyObject, _: Sel) -> &'static AnyClass {
+                // Resolve the class that owns this override, not the immediate
+                // runtime class: KVO may have subclassed the instance since install.
+                let mut class = view.class();
+                loop {
+                    if class.name().to_bytes().starts_with(b"FreddaiNoWritingAffordance_") {
+                        return class.superclass().expect("affordance subclass superclass");
+                    }
+                    class = class.superclass().expect("affordance override ancestor");
+                }
+            }
+            builder.add_method(
+                sel!(class),
+                original_class as unsafe extern "C-unwind" fn(_, _) -> &'static AnyClass,
+            );
+            builder.add_method(
+                sel!(allowsWritingToolsAffordance),
+                disallow as unsafe extern "C-unwind" fn(_, _) -> Bool,
+            );
+            builder.register()
+        });
+        // Same instance layout; main-thread-only WebKit objects cannot race here.
+        assert_eq!(subclass.superclass(), Some(base));
+        AnyObject::set_class(view, subclass);
+        let allows: bool = msg_send![view, allowsWritingToolsAffordance];
+        eprintln!(
+            "freddai: native Writing Tools affordance disabled: {}",
+            !allows
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn install(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    window.with_webview(|webview| unsafe {
+        if let Some(view) = (webview.inner() as *mut objc2::runtime::AnyObject).as_ref() {
+            disable_affordance(view);
+        }
+    })
+}

@@ -60,5 +60,7 @@ fn open_on_main_thread(
     #[cfg(target_os = "macos")]
     let builder = builder.with_webview_configuration(crate::writing_tools::configuration());
     let window = builder.build().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    crate::writing_tools::install(&window).map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())
 }

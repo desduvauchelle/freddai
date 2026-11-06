@@ -1466,6 +1466,7 @@ dependencies = [
  "libc",
  "notify-rust",
  "objc2",
+ "objc2-foundation",
  "objc2-web-kit",
  "portable-pty",
  "rand 0.8.8",

@@ -23,6 +23,17 @@ fn main() {
                     let window = windows.values().next().unwrap();
                     if !window.is_visible().map_err(|e| e.to_string())? { return Err("Window is hidden".into()); }
                     if window.title().map_err(|e| e.to_string())? != "Window regression — Freddai" { return Err("Wrong thread title".into()); }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let (send, receive) = tokio::sync::oneshot::channel();
+                        window.with_webview(move |webview| unsafe {
+                            let view = &*(webview.inner() as *mut objc2::runtime::AnyObject);
+                            let supported: bool = objc2::msg_send![view, respondsToSelector: objc2::sel!(allowsWritingToolsAffordance)];
+                            let allows = supported && objc2::msg_send![view, allowsWritingToolsAffordance];
+                            let _ = send.send(allows);
+                        }).map_err(|e| e.to_string())?;
+                        if receive.await.map_err(|e| e.to_string())? { return Err("Native Wry window still allows Siri affordance".into()); }
+                    }
                     let url = window.url().map_err(|e| e.to_string())?;
                     if !url.query_pairs().any(|(key, value)| key == "thread" && value == "native-window-regression") { return Err(format!("Wrong route: {url}")); }
                     thread_windows::open(probe.clone(), base, "native-window-regression".into(), "Window regression").await?;
