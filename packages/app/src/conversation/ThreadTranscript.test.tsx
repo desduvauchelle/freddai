@@ -96,6 +96,16 @@ describe("ThreadTranscript background sub-agents", () => {
     rerender(<ThreadTranscript messages={[]} />);
     expect(container.querySelector(".background-tasks")).toBeNull();
   });
+
+  it("shows a running background command as a waiting line and not as a sub-agent", () => {
+    const { container, rerender } = render(<ThreadTranscript messages={[]} tasks={[{ id: "ba3", description: "Wait for the audit run", kind: "bash", status: "running" }]} />);
+    expect(container.querySelector(".background-tasks li")?.textContent).toContain("Waiting on background command: Wait for the audit run");
+    expect(screen.getByText("Background commands")).toBeTruthy();
+    expect(container.textContent).not.toContain("sub-agent");
+    rerender(<ThreadTranscript messages={[]} tasks={[{ id: "ba3", description: "Wait for the audit run", kind: "bash", status: "completed" }]} />);
+    expect(container.querySelector(".background-tasks li")?.textContent).not.toContain("Waiting on");
+    expect(container.querySelector(".background-tasks li")?.textContent).toContain("Completed");
+  });
 });
 
 const todoCall = (todos: unknown[]) => JSON.stringify({ type: "tool_use", name: "TodoWrite", input: { todos } });

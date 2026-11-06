@@ -11,7 +11,8 @@ fn label(caller: &Webview, profile: &str) -> Result<String, String> {
 }
 fn web_url(value: &str) -> Result<tauri::Url, String> {
     let url = tauri::Url::parse(value).map_err(|e| e.to_string())?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    let local = cfg!(not(any(target_os = "ios", target_os = "android"))) && url.scheme() == "freddai-preview" && url.host_str() == Some("localhost");
+    if !(matches!(url.scheme(), "http" | "https") && url.host_str().is_some()) && !local {
         return Err("Enter an http or https URL".into());
     }
     Ok(url)
@@ -50,7 +51,7 @@ pub async fn browser_view(caller: Webview, profile: String, url: Option<String>,
                     let mut store = [0; 16]; store.copy_from_slice(&hash[..16]);
                     let builder = tauri::webview::WebviewBuilder::new(&name, tauri::WebviewUrl::External(target))
                         .data_store_identifier(store)
-                        .on_navigation(|u| matches!(u.scheme(), "http" | "https"))
+                        .on_navigation(|u| matches!(u.scheme(), "http" | "https") || (u.scheme() == "freddai-preview" && u.host_str() == Some("localhost")))
                         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
                     window.add_child(builder, tauri::LogicalPosition::new(b[0], b[1]), tauri::LogicalSize::new(b[2], b[3])).map_err(|e| e.to_string())?
                 }
@@ -79,7 +80,7 @@ mod tests {
     use super::*;
     #[test]
     fn accepts_only_web_navigation() {
-        for value in ["http://localhost:3000/login", "https://example.com"] { assert!(web_url(value).is_ok()); }
-        for value in ["file:///etc/passwd", "javascript:alert(1)", "tauri://localhost", "data:text/html,x", "relative"] { assert!(web_url(value).is_err()); }
+        for value in ["http://localhost:3000/login", "https://example.com", "freddai-preview://localhost/abc/a.html"] { assert!(web_url(value).is_ok()); }
+        for value in ["file:///etc/passwd", "freddai-preview://evil/abc/a.html", "javascript:alert(1)", "tauri://localhost", "data:text/html,x", "relative"] { assert!(web_url(value).is_err()); }
     }
 }

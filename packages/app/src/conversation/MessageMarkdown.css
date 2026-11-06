@@ -4,3 +4,24 @@
 .message-link-actions button:hover{opacity:1;background:var(--adaptive-surface,var(--muted,#303138));border-color:var(--adaptive-border,var(--border,#454650))}
 .message-link-actions button:focus-visible{opacity:1;outline:2px solid currentColor;outline-offset:2px}
 @media(pointer:coarse){.message-link-actions button{width:36px;height:36px}}
+
+/* Local file links, inline image thumbnails and previews. Position is stated explicitly so dialogs stay centered. */
+.generated-file-link{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.generated-thumb{display:block;margin:6px 0}
+.generated-thumb-button{display:inline-block;padding:0;border:1px solid var(--border,#454650);border-radius:8px;overflow:hidden;background:var(--muted,#303138);cursor:zoom-in;line-height:0}
+.generated-thumb-button img{display:block;max-width:min(100%,520px);max-height:320px;object-fit:contain}
+.generated-thumb-loading,.generated-thumb-error{font-size:12px;opacity:.75}
+[data-slot="dialog-content"].generated-file-dialog{position:fixed;top:50%;left:50%;translate:-50% -50%;width:min(1200px,calc(100vw - 48px));max-width:calc(100vw - 48px);max-height:calc(100dvh - 48px);overflow:auto;display:flex;flex-direction:column;gap:12px}
+.generated-file-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
+.generated-file-actions code{flex:1 1 100%;overflow-wrap:anywhere}
+.generated-file-actions button{font:inherit;color:inherit;background:var(--secondary,#292a30);border:1px solid var(--border,#454650);border-radius:5px;padding:4px 8px;cursor:pointer}
+.generated-file-frame{width:100%;height:70dvh;border:0;flex:1 1 auto}
+.generated-file-html{height:75dvh;background:#fff}
+.generated-file-text{max-height:70dvh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.generated-file-markdown{max-height:70dvh;overflow:auto}
+.generated-file-image{max-width:100%;max-height:70dvh;object-fit:contain;margin:auto}
+[data-slot="dialog-content"].generated-lightbox{position:fixed;inset:0;top:0;left:0;translate:none;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border:0;border-radius:0;padding:16px;background:rgba(0,0,0,.94);color:#eee;display:flex;flex-direction:column;gap:10px}
+.generated-lightbox-stage{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+.generated-lightbox-stage img{max-width:100%;max-height:100%;object-fit:contain}
+.generated-lightbox .generated-file-actions{justify-content:center}
+.generated-lightbox .generated-file-actions code{text-align:center}

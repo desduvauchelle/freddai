@@ -1,5 +1,7 @@
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod browser;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod local_preview;
 #[cfg(target_os = "macos")]
 mod routine_notifications;
 #[cfg(any(target_os = "ios", target_os = "android", test))]

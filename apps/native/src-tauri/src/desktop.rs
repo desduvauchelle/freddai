@@ -677,11 +677,22 @@ async fn stage_attachments(h: State<'_, Host>, paths: Vec<String>) -> Result<Val
 }
 #[tauri::command]
 async fn generated_file(h: State<'_, Host>, thread: String, href: String, offset: u64) -> Result<Value, String> {
-    match rpc(h.inner().clone(), "generated_file", json!({"thread":thread,"href":href,"offset":offset})).await {
+    generated_chunk(h.inner().clone(), thread, href, offset).await
+}
+/// Opens a thread-referenced local HTML file in the browser panel: validated by the host reader, then served by `local_preview`.
+#[tauri::command]
+async fn preview_file_url(h: State<'_, Host>, thread: String, href: String) -> Result<Value, String> {
+    let part = generated_chunk(h.inner().clone(), thread, href, 0).await?;
+    let path = part["path"].as_str().ok_or("Restart Freddai so the background host can resolve file paths")?.to_string();
+    let url = crate::local_preview::register(std::path::Path::new(&path))?;
+    Ok(json!({"url":url,"path":path}))
+}
+async fn generated_chunk(h: Host, thread: String, href: String, offset: u64) -> Result<Value, String> {
+    match rpc(h.clone(), "generated_file", json!({"thread":thread,"href":href,"offset":offset})).await {
         Err(e) if e.contains("Unknown host command") => {}, // preserved older host: retain existing preview compatibility
         other => return other,
     }
-    let db: freddai_core::runtime::Database = serde_json::from_value(rpc(h.inner().clone(), "snapshot", json!({})).await?).map_err(|e|e.to_string())?;
+    let db: freddai_core::runtime::Database = serde_json::from_value(rpc(h.clone(), "snapshot", json!({})).await?).map_err(|e|e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || freddai_core::generated_files::chunk(&db, &thread, &href, offset)).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
@@ -939,6 +950,7 @@ fn awake_set_settings(h: State<'_,Host>, while_working:bool, while_paired:bool) 
 
 pub fn run() {
     tauri::Builder::default().plugin(tauri_plugin_opener::init())
+        .register_uri_scheme_protocol(crate::local_preview::SCHEME, |_, request| crate::local_preview::respond(request.uri().path()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -959,6 +971,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let builder = builder.with_webview_configuration(crate::writing_tools::configuration());
             let window = builder.build()?;
+            #[cfg(target_os = "macos")]
+            crate::writing_tools::install(&window)?;
             crate::window_state::install(window, host.root.clone());
             app.manage(host);
             app.manage(crate::terminal::Terminals::default());
@@ -1031,6 +1045,7 @@ pub fn run() {
             stage_attachments,
             preview_attachment,
             generated_file,
+            preview_file_url,
             capture_screenshot,
             rename_session,
             mark_read,

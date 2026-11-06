@@ -2,14 +2,28 @@
 #[path = "../src/browser.rs"]
 mod browser;
 #[cfg(target_os = "macos")]
+#[path = "../src/writing_tools.rs"]
+mod writing_tools;
+#[cfg(target_os = "macos")]
 fn main() {
     use tauri::Manager;
     let app = tauri::Builder::default().setup(|app| {
-        let main = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External("about:blank".parse().unwrap())).visible(false).build()?;
+        let main = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External("about:blank".parse().unwrap())).with_webview_configuration(writing_tools::configuration()).visible(true).focused(true).build()?;
+        writing_tools::install(&main)?;
+        main.with_webview(|_| unsafe {
+            use objc2::{class, msg_send, runtime::AnyObject};
+            let panel: *mut AnyObject = msg_send![class!(NSColorPanel), sharedColorPanel];
+            let _: () = msg_send![panel, orderFront: std::ptr::null::<AnyObject>()];
+        })?;
         let caller = app.get_webview("main").unwrap();
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
             let result = async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                for width in [900., 1100., 800.] {
+                    main.set_size(tauri::LogicalSize::new(width, 700.)).map_err(|e| e.to_string())?;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
                 let unique = format!("regression-{}", std::process::id());
                 let a = format!("{unique}-a"); let b = format!("{unique}-b");
                 for profile in [&a, &b] {

@@ -53,3 +53,32 @@ it('keeps pages, visibility, and native sessions isolated when switching threads
   expect(screen.queryByRole('complementary', { name: 'Browser' })).toBeNull();
   bounds.mockRestore();
 });
+it('resizes from the divider, clamps widths, and remembers the preference', () => {
+  // jsdom does not provide pointer events or pointer capture.
+  vi.stubGlobal('PointerEvent', MouseEvent);
+  HTMLElement.prototype.setPointerCapture = vi.fn();
+  HTMLElement.prototype.releasePointerCapture = vi.fn();
+  const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 1000 } as DOMRect);
+  const view = render(<BrowserWorkspace threadId="resize-test"><MessageMarkdown text="http://localhost:3000" /></BrowserWorkspace>);
+  fireEvent.click(screen.getByRole('link'));
+  const divider = screen.getByRole('separator', { name: 'Resize browser pane' });
+  const panel = screen.getByRole('complementary', { name: 'Browser' });
+  fireEvent.pointerDown(divider, { button: 0, clientX: 540 });
+  fireEvent.pointerMove(divider, { clientX: 340 });
+  expect(panel.style.width).toBe('66%');
+  fireEvent.pointerMove(divider, { clientX: -500 });
+  expect(panel.style.width).toBe('75%');
+  fireEvent.pointerUp(divider);
+  fireEvent.keyDown(divider, { key: 'Home' });
+  expect(panel.style.width).toBe('25%');
+  fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+  expect(panel.style.width).toBe('27%');
+  view.unmount();
+  render(<BrowserWorkspace threadId="resize-test" >Conversation</BrowserWorkspace>);
+  expect(screen.getByRole('complementary', { name: 'Browser' }).style.width).toBe('27%');
+  fireEvent.doubleClick(screen.getByRole('separator'));
+  expect(localStorage.getItem('freddai.browser.width.v1')).toBe('46');
+  bounds.mockRestore();
+  vi.unstubAllGlobals();
+  vi.stubGlobal('ResizeObserver', Resize);
+});

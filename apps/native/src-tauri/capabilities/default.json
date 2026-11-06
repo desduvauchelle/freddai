@@ -8,6 +8,8 @@
   "permissions": [
     "core:default",
     { "identifier": "opener:allow-open-url", "allow": [{ "url": "http://*" }, { "url": "https://*" }] },
+    "opener:allow-reveal-item-in-dir",
+    { "identifier": "opener:allow-open-path", "allow": [{ "path": "$HOME/**" }, { "path": "/tmp/**" }, { "path": "/private/tmp/**" }, { "path": "/private/var/folders/**" }] },
     "dialog:allow-open",
     "core:window:allow-start-dragging",
     "core:window:allow-close"
