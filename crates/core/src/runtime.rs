@@ -54,8 +54,18 @@ pub enum NewThreadPolicy {
     Project,
     Default,
 }
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    #[serde(default)]
+    pub projects: Vec<String>,
+}
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Preferences {
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub new_thread_policy: Option<NewThreadPolicy>,
     #[serde(default)]
@@ -2110,6 +2120,11 @@ impl Runtime {
                     s.pending = None;
                 });
             }
+            let (status, error) = {
+                let i = rt.0.lock().unwrap();
+                i.db.sessions.iter().find(|x| x.id == session.id).map(|x| (x.status.clone(), x.error.clone())).unwrap_or_default()
+            };
+            preferences_log(&root, &format!("ev=turn.finish thread={} status={} error={:?}", session.id, status, error));
             rt.finish_turn(&session.id);
         });
         Ok(sid)
@@ -2721,6 +2736,7 @@ impl Runtime {
             let mut turn_key = id();
             let mut handoff: Option<SteeringHandoff> = None;
             let mut claude_turn_active = true;
+            let mut gate = crate::turn_gate::ResultGate::default();
             let mut acp_prompt_id = 104_u64;
             let mut pending_queue = std::collections::VecDeque::<Value>::new();
             let mut claude_stream = crate::claude_stream::TextStream::default();
@@ -2761,6 +2777,7 @@ impl Runtime {
                     let _ = h.ack.send(result.clone());
                     result?;
                     claude_turn_active = true;
+                    gate.prompt_sent();
                 }
                 match control.try_recv() {
                     Ok(Control::Cancel) => {
@@ -3365,6 +3382,7 @@ impl Runtime {
                             {
                                 claude_turn_active = true;
                             }
+                            gate.observe(&v);
                             if tracker.observe(&v, std::time::Instant::now()) {
                                 crate::timing::log("host", format_args!("ev=background_tasks.changed session={} pending={} tasks={}", s.id, tracker.pending(), tracker.tasks().len()));
                                 self.update(&s.id, |s| s.tasks = tracker.tasks().to_vec());
@@ -3417,6 +3435,7 @@ impl Runtime {
                                     v
                                 })?;
                                 ready = true;
+                                gate.prompt_sent();
                             }
                             if v["type"] == "control_response"
                                 && v["response"]["request_id"] == "freddai-title"
@@ -3529,6 +3548,20 @@ impl Runtime {
                                     continue;
                                 }
                                 let failed = v["is_error"].as_bool().unwrap_or(true);
+                                let verdict = gate.on_result(&v, failed, tracker.pending(), std::time::Instant::now());
+                                preferences_log(&root, &format!("ev=turn.result thread={} provider_session={} subtype={} is_error={} num_turns={} output_seen={} no_response_placeholder={} pending={} ignored={} verdict={:?}", s.id, v["session_id"].as_str().unwrap_or(""), v["subtype"].as_str().unwrap_or(""), v["is_error"], v["num_turns"], gate.has_output(), gate.placeholder_seen(), tracker.pending(), gate.ignored(), verdict));
+                                match verdict {
+                                    crate::turn_gate::Verdict::Ignore(_) => continue,
+                                    crate::turn_gate::Verdict::FinishEmpty => {
+                                        self.update(&s.id, |s| {
+                                            s.status = "failed".into();
+                                            s.pending = None;
+                                            s.error = Some(crate::turn_gate::EMPTY_TURN_ERROR.into());
+                                        });
+                                        return Ok(());
+                                    }
+                                    crate::turn_gate::Verdict::Finish => {}
+                                }
                                 if !failed
                                     && tracker.on_result() == crate::background_tasks::Settle::Hold
                                 {
@@ -3566,6 +3599,15 @@ impl Runtime {
                             self.update(&s.id, |s| {
                                 s.status = "done".into();
                                 s.pending = None;
+                            });
+                            return Ok(());
+                        }
+                        if gate.overdue(Duration::from_secs(45), std::time::Instant::now()) {
+                            preferences_log(&root, &format!("ev=turn.empty_timeout thread={} ignored={}", s.id, gate.ignored()));
+                            self.update(&s.id, |s| {
+                                s.status = "failed".into();
+                                s.pending = None;
+                                s.error = Some(crate::turn_gate::EMPTY_TURN_ERROR.into());
                             });
                             return Ok(());
                         }
@@ -4679,6 +4721,7 @@ mod tests {
                 })
                 .collect(),
             preferences: Preferences {
+                workspaces: Vec::new(),
                 new_thread_policy: None,
                 last_selected: None,
                 prefer_last: true,
@@ -4688,6 +4731,22 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+    #[test]
+    fn workspaces_persist_without_changing_other_preferences() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        rt.preferences_patch(json!({"use_worktree": true})).unwrap();
+        let workspaces = json!([{"id":"personal", "name":"Personal", "color":"#b59ae9", "projects":["p"]}]);
+        rt.preferences_patch(json!({"workspaces": workspaces})).unwrap();
+        drop(rt);
+        let rt = Runtime::open(root.clone()).unwrap();
+        assert!(rt.snapshot().preferences.use_worktree);
+        assert_eq!(serde_json::to_value(rt.snapshot().preferences.workspaces).unwrap(), workspaces);
+        rt.preferences_patch(json!({"workspaces":[]})).unwrap();
+        assert!(rt.snapshot().preferences.use_worktree);
+        assert!(rt.snapshot().preferences.workspaces.is_empty());
+        let _ = fs::remove_dir_all(root);
     }
     #[test]
     fn removing_connection_preserves_history_credentials_and_pinned_routes() {
@@ -5738,6 +5797,44 @@ mod tests {
             ["Started the agent.", "The agent finished."],
             "split assistant frames must not duplicate streamed text"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn background_bash_holds_the_thread_running_then_completes_after_the_agent_continues() {
+        let (rt, root, handle) = background_fixture("bg-bash");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while rt.snapshot().sessions[0].tasks.is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            session_state(&rt),
+            ("running".into(), vec!["running".into()], None),
+            "a result with a background command running must not complete the thread"
+        );
+        let task = rt.snapshot().sessions[0].tasks[0].clone();
+        assert_eq!((task.description.as_str(), task.kind.as_deref()), ("Fixture command", Some("bash")));
+        handle.join().unwrap().unwrap();
+        let (status, tasks, error) = session_state(&rt);
+        assert_eq!((status.as_str(), tasks, error), ("done", vec!["completed".to_string()], None));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn stop_ends_a_turn_held_on_a_never_ending_background_command() {
+        let (rt, root, handle) = background_fixture("bg-bash-hang");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while rt.snapshot().sessions[0].tasks.is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(rt.snapshot().sessions[0].status, "running");
+        rt.stop("bg-session").unwrap();
+        handle.join().unwrap().unwrap();
+        let s = rt.snapshot().sessions[0].clone();
+        assert_eq!(s.status, "interrupted");
+        assert_eq!(s.tasks[0].status, "stopped");
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

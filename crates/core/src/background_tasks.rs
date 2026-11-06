@@ -1,4 +1,4 @@
-//! Background sub-agents started by a Claude Code turn.
+//! Background sub-agents and background shell commands (Bash `run_in_background`, Monitor) started by a Claude Code turn.
 //!
 //! Claude Code answers `result` for the main agent while `Agent` calls made with `run_in_background`
 //! keep running, then wakes the main agent with a `<task-notification>` when they finish. The thread is
@@ -91,6 +91,10 @@ pub(crate) struct Tracker {
     tasks: Vec<BackgroundTask>,
     /// tool_use id -> (description, sub-agent type) for every `Agent`/`Task` call seen this turn.
     launches: HashMap<String, (String, Option<String>)>,
+    /// tool_use id -> (description, kind) for every Bash `run_in_background`/auto-backgrounded call and `Monitor` call seen this turn.
+    shell_launches: HashMap<String, (String, &'static str)>,
+    /// Bash tool_use ids launched without `run_in_background` (tracked only if the CLI backgrounds them anyway).
+    foreground: std::collections::HashSet<String>,
     /// tool_use id of a `SendMessage` -> the background agent it addresses.
     resumes: HashMap<String, String>,
     result_seen: bool,
@@ -196,7 +200,18 @@ impl Tracker {
             .filter(|d| !d.is_empty())
             .map(str::to_owned)
             .or_else(|| launch.as_ref().map(|l| l.0.clone()))
-            .unwrap_or_else(|| "Sub-agent".into());
+            .or_else(|| {
+                tool_use_id
+                    .and_then(|t| self.shell_launches.get(t))
+                    .map(|l| l.0.clone())
+            })
+            .unwrap_or_else(|| {
+                if kind.is_some_and(|k| k == "bash" || k == "monitor") {
+                    "Background command".into()
+                } else {
+                    "Sub-agent".into()
+                }
+            });
         let kind = kind.map(str::to_owned).or_else(|| launch.and_then(|l| l.1));
         self.tasks.push(BackgroundTask {
             id: id.into(),
@@ -256,6 +271,28 @@ impl Tracker {
                             }
                         }
                     }
+                    if b["type"] == "tool_use" && matches!(b["name"].as_str(), Some("Bash" | "Monitor"))
+                    {
+                        let monitor = b["name"] == "Monitor";
+                        // A plain foreground Bash call is only recorded so an auto-backgrounded one can be recognised from its result.
+                        if let Some(id) = b["id"].as_str() {
+                            let description = b["input"]["description"]
+                                .as_str()
+                                .filter(|d| !d.trim().is_empty())
+                                .or_else(|| b["input"]["command"].as_str())
+                                .unwrap_or("Background command");
+                            self.shell_launches.insert(
+                                id.into(),
+                                (
+                                    description.chars().take(120).collect(),
+                                    if monitor { "monitor" } else { "bash" },
+                                ),
+                            );
+                            if !monitor && b["input"]["run_in_background"] != true {
+                                self.foreground.insert(id.into());
+                            }
+                        }
+                    }
                     if b["type"] == "tool_use"
                         && matches!(b["name"].as_str(), Some("Agent" | "Task"))
                     {
@@ -281,9 +318,20 @@ impl Tracker {
                     let kind = frame["task_type"].as_str();
                     let agent_like = tool.is_some_and(|t| self.launches.contains_key(t))
                         || kind.is_some_and(|k| k.contains("agent"));
+                    // Background Bash / Monitor: nothing else wakes the agent when they end, so the turn must wait for them.
+                    let shell = tool
+                        .and_then(|t| self.shell_launches.get(t))
+                        .filter(|_| tool.is_some_and(|t| !self.foreground.contains(t)))
+                        .map(|l| l.1)
+                        .or_else(|| {
+                            kind.filter(|k| k.contains("monitor")).map(|_| "monitor")
+                        });
                     match frame["task_id"].as_str() {
                         Some(id) if agent_like => {
                             self.start(id, tool, frame["description"].as_str(), None)
+                        }
+                        Some(id) if shell.is_some() => {
+                            self.start(id, tool, frame["description"].as_str(), shell)
                         }
                         _ => false,
                     }
@@ -316,6 +364,22 @@ impl Tracker {
                             .any(|t| t.contains("Resuming agent") || t.contains("resumedAgentId"))
                         {
                             changed |= self.revive(&agent);
+                        }
+                        continue;
+                    }
+                    if let Some((description, kind)) = self.shell_launches.get(tool).cloned() {
+                        // "Command running in background with ID: <id>. Output is being written to: …" (explicit or auto-backgrounded).
+                        for text in texts(&b["content"]) {
+                            if let Some(rest) = text.split("running in background with ID:").nth(1) {
+                                if let Some(id) = rest
+                                    .split_whitespace()
+                                    .next()
+                                    .map(|i| i.trim_end_matches(['.', ',']))
+                                    .filter(|i| !i.is_empty())
+                                {
+                                    changed |= self.start(id, Some(tool), Some(&description), Some(kind));
+                                }
+                            }
                         }
                         continue;
                     }
@@ -424,7 +488,7 @@ mod tests {
             &json!({"type":"system","subtype":"task_started","task_id":"x","tool_use_id":"tu"}),
             now
         ));
-        // A non-agent task (background shell) is not tracked.
+        // A task with no known background launch (e.g. a foreground command) is not tracked.
         assert!(!t.observe(&json!({"type":"system","subtype":"task_started","task_id":"sh","task_type":"local_bash"}), now));
         assert_eq!(t.tasks().len(), 1);
         assert_eq!(t.tasks()[0].description, "Scan repo");
@@ -441,6 +505,59 @@ mod tests {
         u.observe(&json!({"type":"system","subtype":"task_started","task_id":"y","task_type":"local_agent","description":"D"}), now);
         assert!(u.observe(&json!({"type":"system","subtype":"task_updated","task_id":"y","patch":{"status":"killed"}}), now));
         assert_eq!(u.tasks()[0].status, "stopped");
+    }
+
+    fn bash_launch(t: &mut Tracker, tool: &str, background: bool) {
+        t.observe(&json!({"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":tool,"name":"Bash","input":{"command":"until ! pgrep job; do sleep 5; done","description":"Wait for the audit run","run_in_background":background}}]}}), Instant::now());
+    }
+
+    #[test]
+    fn background_bash_holds_the_turn_until_its_notification() {
+        let now = Instant::now();
+        let mut t = Tracker::default();
+        bash_launch(&mut t, "tb", true);
+        assert!(t.observe(&json!({"type":"system","subtype":"task_started","task_id":"ba3","tool_use_id":"tb","task_type":"local_bash","description":"Wait for the audit run"}), now));
+        // The tool_result announcing the same id is idempotent.
+        assert!(!t.observe(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tb","content":"Command running in background with ID: ba3. Output is being written to: /tmp/x.output."}]}}), now));
+        assert_eq!(t.tasks().len(), 1);
+        assert_eq!(t.tasks()[0].kind.as_deref(), Some("bash"));
+        assert_eq!(t.pending_names(), vec!["Wait for the audit run"]);
+        assert_eq!(t.on_result(), Settle::Hold);
+        assert!(t.observe(&json!({"type":"system","subtype":"task_notification","task_id":"ba3","status":"completed","summary":"done"}), now));
+        assert_eq!(t.pending(), 0);
+        // The agent answers the wake-up, then the turn finishes normally.
+        t.observe(&json!({"type":"assistant","message":{"id":"m2","content":[]}}), now);
+        assert_eq!(t.on_result(), Settle::Finish);
+    }
+
+    #[test]
+    fn background_bash_is_tracked_from_its_tool_result_alone_and_released_by_task_updated() {
+        let now = Instant::now();
+        let mut t = Tracker::default();
+        // Auto-backgrounded: the call was not marked run_in_background, only the result says so.
+        bash_launch(&mut t, "tb", false);
+        assert!(!t.observe(&json!({"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"tb","task_type":"local_bash"}), now));
+        assert!(t.observe(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tb","content":[{"type":"text","text":"Command running in background with ID: b1. Output is being written to: /tmp/b1.output."}]}]}}), now));
+        assert_eq!(t.on_result(), Settle::Hold);
+        assert!(t.observe(&json!({"type":"system","subtype":"task_updated","task_id":"b1","patch":{"status":"killed"}}), now));
+        assert_eq!(t.tasks()[0].status, "stopped");
+        assert_eq!(t.pending(), 0);
+        // A foreground command that simply finished never holds the turn.
+        let mut u = Tracker::default();
+        bash_launch(&mut u, "tf", false);
+        u.observe(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tf","content":"ok"}]}}), now);
+        assert_eq!(u.on_result(), Settle::Finish);
+    }
+
+    #[test]
+    fn monitor_task_holds_the_turn_and_ignores_non_terminal_events() {
+        let now = Instant::now();
+        let mut t = Tracker::default();
+        t.observe(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"tm","name":"Monitor","input":{"description":"Watch deploy","command":"tail -f log"}}]}}), now);
+        assert!(t.observe(&json!({"type":"system","subtype":"task_started","task_id":"m1","tool_use_id":"tm","task_type":"monitor"}), now));
+        assert_eq!(t.tasks()[0].description, "Watch deploy");
+        assert!(!t.observe(&json!({"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>m1</task-id>\n<summary>line</summary>\n</task-notification>"}}), now));
+        assert_eq!(t.on_result(), Settle::Hold);
     }
 
     #[test]

@@ -45,17 +45,24 @@ for line in sys.stdin:
    else:out({'type':'control_response','response':{'request_id':'init','subtype':'success'}})
   elif v.get('type')=='user' and scenario.startswith('bg-'):
    out({'type':'system','subtype':'init','session_id':'provider-session'})
-   for n,block in enumerate([{'type':'thinking','thinking':''},{'type':'text','text':'Started the agent.'},{'type':'tool_use','id':'toolu_bg','name':'Agent','input':{'description':'Fixture agent','subagent_type':'general-purpose','run_in_background':True}}]):
+   for n,block in enumerate([{'type':'thinking','thinking':''},{'type':'text','text':'Started the agent.'},{'type':'tool_use','id':'toolu_bg','name':'Bash','input':{'command':'sleep 30','description':'Fixture command','run_in_background':True}} if 'bash' in scenario else {'type':'tool_use','id':'toolu_bg','name':'Agent','input':{'description':'Fixture agent','subagent_type':'general-purpose','run_in_background':True}}]):
     if block['type']=='text':
      out({'type':'stream_event','event':{'type':'message_start','message':{'id':'m1'}}})
      out({'type':'stream_event','event':{'type':'content_block_start','index':n,'content_block':{'type':'text','text':''}}})
      out({'type':'stream_event','event':{'type':'content_block_delta','index':n,'delta':{'type':'text_delta','text':block['text']}}})
     out({'type':'assistant','message':{'id':'m1','content':[block]}})
-   out({'type':'user','message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'toolu_bg','content':[{'type':'text','text':'Async agent launched successfully.\nagentId: fixture-agent (internal)'}]}]}})
+   if 'bash' in scenario:
+    out({'type':'system','subtype':'task_started','task_id':'fixture-bash','tool_use_id':'toolu_bg','task_type':'local_bash','description':'Fixture command'})
+    out({'type':'user','message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'toolu_bg','content':'Command running in background with ID: fixture-bash. Output is being written to: /tmp/fixture-bash.output.'}]}})
+   else:
+    out({'type':'user','message':{'role':'user','content':[{'type':'tool_result','tool_use_id':'toolu_bg','content':[{'type':'text','text':'Async agent launched successfully.\nagentId: fixture-agent (internal)'}]}]}})
    out({'type':'result','is_error':False})
+   if scenario=='bg-bash-hang':
+    time.sleep(30)
+    sys.exit(0)
    time.sleep(1)
    if scenario=='bg-exit': sys.exit(0)
-   out({'type':'system','subtype':'task_notification','task_id':'fixture-agent','status':'completed','summary':'ok'})
+   out({'type':'system','subtype':'task_notification','task_id':'fixture-bash' if 'bash' in scenario else 'fixture-agent','status':'completed','summary':'ok'})
    out({'type':'assistant','message':{'id':'m2','content':[{'type':'text','text':'The agent finished.'}]}})
    out({'type':'result','is_error':False})
   elif v.get('type')=='user':
