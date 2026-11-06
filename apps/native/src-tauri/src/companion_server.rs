@@ -480,7 +480,7 @@ mod tests {
     #[test] fn projection_excludes_configuration_and_archived_work() {
         let db=Database::default();
         let v=project_snapshot(&db);
-        assert_eq!(v,json!({"projects":[],"threads":[]}));
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[]}));
         assert!(v.get("accounts").is_none()); assert!(v.get("preferences").is_none());
         let session=json!({"id":"s1","project":"p1","account":"missing","title":"Synthetic thread","status":"waiting","updated":1,"last_user_message_at":7,"provider_id":null,"messages":[],"pending":{"id":7,"method":"item/tool/requestUserInput"},"error":null});
         let mut archived=session.clone(); archived["id"]=json!("archived"); archived["archived"]=json!(true);

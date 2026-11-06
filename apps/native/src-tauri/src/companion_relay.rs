@@ -78,7 +78,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             writeln!(connection,"{}",json!({"result":freddai_core::runtime::Database::default()})).unwrap();
         });
         let id=crypto::random();let v=process(&root,&Mutex::new(()),&d,&id,&request(&d,&id,"/v1/snapshot",crypto::now()+90)).unwrap();
-        assert_eq!(v,json!({"projects":[],"threads":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
     }
     #[test] fn scoped_refresh_crosses_host_dispatch_and_encrypted_relay_without_all_histories() {
         let (root,d)=fixture();
