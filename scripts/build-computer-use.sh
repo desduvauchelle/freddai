@@ -22,3 +22,10 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSScreenCaptureUsageDescription</key><string>Let your Freddai agent inspect the window you ask it to use.</string>
 </dict></plist>
 PLIST
+
+# Release CI imports the existing Developer ID before this build. Sign nested
+# code before Tauri seals and notarizes the parent application's resources.
+if [ -n "${FREDDAI_COMPUTER_SIGNING_IDENTITY:-}" ]; then
+  codesign --force --options runtime --timestamp --identifier com.freddai.computer --sign "$FREDDAI_COMPUTER_SIGNING_IDENTITY" "$app"
+  codesign --verify --deep --strict "$app"
+fi
