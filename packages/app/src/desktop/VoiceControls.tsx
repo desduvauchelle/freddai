@@ -42,7 +42,7 @@ export function useHoldToTalk({ canListen, onText }: { canListen: () => boolean;
 }
 
 /** Press-and-hold microphone button for a composer tools row. Renders nothing unless dictation is ready. */
-export function MicButton({ target, onText }: { target: boolean; onText: (text: string, button: HTMLElement) => void }) {
+export function MicButton({ target, onText, className = "", label: idleLabel = "Dictate" }: { target: boolean; onText: (text: string, button: HTMLElement) => void; className?: string; label?: string }) {
   const snap = useVoice(), held = useRef(false), [mine, setMine] = useState(false);
   const status = snap.status;
   if (!status?.ready) return null;
@@ -62,9 +62,9 @@ export function MicButton({ target, onText }: { target: boolean; onText: (text: 
     if (text) onText(text, button);
   }
   function abort() { if (held.current) { held.current = false; setMine(false); void voice.cancel(); } }
-  const label = mode === "recording" ? "Recording — release to transcribe" : mode === "transcribing" ? "Transcribing…" : "Dictate";
+  const label = mode === "recording" ? "Recording — release to transcribe" : mode === "transcribing" ? "Transcribing…" : idleLabel;
   return <Button
-    type="button" variant="ghost" size="icon" className="composer-mic" data-state={mode}
+    type="button" variant="ghost" size="icon" className={`composer-mic ${className}`} data-state={mode}
     aria-label={label} title={`Hold to talk (${shortcutLabel(status.shortcut)})`} disabled={busyElsewhere}
     onPointerDown={(e: PointerEvent<HTMLButtonElement>) => { if (e.button !== 0) return; e.currentTarget.setPointerCapture?.(e.pointerId); begin(); }}
     onPointerUp={(e: PointerEvent<HTMLButtonElement>) => { void end(e.currentTarget); }}

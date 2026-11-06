@@ -1,3 +1,4 @@
+import { resetDrafts } from "./drafts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { HomeView, homeProjects } from "./HomeView";
@@ -19,7 +20,7 @@ vi.mock("./VoiceControls", () => ({
   MicButton: ({ onText }: { onText: (t: string, b: HTMLElement) => void }) => mic.ready ? <button type="button" aria-label="Dictate" onClick={e => onText("ship it", e.currentTarget)} /> : null,
   VoiceNotice: () => null,
 }));
-afterEach(() => { cleanup(); mic.ready = false; });
+afterEach(() => { cleanup(); resetDrafts(); mic.ready = false; });
 
 const db = (over: Record<string, unknown> = {}) => ({ accounts: [account], projects: [project("alpha", "Alpha"), project("beta", "Beta")], sessions: [], preferences: { fallback: "a" }, ...over }) as never;
 const props = (sessions: Session[], projects = [project("alpha", "Alpha"), project("beta", "Beta")]) => ({
@@ -185,4 +186,36 @@ it("opens the first-thread prompt for an empty project without opening a missing
   fireEvent.click(screen.getByRole("button", { name: "Create first thread in Beta" }));
   expect(screen.getByLabelText("Prompt for Beta")).toBeTruthy();
   expect(p.onOpenThread).not.toHaveBeenCalled();
+});
+
+it("restores a project's unsent prompt after leaving Home and returning", () => {
+  const p = props([]);
+  const first = render(<HomeView {...p} />);
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
+  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Keep Alpha" } });
+  first.unmount();
+  render(<HomeView {...p} />);
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
+  expect((screen.getByLabelText("Prompt for Beta") as HTMLInputElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
+  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Keep Alpha");
+});
+
+it("clears only the submitted project draft and retains text after failure", async () => {
+  const p = props([]);
+  render(<HomeView {...p} />);
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
+  fireEvent.change(screen.getByLabelText("Prompt for Beta"), { target: { value: "Keep Beta" } });
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
+  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Send Alpha" } });
+  p.onCreateThread.mockRejectedValueOnce(new Error("Not delivered"));
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await screen.findByText("Not delivered");
+  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Send Alpha");
+  fireEvent.click(screen.getByRole("button", { name: "Start" }));
+  await waitFor(() => expect(screen.queryByLabelText("Prompt for Alpha")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
+  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
+  expect((screen.getByLabelText("Prompt for Beta") as HTMLInputElement).value).toBe("Keep Beta");
 });

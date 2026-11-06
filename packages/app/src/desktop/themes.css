@@ -4,6 +4,7 @@ html[data-freddai-theme="slate"] { --theme-background: #0f172a; --theme-card: #1
 html[data-freddai-theme="violet"] { --theme-background: #1c1726; --theme-card: #241e30; --theme-surface: #30263f; --theme-primary: #c4b5fd; --theme-border: #49395e; }
 html[data-freddai-theme="rose"] { --theme-background: #24191d; --theme-card: #2c2026; --theme-surface: #38272f; --theme-primary: #fda4af; --theme-border: #543a46; }
 html[data-freddai-theme="green"] { --theme-background: #14201c; --theme-card: #1b2922; --theme-surface: #24352d; --theme-primary: #86efac; --theme-border: #364d40; }
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]),
 html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) :is(.dev-app, .capture-panel, .dev-popup, .thread-context-menu, [data-slot="sheet-content"]) {
   --background: var(--theme-background);
   --foreground: #eeeef1;
@@ -34,6 +35,23 @@ html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme
   color: var(--foreground);
   color-scheme: dark;
 }
+/* Resolve legacy colors where semantic tokens are defined, including portal roots.
+   Keep Freddai's original dark fallbacks; light mode is mapped by appearance.css. */
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]),
+html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) :is(.dev-app, .capture-panel, .dev-popup, .thread-context-menu, [data-slot="sheet-content"]) {
+  --adaptive-background: var(--background);
+  --adaptive-card: var(--card);
+  --adaptive-surface: var(--secondary);
+  --adaptive-border: var(--border);
+  --adaptive-text: var(--foreground);
+  --adaptive-muted: var(--muted-foreground);
+  --adaptive-subtle: var(--muted-foreground);
+}
+/* Interaction colors follow the same palette in both system appearances. */
+html[data-freddai-appearance] .message-queue button:hover,
+html[data-freddai-appearance] .message-queue-menu > summary:hover { background: var(--accent); color: var(--foreground); }
+html[data-freddai-appearance] .message-queue :is(button, summary):focus-visible { outline-color: var(--ring); }
+html[data-freddai-appearance] .chat-drop-overlay { background: color-mix(in srgb, var(--background) 96%, transparent); border-color: var(--ring); color: var(--foreground); }
 /* Legacy workspace surfaces now follow the selected palette as well. */
 html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.native-titlebar, .explorer, .workbench-toolbar, .thread-detail, .chat-surface, .native-accounts, .list-group) { background: var(--card); }
 html[data-freddai-appearance="dark"][data-freddai-theme]:not([data-freddai-theme="freddai"]) .native-workspace :is(.chat-composer, .agent-controls-panel, .message-queue-menu-panel, .conversation-usage-details, .jump-to-latest) { background: var(--secondary); border-color: var(--border); }

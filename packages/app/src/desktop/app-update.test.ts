@@ -54,16 +54,51 @@ describe("draft persistence across restart", () => {
     const first = await import("./drafts");
     first.setDraft("t1", "hello"); first.setDraft("t2", "bye");
     first.saveDraftsForRestart("new text");
-    expect(store.size).toBe(1);
+    expect(store.size).toBe(2);
     vi.resetModules();
     const second = await import("./drafts");
-    expect(store.size).toBe(0);
-    expect(second.getDraft("t1")).toBe("");
+    expect(store.size).toBe(1);
+    expect(second.getDraft("t1")).toBe("hello");
     expect(second.restoreDrafts(["t1"])).toBe("new text");
     expect(second.getDraft("t1")).toBe("hello");
-    expect(second.getDraft("t2")).toBe("");
+    expect(second.getDraft("t2")).toBe("bye");
     second.restoreDrafts(["t2"]);
     expect(second.getDraft("t2")).toBe("bye");
     expect(second.restoreDrafts(["t1"])).toBeNull();
   });
+});
+
+it("persists contextual drafts on typing and deletion without an updater restart", async () => {
+  localStorage.clear();
+  const { vi } = await import("vitest");
+  vi.resetModules();
+  const first = await import("./drafts");
+  first.setDraft("reply", "Unsent reply");
+  first.setDraft(first.newThreadDraftKey("alpha"), "Alpha draft");
+  first.setDraft(first.newThreadDraftKey("beta"), "Beta draft");
+  first.setDraft(first.newThreadDraftKey(""), "Global draft");
+  vi.resetModules();
+  const second = await import("./drafts");
+  expect(second.getDraft("reply")).toBe("Unsent reply");
+  expect(second.getDraft(second.newThreadDraftKey("alpha"))).toBe("Alpha draft");
+  expect(second.getDraft(second.newThreadDraftKey("beta"))).toBe("Beta draft");
+  expect(second.getDraft(second.newThreadDraftKey(""))).toBe("Global draft");
+  second.setDraft(second.newThreadDraftKey("alpha"), "");
+  vi.resetModules();
+  const third = await import("./drafts");
+  expect(third.getDraft(third.newThreadDraftKey("alpha"))).toBe("");
+  expect(third.getDraft("reply")).toBe("Unsent reply");
+});
+
+it("preserves another window's saved context and receives its changes", async () => {
+  localStorage.clear();
+  const { vi } = await import("vitest");
+  vi.resetModules();
+  const store = await import("./drafts");
+  store.setDraft("one", "First window");
+  localStorage.setItem("freddai.composer-drafts", JSON.stringify({ one: "First window", two: "Second window" }));
+  store.setDraft("one", "Edited first window");
+  expect(JSON.parse(localStorage.getItem("freddai.composer-drafts")!)).toEqual({ one: "Edited first window", two: "Second window" });
+  window.dispatchEvent(new StorageEvent("storage", { key: "freddai.composer-drafts" }));
+  expect(store.getDraft("two")).toBe("Second window");
 });

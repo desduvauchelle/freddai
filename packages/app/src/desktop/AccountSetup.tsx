@@ -1,3 +1,4 @@
+import { ColorField } from "./ColorField";
 import { removeConnection } from "./account-removal";
 import { agentDisplayName } from "./types";
 import { useEffect, useRef, useState } from "react";
@@ -506,11 +507,7 @@ export function AccountSetup({
                     </label>
                     <label>
                       Account color
-                      <input
-                        type="color"
-                        value={color}
-                        onChange={(e) => setColor(e.target.value)}
-                      />
+                      <ColorField label="Account color" value={color} onChange={setColor} />
                     </label>
                     <div className="setup-actions">
                       <Button disabled={!native || pending || !name.trim()}>

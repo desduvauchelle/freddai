@@ -20,7 +20,9 @@ export type Project = {
   account: string | null;
   last: string | null;
 };
+export type Workspace = { id: string; name: string; color: string; projects: string[] };
 export type Preferences = {
+  workspaces?: Workspace[];
   new_thread_policy?: "last_selected" | "project" | "default" | null;
   last_selected?: string | null;
   use_worktree?: boolean;

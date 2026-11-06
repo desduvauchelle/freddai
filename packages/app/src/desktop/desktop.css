@@ -1292,3 +1292,39 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .dashboard-link { display: inline-flex; align-items: center; gap: 8px; padding: 5px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground); font: inherit; font-size: 13px; cursor: pointer; }
 .dashboard-link:hover, .dashboard-link[aria-current="page"] { color: var(--foreground); background: var(--accent); }
 .dashboard-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* Project dictation uses the dashboard's hold/release controller. */
+.project-group-heading .project-mic-button { margin-left: 0; width: 24px; height: 24px; flex-shrink: 0; touch-action: none; }
+.project-group-heading .project-mic-button svg { width: 13px; height: 13px; }
+.project-group-heading .project-mic-button[data-state="recording"] { color: var(--destructive, #dc2626); background: color-mix(in srgb, var(--destructive, #dc2626) 14%, transparent); }
+.project-group-heading .project-mic-button + .project-settings-button { margin-left: 0; }
+
+/* Keep the project action group together: menu, ship, dictate, new task. */
+.project-group-heading .project-more-button { margin-left: auto; width: 24px; height: 24px; color: var(--adaptive-muted, #8c8e9b); }
+.project-group-heading .project-more-button + .project-ship-wrap { margin-left: 0; }
+
+.project-group-heading .project-more-button ~ .project-settings-button { margin-left: 0; }
+
+.workspace-card { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.workspace-drop-ready { outline: 1px dashed var(--muted-foreground); outline-offset: 3px; }
+.workspace-project-source, .workspace-member { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+.workspace-project-source { cursor: grab; }
+.workspace-member > button { width: 22px; height: 22px; }
+
+
+.titlebar-thread-stats { display: flex; align-items: center; gap: 12px; margin-right: 8px; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.titlebar-thread-stat-detail { border-left: 1px solid var(--border); padding-left: 12px; }
+@media (max-width: 760px) { .titlebar-thread-stats { gap: 6px; margin-right: 4px; } .titlebar-thread-stat-detail { padding-left: 6px; } }
+
+.color-field { display: inline-flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.color-field-controls { display: flex; align-items: center; gap: 6px; }
+.color-field-controls > input { width: 100px; font-family: monospace; }
+.color-field-preview { display: block; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 4px; }
+.color-field-palette { display: flex; flex-wrap: wrap; gap: 6px; max-width: 170px; }
+.color-field-swatch { width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.color-field-swatch[aria-pressed="true"] { outline: 2px solid var(--foreground); outline-offset: 2px; }
+.color-field-swatch:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.color-field-swatch:disabled { opacity: .5; cursor: default; }
+.workspace-project-source { touch-action: none; user-select: none; -webkit-user-select: none; }
+.workspace-project-source[data-dragging="true"] { opacity: .65; cursor: grabbing; }
+.workspace-drop-target { outline: 2px solid var(--ring); background: var(--accent); }

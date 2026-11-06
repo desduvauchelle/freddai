@@ -1,0 +1,35 @@
+import { useEffect, useState } from "react";
+import { Input } from "@freddai/ui/components/input";
+import { Button } from "@freddai/ui/components/button";
+
+const palette = ["#b59ae9", "#77b9df", "#8ec6a2", "#e7a17d", "#e89cbd", "#d9c079", "#ef4444", "#3b82f6", "#22c55e", "#64748b"];
+/** Keep color selection inside the WebView: native color wells can crash NSColorPanel. */
+export function ColorField({ label, value, onChange, disabled = false }: {
+  label: string; value: string; onChange: (color: string) => void; disabled?: boolean;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => setDraft(value), [value]);
+  const valid = /^#[0-9a-f]{6}$/i.test(draft);
+  const commit = () => {
+    if (disabled) return;
+    if (valid) { setExpanded(false); if (draft.toLowerCase() !== value.toLowerCase()) onChange(draft.toLowerCase()); }
+    else setDraft(value);
+  };
+  return <span className="color-field">
+    <span className="color-field-controls">
+      <Button type="button" variant="outline" size="icon" aria-label={`Choose ${label.toLowerCase()}`} aria-expanded={expanded} disabled={disabled} onClick={() => setExpanded(open => !open)}>
+        <span className="color-field-preview" style={{ backgroundColor: value }} aria-hidden="true" />
+      </Button>
+      <Input aria-label={label} value={draft} disabled={disabled} placeholder="#b59ae9" maxLength={7} spellCheck={false} autoCapitalize="off" aria-invalid={!valid} onChange={e => setDraft(e.target.value)} onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDraft(value); setExpanded(false); }
+        }} />
+    </span>
+    {expanded && <span className="color-field-palette" role="group" aria-label={`${label} presets`}>
+      {palette.map(color => <button key={color} type="button" className="color-field-swatch" style={{ backgroundColor: color }} aria-label={`${label}: ${color}`} aria-pressed={value.toLowerCase() === color} disabled={disabled}
+        onClick={e => { e.preventDefault(); setExpanded(false); setDraft(color); onChange(color); }} />)}
+    </span>}
+  </span>;
+}

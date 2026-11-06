@@ -3,7 +3,7 @@ import { useNavigationState } from '../hooks/use-navigation-state';
 import { useThreadPins } from "./thread-pins";
 import { scheduleEnded } from "./schedule-end";
 import { agentDisplayName } from "./types";
-import { CalendarClock, Pin, PinOff, AppWindow, CheckCheck, ClipboardCheck, Play, Archive, ArchiveRestore, FolderInput, Import, Trash2, RotateCcw, Pencil } from "lucide-react";
+import { CalendarClock, Pin, PinOff, AppWindow, CheckCheck, ClipboardCheck, Play, Archive, ArchiveRestore, FolderInput, Trash2, RotateCcw, Pencil } from "lucide-react";
 import brandMascotUrl from "../../../../assets/brand/dormouse/dormouse-v3.svg?url";
 import { statusReadCursors } from "./status-read-cursors";
 import { threadListTitle } from "./thread-list-title";
@@ -36,6 +36,9 @@ import { UsageFooter } from "./UsageFooter";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@freddai/ui/components/field";
 import { Switch } from "@freddai/ui/components/switch";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
+import { ColorField } from "./ColorField";
+import { ThreadStats } from "./ThreadStats";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 import { SettingsPanel } from "./SettingsPanel";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { useFontSizes } from "./use-font-sizes";
@@ -54,13 +57,12 @@ import { ThreadTranscript } from "../conversation/ThreadTranscript";
 import { TodoPanel } from "../conversation/TodoList";
 import { reconcileSnapshot } from "./reconcileSnapshot";
 import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
-import { getDraft, setDraft as setThreadDraft, updateDraft, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts } from "./drafts";
+import { getDraft, setDraft as setThreadDraft, updateDraft, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts, newThreadDraftKey } from "./drafts";
 import { updateBanner } from "./app-update";
 import { useAppUpdate } from "./use-app-update";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type Ref } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { mergeAttachments, runScreenGrab, type ScreenGrabDestination } from "./screen-grab";
 import { Button } from "@freddai/ui/components/button";
@@ -395,7 +397,7 @@ function ConversationPane({
         <div className="chat-transcript-viewport">
         <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
           {task.transcriptLoaded === false && <div role="status">Loading conversation details…</div>}
-          <ThreadTranscript readToolText={(message, offset, hash) => invoke("tool_text", { thread: task.id, message, offset, hash })} readGeneratedFile={(href, offset) => invoke("generated_file", { thread: task.id, href, offset })} messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
+          <ThreadTranscript readToolText={(message, offset, hash) => invoke("tool_text", { thread: task.id, message, offset, hash })} readGeneratedFile={(href, offset) => invoke("generated_file", { thread: task.id, href, offset })} resolveLocalPage={href => invoke("preview_file_url", { thread: task.id, href })} messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
           {(task.error || task.status === "interrupted") && (
             <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={standalone ? undefined : openAccounts}
               onContinue={task.status === "interrupted" && capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
@@ -541,9 +543,11 @@ function DesktopWorkspace() {
   const selected = focusedThread(view), secondary = otherThread(view);
   const [scheduleView, setScheduleView] = useNavigationState<{project: string; id?: string} | null>(null, navigationRevision);
   const [scheduleProjects, setScheduleProjects] = useState<string[]>([]);
-  const setSelected = (id: string) => { if (windowThread) return; setScheduleView(null); setView(current => selectThread(current, id)); };
+  // Opening a thread from any list moves focus to its composer (after the click's own focus settles); narrow layouts skip it so the on-screen keyboard stays down.
+  const setSelected = (id: string) => { if (windowThread) return; setScheduleView(null); setView(current => selectThread(current, id)); if (id && !narrowRef.current) setTimeout(() => composer.current?.focus(), 0); };
   const selectScheduleRun = (id: string) => setView(current => selectThread(current, id));
   const narrow = useNarrow();
+  const narrowRef = useRef(narrow); narrowRef.current = narrow;
   const splitActive = view.split && !narrow;
   useEffect(() => { if (!windowThread) localStorage.setItem("freddai.split", JSON.stringify(splitPreference(view))); }, [view.split, view.right, windowThread]);
   // Non-thread main pane (git history). Cleared whenever a thread or the new-thread pane is chosen.
@@ -579,6 +583,13 @@ function DesktopWorkspace() {
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all");
+  const [workspaceFilter, setWorkspaceFilter] = usePreference("freddai.workspace", "all");
+  const workspaces = db.preferences.workspaces || [];
+  const activeWorkspace = workspaceFilter === "all" ? undefined : workspaces.find(w => w.id === workspaceFilter);
+  const workspaceProjects = db.projects.filter(p => !activeWorkspace || activeWorkspace.projects.includes(p.id));
+  useEffect(() => {
+    if (projectFilter !== "all" && !workspaceProjects.some(p => p.id === projectFilter)) setProjectFilter("all");
+  }, [projectFilter, workspaceProjects.map(p => p.id).join(",")]);
   const [savedProjectOrder, setSavedProjectOrder] = usePreference<string[]>("freddai.projectOrder", []);
   const [projectDrag, setProjectDrag] = useState<{ id: string; target: string; after: boolean } | null>(null);
   const [collapsedProjects, setCollapsedProjects] = usePreference<string[]>("freddai.collapsedProjects", []);
@@ -599,8 +610,11 @@ function DesktopWorkspace() {
   }, [native, savedProjectOrder, grouped, hideRead, ignoreUnread, recentFinishedPref]);
   const [projectId, setProjectId] = useState(""),
     [accountId, setAccountId] = useState("default"),
-    [draft, setDraft] = useState(""),
     [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
+  const newDraftKey = newThreadDraftKey(projectId);
+  const draft = useDraft(newDraftKey);
+  const setDraft = (value: string | ((previous: string) => string)) =>
+    setThreadDraft(newDraftKey, typeof value === "function" ? value(getDraft(newDraftKey)) : value);
   const [threadDialog, setThreadDialog] = useState<{ id: string; action: "move" | "delete" | "resume" | "review" } | null>(null);
   // Read state lives on the host (`read_at` per session); the overlay only bridges the poll gap after a local mark.
   const actualRead = useMemo(() => readFromThreads(db.sessions, readOverlay), [db.sessions, readOverlay]);
@@ -814,7 +828,7 @@ function DesktopWorkspace() {
   // Navigation restores saved text without deleting drafts or staged files from other threads.
   useEffect(() => {
     const savedNewDraft = restoreDrafts(openIds);
-    if (savedNewDraft) setDraft(current => current || savedNewDraft);
+    if (savedNewDraft) updateDraft(newThreadDraftKey(""), current => current || savedNewDraft);
   }, [openIds.join()]);
   function selectNewAccount(value: string) {
     setAccountId(value);
@@ -831,7 +845,7 @@ function DesktopWorkspace() {
   function openNewThread(focus: boolean) {
     newThreadInProject(projectFilter !== "all"
       ? projectFilter
-      : task?.project || db.projects[0]?.id || "", focus);
+      : "", focus);
   }
   // Above the single-pane (mobile) breakpoint the list always has a pane beside it: with nothing open, that is the new-thread draft.
   // Opening it only fills in local draft state; no thread is created until the user sends.
@@ -847,10 +861,6 @@ function DesktopWorkspace() {
     setPane(null);
     setHome(true);
   }
-  // The auto-opened draft can appear before the first snapshot lists projects; pick one once they arrive.
-  useEffect(() => {
-    if (dialog === "new" && !projectId && db.projects.length) setProjectId(projectFilter !== "all" ? projectFilter : db.projects[0].id);
-  }, [dialog, projectId, db.projects.length]);
   function newThreadInProject(project: string, focus = true) {
     setScheduleView(null);
     setWorktree(db.preferences.use_worktree ?? false);
@@ -863,7 +873,7 @@ function DesktopWorkspace() {
   }
   function forkThread(thread = task) {
     if (!thread) return;
-    newThread(); setProjectId(thread.project); setDraft(`Continue this work in a new conversation. Prior conversation (reference only):\n\n${thread.messages.filter(m => ["user","assistant"].includes(m.role)).map(m => `${m.role}: ${m.text}`).join("\n\n").slice(-24000)}`); 
+    newThreadInProject(thread.project); setThreadDraft(newThreadDraftKey(thread.project), `Continue this work in a new conversation. Prior conversation (reference only):\n\n${thread.messages.filter(m => ["user","assistant"].includes(m.role)).map(m => `${m.role}: ${m.text}`).join("\n\n").slice(-24000)}`);
   }
   function addProject() {
     setEditing({
@@ -943,7 +953,9 @@ function DesktopWorkspace() {
   useEffect(() => {
     if (!native) return;
     let off: (() => void) | undefined, disposed = false;
-    void getCurrentWebview().onDragDropEvent(e => {
+    // Main-content drops target the Window once an embedded browser child exists.
+    // A Window listener also receives labeled events before any child is created.
+    void getCurrentWindow().onDragDropEvent(e => {
       const event = e.payload;
       if (event.type === "leave") { setProjectDropActive(false); return; }
       const inNavigation = projectDropTarget(event.position,
@@ -1123,7 +1135,7 @@ function DesktopWorkspace() {
   }
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState("");
-  const appUpdate = useAppUpdate(native, () => saveDraftsForRestart(draft));
+  const appUpdate = useAppUpdate(native, () => saveDraftsForRestart(""));
   const appUpdateBanner = updateBanner(appUpdate.state);
   const [interruptedDismissed, setInterruptedDismissed] = useState(false);
   const interruptedList = interruptedThreads(db.sessions).filter(t => threadCapabilities(t, db.accounts.some(a => a.id === t.account)).resume);
@@ -1202,6 +1214,7 @@ function DesktopWorkspace() {
     .filter(
       (t) =>
         threadVisibility(t, filter) &&
+        (!activeWorkspace || activeWorkspace.projects.includes(t.project)) &&
         (projectFilter === "all" || t.project === projectFilter) &&
         t.title.toLowerCase().includes(query.toLowerCase()) &&
         (["all", "archived", "deleted"].includes(filter) ||
@@ -1214,8 +1227,8 @@ function DesktopWorkspace() {
     );
   const defaultProjectOrder = [...new Set([
     ...sorted.map((t) => t.project),
-    ...(!query && filter === "all" ? db.projects.filter(p =>
-      (projectFilter === "all" || projectFilter === p.id) && !db.sessions.some(t => t.project === p.id),
+    ...(!query && filter === "all" ? workspaceProjects.filter(p =>
+      (projectFilter === "all" || projectFilter === p.id),
     ).map(p => p.id) : []),
   ])];
   const fullProjectOrder = [...new Set([
@@ -1348,7 +1361,6 @@ function DesktopWorkspace() {
           <ContextMenuItem disabled={disabled || busy(t)} onSelect={() => void changeThread(t.id, "restore")}><RotateCcw size={14} aria-hidden="true" />Restore thread</ContextMenuItem> : <>
           <ContextMenuItem disabled={t.archived ? disabled || !capabilities.change : removalDisabled || !capabilities.archive} onSelect={() => void changeThread(t.id, t.archived ? "unarchive" : "archive")}>{t.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}{t.archived ? "Unarchive" : "Archive"}</ContextMenuItem>
           <ContextMenuItem disabled={disabled || !capabilities.change || db.projects.length < 2} onSelect={() => openThreadDialog(t, "move")}><FolderInput size={14} aria-hidden="true" />Change project…</ContextMenuItem>
-          <ContextMenuItem disabled={!native} onSelect={() => setDialog("import")}><Import size={14} aria-hidden="true" />Import sessions…</ContextMenuItem>
           <ContextMenuItem className="thread-menu-danger" disabled={removalDisabled || !capabilities.delete} onSelect={() => openThreadDialog(t, "delete")}><Trash2 size={14} aria-hidden="true" />Delete…</ContextMenuItem>
         </>}
       </ContextMenuContent>
@@ -1471,6 +1483,9 @@ function DesktopWorkspace() {
           </span>
         </div>
         <div className="titlebar-actions">
+          <ThreadStats sessions={db.sessions.filter(t =>
+            (!activeWorkspace || activeWorkspace.projects.includes(t.project)) &&
+            (projectFilter === "all" || t.project === projectFilter))} />
           <Button
             variant="ghost"
             size="icon"
@@ -1543,7 +1558,7 @@ function DesktopWorkspace() {
         <main className="workbench">
           <div className={`workbench-panes ${scheduleView || (task && !homeActive) || dialog === "new" ? "has-detail" : ""}`}>
             <ResizablePanelGroup orientation="horizontal" defaultLayout={threadPaneLayout.defaultLayout} onLayoutChanged={threadPaneLayout.onLayoutChanged}>
-              <ResizablePanel id="thread-list" defaultSize="42%" minSize="25%" collapsible collapsedSize="0%" panelRef={listPanel} onResize={size => setListHidden(size.asPercentage === 0)}>
+              <ResizablePanel id="thread-list" defaultSize="42%" minSize="220px" collapsible collapsedSize="0%" collapsedThreshold="180px" panelRef={listPanel} onResize={size => setListHidden(size.asPercentage === 0)}>
                 <section ref={projectNavigation} className="thread-browser project-navigation" aria-label="Threads" aria-busy={projectImportBusy}>
                   {(projectDropActive || projectImportBusy) && <div className="project-drop-overlay" role="status">
                     <FolderGit2 size={28} />
@@ -1585,6 +1600,9 @@ function DesktopWorkspace() {
                     </Button>
                   </div>
                   <div className="thread-filter-row">
+                    {workspaces.length > 0 && <Picker label="Workspace filter" dropdown value={activeWorkspace?.id || "all"}
+                        onChange={v => { setWorkspaceFilter(v); setProjectFilter("all"); setOlderPages({}); if (v === "all") { setQuery(""); setFilter("all"); } }}
+                        options={[{ value: "all", label: "All workspaces" }, ...workspaces.map(w => ({ value: w.id, label: w.name }))]} />}
                     <Picker
                       label="Project filter"
                       dropdown
@@ -1595,7 +1613,7 @@ function DesktopWorkspace() {
                       }}
                       options={[
                         { value: "all", label: "All projects" },
-                        ...db.projects.map((p) => ({
+                        ...workspaceProjects.map((p) => ({
                           value: p.id,
                           label: p.name,
                         })),
@@ -1620,12 +1638,7 @@ function DesktopWorkspace() {
                         { value: "deleted", label: "Deleted" },
                       ]}
                     />
-                    <span
-                      className="thread-count"
-                      title={`${grouped ? "Grouped by project · " : ""}Most recent message sent first`}
-                    >
-                      {sorted.length} {sorted.length === 1 ? "thread" : "threads"}
-                    </span>
+
                   </div>
                   <ScrollArea className="thread-list-scroll min-h-0 flex-1" viewportRef={list} viewportProps={{ className: "thread-list", "aria-label": "Thread list" }}>
                     {grouped ? (
@@ -1685,25 +1698,28 @@ function DesktopWorkspace() {
                                 <strong style={{ color: p?.color }}>{p?.name}</strong>
                               </button>
                               {collapsed && attention > 0 && <span className="project-attention" role="status" aria-label={`${attention} ${attention === 1 ? "thread needs" : "threads need"} attention in ${p?.name}`}>{attention}</span>}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="project-settings-button project-more-button"
+                                    aria-label={`More actions for ${p?.name}`} title={`More actions for ${p?.name}`}><Ellipsis size={14} /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {native && <DropdownMenuItem onSelect={() => { setScheduleProjects(ids => ids.includes(pid) ? ids.filter(id => id !== pid) : [...ids, pid]); setCollapsedProjects(ids => ids.filter(id => id !== pid)); }}>
+                                    <CalendarClock size={14} />Scheduled tasks ({projectSchedules.length})
+                                  </DropdownMenuItem>}
+                                  <DropdownMenuItem onSelect={() => { if (!view.split) setSelected(""); setDialog(null); setScheduleView(null); setPane({ kind: "git", projectId: pid }); }}>
+                                    <GitBranch size={14} />Git history
+                                  </DropdownMenuItem>
+                                  {p && <><DropdownMenuSeparator /><DropdownMenuItem onSelect={() => { setEditing(p); setDialog("project"); }}>
+                                    <Settings2 size={14} />Project settings…
+                                  </DropdownMenuItem></>}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                               {native && p?.path && <ShipButton projectId={pid} projectName={p.name} path={p.path} client={tauriGitClient} onShip={pid2 => createHomeThread(pid2, SHIP_PROMPT)}
                                 activity={db.sessions.filter(t => t.project === pid).map(t => `${t.id}:${t.status}`).join("|")} />}
-                              {native && <Button variant="ghost" size="icon" className="project-settings-button project-schedule-button"
-                                aria-label={`Scheduled tasks for ${p?.name}`} title={`${projectSchedules.length} scheduled ${projectSchedules.length === 1 ? "task" : "tasks"} for ${p?.name}`} aria-expanded={scheduleProjects.includes(pid)}
-                                onClick={() => { setScheduleProjects(ids => ids.includes(pid) ? ids.filter(id => id !== pid) : [...ids, pid]); setCollapsedProjects(ids => ids.filter(id => id !== pid)); }}>
-                                <CalendarClock size={14}/>
-                                {projectSchedules.length > 0 && <span className="project-schedule-count" aria-hidden="true">{projectSchedules.length}</span>}
-                              </Button>}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Git history for ${p?.name}`}
-                                title={`Git history for ${p?.name}`}
-                                aria-pressed={pane?.kind === "git" && pane.projectId === pid}
-                                className="project-settings-button project-git-button"
-                                onClick={e => { e.stopPropagation(); if (!view.split) setSelected(""); setDialog(null); setScheduleView(null); setPane({ kind: "git", projectId: pid }); }}
-                              >
-                                <GitBranch size={13} />
-                              </Button>
+                              {native && <MicButton target={false} className="project-settings-button project-mic-button"
+                                label={`Dictate new task in ${p?.name}`}
+                                onText={text => { void createHomeThread(pid, text).catch(e => setError(String(e))); }} />}
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1782,7 +1798,7 @@ function DesktopWorkspace() {
                           if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.nativeEvent.isComposing) { e.preventDefault(); void start(); }
                         }}/>
                         <div className="new-conversation-options">
-                          <Picker label="Project" value={projectId} onChange={setProjectId} options={db.projects.map(p => ({ value: p.id, label: p.name }))}/>
+                          <Picker label="Project" value={projectId || "__global__"} onChange={value => setProjectId(value === "__global__" ? "" : value)} options={[{ value: "__global__", label: "Select project" }, ...db.projects.map(p => ({ value: p.id, label: p.name }))]}/>
                           <Picker label="Agent and account" disabled={!native || working} value={effective || "default"} onChange={selectNewAccount} options={[...(!effective ? [{ value: "default", label: "No default account configured" }] : []), ...db.accounts.map(a => ({ value: a.id, label: agentDisplayName(a) }))]}/>
                           <label className="new-worktree" title={worktree ? "New branch from the current commit; uncommitted files stay in the original folder." : "Use the project folder directly. Your choice is remembered."}><input type="checkbox" checked={worktree} onChange={e => {
                             setWorktree(e.target.checked);
@@ -1957,7 +1973,7 @@ function DesktopWorkspace() {
                 : dialog === "accounts"
                   ? "Each agent’s accounts in one place. Sign in, then pick the default for new threads."
                   : dialog === "threads" ? "Choose how conversations appear in your workspace."
-                  : dialog === "projects" ? "Manage local folders and each project’s agent defaults."
+                  : dialog === "projects" ? "Manage local folders, project defaults, and workspaces."
                   : dialog === "import" ? "Bring Claude Code and Codex sessions started outside Freddai into your projects."
                   : dialog === "appearance" ? "Make Freddai feel at home with a workspace theme."
                   : dialog === "companion" ? "Generate a six-digit code, then approve your phone to connect to this Mac."
@@ -2040,14 +2056,8 @@ function DesktopWorkspace() {
               )}
               <label>
                 Project color
-                <input
-                  aria-label="Project color"
-                  type="color"
-                  value={editing.color}
-                  onChange={(e) =>
-                    setEditing((p) => ({ ...p, color: e.target.value }))
-                  }
-                />
+                <ColorField label="Project color" value={editing.color}
+                  onChange={color => setEditing(p => ({ ...p, color }))} />
               </label>
               <h3>Default agent & account</h3>
               {!db.accounts.length ? (
@@ -2266,6 +2276,12 @@ function DesktopWorkspace() {
                 <Button variant="outline" onClick={() => setDialog("import")}>
                   Import sessions…
                 </Button>
+                <section aria-label="Workspaces" className="mt-6 space-y-4 border-t pt-6">
+                  <div className="space-y-1"><h2 className="text-lg font-semibold">Workspaces</h2><p className="capture-help">Group your projects and choose a color for each workspace.</p></div>
+                  {native && !db.preferences.workspaces && <p role="status" className="capture-help">Workspace editing will be available when the background update finishes. You can also use Restart now in the update banner.</p>}
+                  <WorkspaceSettings projects={db.projects} workspaces={workspaces} disabled={!native || working || !db.preferences.workspaces}
+                    onSave={next => action(async () => { await invoke("save_preferences", { patch: { workspaces: next } }); await refresh(); return true; })} />
+                </section>
               </div>
           )}
           {dialog === "help" && (

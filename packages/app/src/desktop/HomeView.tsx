@@ -1,3 +1,4 @@
+import { newThreadDraftKey, useDraft, setDraft } from "./drafts";
 import { agentDisplayName } from "./types";
 import { AgentControls } from "./AgentControls";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
@@ -75,7 +76,10 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   const [started, setStarted] = useState("");
   useEffect(() => { if (!started) return; const t = setTimeout(() => setStarted(""), 4000); return () => clearTimeout(t); }, [started]);
   const confirm = (prompt: string, title: string | void) => setStarted(`Started · ${(title || prompt).trim().split(/\s+/).slice(0, 8).join(" ")}`);
-  const [text, setText] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const draftKey = newThreadDraftKey(project.id);
+  const text = useDraft(draftKey);
+  const setText = (value: string | ((previous: string) => string)) => setDraft(draftKey, typeof value === "function" ? value(text) : value);
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!text.trim() || busy || !plan.ok) return;
