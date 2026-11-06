@@ -77,7 +77,7 @@ export function ShipButton({ projectId, projectName, path, client, activity, onS
         aria-disabled={!enabled || undefined} aria-busy={launching || undefined} aria-label={tip} title={tip}
         onClick={() => { if (enabled) void ship(); }}>
         <Rocket size={13} aria-hidden="true" />
-        {enabled && status.ahead > 0 && <span className="ship-dot" aria-hidden="true" />}
+        {enabled && <span className="ship-dot" aria-hidden="true" />}
       </Button>
     </div>
   );

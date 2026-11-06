@@ -28,7 +28,7 @@ it("tooltip lists only non-zero parts with singular/plural", () => {
   expect(shipTooltip(st({ ahead: 2 }))).toBe("Commit & push with an agent · 2 commits to push");
 });
 
-it("title and aria-label carry the counts; the dot shows only when there is something to push", async () => {
+it("title and aria-label carry the counts; the dot shows when there are changes to commit or commits to push", async () => {
   mount(st({ files: 2, ahead: 1 }));
   const b = await enabled();
   expect(b.getAttribute("title")).toBe("Commit & push with an agent · 2 files changed · 1 commit to push");
@@ -36,13 +36,17 @@ it("title and aria-label carry the counts; the dot shows only when there is some
   expect(b.querySelector(".ship-dot")).not.toBeNull();
   cleanup();
   mount(st({ files: 2 }));
-  expect((await enabled()).querySelector(".ship-dot")).toBeNull();
+  expect((await enabled()).querySelector(".ship-dot")).not.toBeNull();
+  cleanup();
+  mount(st({ ahead: 1 }));
+  expect((await enabled()).querySelector(".ship-dot")).not.toBeNull();
 });
 
 it("a clean, fully pushed tree is a disabled button and a click is a no-op", async () => {
   const onShip = mount(st());
   const b = await screen.findByRole("button", { name: "Everything is already committed and pushed" }, { timeout: 4000 });
   expect(b.getAttribute("aria-disabled")).toBe("true");
+  expect(b.querySelector(".ship-dot")).toBeNull();
   expect(b.getAttribute("title")).toBe("Everything is already committed and pushed");
   await userEvent.click(b);
   expect(onShip).not.toHaveBeenCalled();
