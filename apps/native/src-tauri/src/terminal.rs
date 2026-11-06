@@ -17,12 +17,18 @@ pub struct PtySession {
 }
 
 fn shell_command(cwd: &Path) -> CommandBuilder {
+    #[cfg(not(windows))]
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| {
         eprintln!("terminal: $SHELL is not set; falling back to /bin/zsh");
         "/bin/zsh".into()
     });
+    #[cfg(windows)]
+    let shell = "powershell.exe";
     let mut cmd = CommandBuilder::new(shell);
+    #[cfg(not(windows))]
     cmd.arg("-l");
+    #[cfg(windows)]
+    cmd.args(["-NoLogo", "-NoProfile"]);
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -61,6 +67,19 @@ impl PtySession {
         let writer = pair.master.take_writer().map_err(|e| format!("Cannot write to terminal: {e}"))?;
         let child = Arc::new(Mutex::new(child));
         let waiter = child.clone();
+        #[cfg(windows)]
+        std::thread::spawn(move || {
+            // ConPTY may retain its output pipe after the shell exits. Waiting for
+            // EOF before checking the process would never emit terminal-exit.
+            let code = loop {
+                match waiter.lock().map_err(|_| ()).and_then(|mut c| c.try_wait().map_err(|_| ())) {
+                    Ok(Some(status)) => break Some(status.exit_code()),
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                    Err(()) => break None,
+                }
+            };
+            on_exit(code);
+        });
         std::thread::spawn(move || {
             let (mut buf, mut pending) = ([0u8; 8192], Vec::new());
             loop {
@@ -74,6 +93,8 @@ impl PtySession {
                 }
             }
             if !pending.is_empty() { on_data(String::from_utf8_lossy(&pending).into_owned()); }
+            #[cfg(not(windows))]
+            {
             // EOF: the shell (or whole session) ended. Poll so close() can still take the lock to kill.
             let code = loop {
                 match waiter.lock().map_err(|_| ()).and_then(|mut c| c.try_wait().map_err(|_| ())) {
@@ -83,6 +104,7 @@ impl PtySession {
                 }
             };
             on_exit(code);
+            }
         });
         Ok(Self { master: pair.master, writer, child })
     }
@@ -167,8 +189,19 @@ mod tests {
         let (etx, erx) = mpsc::channel();
         let dir = std::env::temp_dir();
         let mut s = PtySession::spawn(&dir, 80, 24, move |d| { let _ = tx.send(d); }, move |c| { let _ = etx.send(c); }).unwrap();
+        #[cfg(not(windows))]
         s.write("echo freddai-$((20+22))\nexit 3\n").unwrap();
         let mut out = String::new();
+        #[cfg(windows)]
+        {
+            // ConPTY asks its terminal emulator for the initial cursor position.
+            // The app's xterm answers this; the headless test must emulate it.
+            while !out.contains("\x1b[6n") {
+                out.push_str(&rx.recv_timeout(Duration::from_secs(10)).expect("ConPTY cursor query"));
+            }
+            s.write("\x1b[1;1R").unwrap();
+            s.write("Write-Output ('freddai-' + (20+22))\r\nexit 3\r\n").unwrap();
+        }
         while let Ok(d) = rx.recv_timeout(Duration::from_secs(10)) { out.push_str(&d); }
         assert!(out.contains("freddai-42"), "output was: {out:?}");
         assert_eq!(erx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(3));

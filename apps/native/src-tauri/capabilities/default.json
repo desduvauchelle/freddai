@@ -2,12 +2,14 @@
   "identifier": "main",
   "description": "Local workspace UI and native file selection",
   "windows": [
-    "main"
+    "main",
+    "thread-*"
   ],
   "permissions": [
     "core:default",
     { "identifier": "opener:allow-open-url", "allow": [{ "url": "http://*" }, { "url": "https://*" }] },
     "dialog:allow-open",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-close"
   ]
 }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Session } from "./types";
 import { ConversationActivity } from "./MascotScenes";
@@ -39,4 +39,23 @@ it("replaces working with an accurate interrupted or failure state", () => {
   view.rerender(<ConversationActivity thread={{ ...thread, status: "failed" }} />);
   expect(screen.getByRole("status").textContent).toBe("Needs attention");
   expect(screen.getByTestId("character").getAttribute("data-mood")).toBe("8");
+});
+
+it("tracks dispatch time across updates and waiting, resets per turn and hides on completion", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(100_000);
+  try {
+    const active = { ...thread, status: "running", turn_started_at: 35_000, usage: { context_tokens: 1234, context_window: null, input_tokens: null, cached_input_tokens: null } };
+    const view = render(<ConversationActivity thread={active} />);
+    expect(screen.getByText("1m 5s elapsed")).toBeTruthy();
+    expect(screen.getByText("1,234 context tokens")).toBeTruthy();
+    view.rerender(<ConversationActivity thread={{ ...active, status: "waiting", updated: 100_000, last_user_message_at: 99_000 }} />);
+    expect(screen.getByText("1m 5s elapsed")).toBeTruthy();
+    view.rerender(<ConversationActivity thread={{ ...active, turn_started_at: 100_000 }} />);
+    expect(screen.getByText("0s elapsed")).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByText("2s elapsed")).toBeTruthy();
+    view.rerender(<ConversationActivity thread={{ ...active, status: "done" }} />);
+    expect(screen.queryByText(/elapsed/)).toBeNull();
+  } finally { vi.useRealTimers(); }
 });

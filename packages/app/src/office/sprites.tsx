@@ -99,8 +99,8 @@ export type CharPose = "seated" | "stand" | "cup" | "sit";
  * One character, origin at the feet (seated: at the seat, the desk hides the rest). Walking is two frames of legs and arms.
  * `carry` holds a folder in `folder` colour; `cup` holds a coffee cup. `flip` mirrors it to face left.
  */
-export function Character({ x, y, variant, pose, moving = false, frame = 0, flip = false, carry = false, folder = "#d9a066", headset = false }: { x: number; y: number; variant: number; pose: CharPose; moving?: boolean; frame?: 0 | 1; flip?: boolean; carry?: boolean; folder?: string; headset?: boolean }) {
-  const fur = FUR[variant % 4], shirt = SHIRT[variant % 4], pants = "#2a2838";
+export function Character({ x, y, variant, pose, moving = false, frame = 0, flip = false, carry = false, folder = "#d9a066", headset = false, shirtColor }: { x: number; y: number; variant: number; pose: CharPose; moving?: boolean; frame?: 0 | 1; flip?: boolean; carry?: boolean; folder?: string; headset?: boolean; shirtColor?: string }) {
+  const fur = FUR[variant % 4], shirt = shirtColor ?? SHIRT[variant % 4], pants = "#2a2838";
   if (pose === "seated") return <g transform={`translate(${x} ${y})`}>
     <rect x={-7} y={-4} width={14} height={4} fill={shirt} />
     <Head x={-6} y={-12} variant={variant} />
@@ -211,5 +211,20 @@ export function UserAvatar({ x, y }: { x: number; y: number }) {
     <Head x={0} y={0} variant={1} />
     <rect x={0} y={-1} width={12} height={1} fill="#2a2838" /><rect x={-1} y={3} width={2} height={5} fill="#2a2838" /><rect x={11} y={3} width={2} height={5} fill="#2a2838" />
     <rect x={11} y={7} width={4} height={1} fill="#2a2838" />
+  </g>;
+}
+
+
+/** Back-facing mouse with raised paws, looking up toward the shrine clock. */
+export function ClockAdmirer({ x, y, variant }: { x: number; y: number; variant: number }) {
+  const fur = FUR[variant % 4];
+  return <g transform={`translate(${x} ${y})`}>
+    <ellipse cx={0} cy={1} rx={10} ry={3} fill="#1b1a24" opacity={0.3} />
+    <rect x={-5} y={-5} width={4} height={5} fill="#2a2838" /><rect x={1} y={-5} width={4} height={5} fill="#2a2838" />
+    <rect x={-6} y={-14} width={12} height={10} fill={SHIRT[variant % 4]} />
+    <rect x={-9} y={-20} width={3} height={10} fill={fur} /><rect x={7} y={-20} width={3} height={10} fill={fur} />
+    <Pix rows={HEAD} x={-6} y={-24} colors={{ b: fur, p: "#e8a0a8", d: fur, n: fur }} />
+    <rect x={-1} y={-3} width={2} height={5} fill="#e8a0a8" /><rect x={1} y={0} width={4} height={2} fill="#e8a0a8" />
+    <path d="M 0 -33 v 6 M -3 -30 h 6" stroke="#ffe49a" strokeWidth={2} />
   </g>;
 }

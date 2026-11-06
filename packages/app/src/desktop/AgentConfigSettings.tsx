@@ -1,3 +1,4 @@
+import { agentDisplayName } from "./types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
@@ -43,7 +44,7 @@ export function AgentConfigSettings({ native, accounts, projects }: { native: bo
     <div className="flex flex-wrap gap-4">
       <label className="grid gap-1 text-sm">Account profile
         <select aria-label="Account profile" className="rounded-md border bg-background px-2 py-1" value={accountId} onChange={e => setAccountId(e.target.value)}>
-          {eligible.map(a => <option key={a.id} value={a.id}>{a.provider === "claude" ? "Claude Code" : "Codex"} · {a.name}</option>)}
+          {eligible.map(a => <option key={a.id} value={a.id}>{agentDisplayName(a)}</option>)}
         </select></label>
       <label className="grid gap-1 text-sm">Project
         <select aria-label="Config project" className="rounded-md border bg-background px-2 py-1" value={projectId} onChange={e => setProjectId(e.target.value)}>

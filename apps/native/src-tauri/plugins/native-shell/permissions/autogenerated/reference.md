@@ -11,6 +11,7 @@ Allows the Freddai webview to drive the native iPhone shell.
 - `allow-discard-files`
 - `allow-pick-option`
 - `allow-set-threads`
+- `allow-set-dashboard`
 - `allow-set-thread-meta`
 - `allow-set-voice`
 - `allow-append-composer-text`
@@ -230,6 +231,32 @@ Enables the set_connection command without any pre-configured scope.
 <td>
 
 Denies the set_connection command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-set-dashboard`
+
+</td>
+<td>
+
+Enables the set_dashboard command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-set-dashboard`
+
+</td>
+<td>
+
+Denies the set_dashboard command without any pre-configured scope.
 
 </td>
 </tr>

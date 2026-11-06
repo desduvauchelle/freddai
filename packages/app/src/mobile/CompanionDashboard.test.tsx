@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CompanionDashboard } from './CompanionDashboard';
-import type { CompanionSnapshot } from './companion';
+import { disconnectedClient, type CompanionSnapshot } from './companion';
 afterEach(cleanup);
 it('counts activity across projects, retains empty projects and opens pending decisions', () => {
   const now = new Date(2026, 10, 4, 12).getTime(), onOpen = vi.fn(), onNew = vi.fn();
@@ -52,4 +52,36 @@ it('applies the global agent across projects and keeps thread navigation in the 
   fireEvent.click(screen.getByRole('button', { name: 'Existing task' }));
   expect(onOpen).toHaveBeenCalledWith('t');
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('exposes launch and microphone controls directly on cards and honors global fallback and readiness', () => {
+  const onNew = vi.fn();
+  const snapshot: CompanionSnapshot = { projects: [
+    { id: 'p', name: 'Project', color: '#777', canStart: true, defaultAssistant: 'a', assistants: [{ id: 'a', name: 'Personal', provider: 'claude' }, { id: 'b', name: 'Work', provider: 'codex' }] },
+    { id: 'fallback', name: 'Fallback', color: '#777', canStart: true, defaultAssistant: 'a', assistants: [{ id: 'a', name: 'Personal', provider: 'claude' }] },
+    { id: 'blocked', name: 'Blocked', color: '#777', canStart: false },
+  ], threads: [] };
+  const props = { snapshot, onNew, onOpen: vi.fn(), onDictation: vi.fn(), client: { ...disconnectedClient, transcribeAudio: vi.fn() } };
+  const { rerender } = render(<CompanionDashboard {...props} connected />);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect((screen.getByRole('button', { name: 'Dictate task in Project' }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Coding agent' }), { target: { value: 'b' } });
+  fireEvent.click(screen.getByRole('button', { name: 'New thread in Project' }));
+  expect(onNew).toHaveBeenLastCalledWith('p', 'b');
+  fireEvent.click(screen.getByRole('button', { name: 'New thread in Fallback' }));
+  expect(onNew).toHaveBeenLastCalledWith('fallback', 'a');
+  expect((screen.getByRole('button', { name: 'New thread in Blocked' }) as HTMLButtonElement).disabled).toBe(true);
+  rerender(<CompanionDashboard {...props} connected={false} />);
+  for (const name of ['New thread in Project', 'Dictate task in Project']) {
+    expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+  }
+});
+
+it('leaves only Office in the web surface when native dashboard content is supported', () => {
+  const get = vi.fn();
+  render(<CompanionDashboard nativeCards nativeContent connected snapshot={{ projects: [], threads: [] }} onOpen={vi.fn()} onNew={vi.fn()}
+    client={{ ...disconnectedClient, summaries: { get, generate: vi.fn() } }} />);
+  expect(screen.queryByText('Your projects')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Daily summaries' })).toBeNull();
+  expect(get).not.toHaveBeenCalled();
 });

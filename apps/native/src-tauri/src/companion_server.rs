@@ -7,15 +7,7 @@ use subtle::ConstantTimeEq;
 use fs2::FileExt;
 use tiny_http::{Header, Method, Response, Server, SslConfig, StatusCode};
 
-/// Only presentation fields cross the companion boundary, independent of host upgrades.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadListSettings {
-    pub project_order: Vec<String>,
-    pub grouped: bool,
-    pub hide_read: bool,
-    pub recent_finished: usize,
-}
+use crate::thread_list_settings::ThreadListSettings;
 
 const PORT: u16 = 49744;
 const LIMIT: u64 = 128 * 1024;
@@ -55,7 +47,7 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
             "queuePaused":queue.is_some_and(|q|q.paused),
             "queueError":queue.and_then(|q|q.error.clone())})
     }).collect();
-    json!({"projects":projects,"threads":threads})
+    json!({"projects":projects,"threads":threads,"schedules":db.schedules})
 }
 fn snapshot(root: &Path) -> Result<Database, String> {
     serde_json::from_value(host::call(root,"snapshot",json!({}))?).map_err(|e|e.to_string())
@@ -208,7 +200,7 @@ fn voice_composer(root: &Path, p: &Value) -> Result<Value,String> {
     }
 }
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
-    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("day_summary"|"summarize_day")) {
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("day_summary"|"summarize_day"|"save_schedule"|"schedule_action")) {
         return host::call(root, text(&p,"operation")?, p["input"].clone());
     }
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
@@ -592,5 +584,52 @@ mod summary_transport_tests {
         }
         host.join().unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod schedule_transport_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+    #[test]
+    fn schedule_commands_reach_host_without_arbitrary_rpc_access() {
+        let root = std::env::temp_dir().join(format!("fr-sched-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let host = std::thread::spawn(move || {
+            for operation in ["save_schedule", "schedule_action"] {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], operation);
+                assert_eq!(request["params"]["schedule"], "schedule-id");
+                writeln!(connection, "{}", json!({"result":null})).unwrap();
+            }
+        });
+        for operation in ["save_schedule", "schedule_action"] {
+            crate::companion_operations::validate(operation).unwrap();
+            dispatch(&root, "/v1/composer", json!({"operation":operation,"input":{"schedule":"schedule-id","action":"delete"}})).unwrap();
+        }
+        assert!(crate::companion_operations::validate("shell").is_err());
+        host.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod thread_list_settings_tests {
+    use super::*;
+
+    #[test]
+    fn unread_experiment_is_backward_compatible_and_crosses_snapshot_boundary() {
+        let legacy = json!({"projectOrder":[],"grouped":true,"hideRead":true,"recentFinished":5});
+        let settings: ThreadListSettings = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(!settings.ignore_unread);
+        let mut enabled = legacy;
+        enabled["ignoreUnread"] = json!(true);
+        let settings: ThreadListSettings = serde_json::from_value(enabled).unwrap();
+        assert!(settings.ignore_unread);
+        assert_eq!(serde_json::to_value(settings).unwrap()["ignoreUnread"], true);
     }
 }

@@ -1,6 +1,6 @@
 /** Reply drafts live outside DesktopApp state so a keystroke re-renders only the composer
  * subscribed to that thread's draft, not the whole workspace. Drafts are in memory only
- * (they were never persisted) and belong to a thread, so each open pane keeps its own. */
+ * (they were never persisted) and belong to a thread, and survive switching threads and closing panes until sent or cleared. */
 import { useSyncExternalStore } from "react";
 
 let drafts: Record<string, string> = {};
@@ -16,14 +16,6 @@ export function setDraft(id: string, value: string) {
   emit([id]);
 }
 export function updateDraft(id: string, update: (previous: string) => string) { setDraft(id, update(getDraft(id))); }
-/** Drops every draft whose thread is no longer open in a pane, as switching threads always did. */
-export function pruneDrafts(keep: readonly string[]) {
-  const dropped = Object.keys(drafts).filter(id => !keep.includes(id));
-  if (!dropped.length) return;
-  drafts = Object.fromEntries(Object.entries(drafts).filter(([id]) => keep.includes(id)));
-  emit(dropped);
-}
-
 // Drafts are memory-only, so an app restart (updater) would lose them. Before restarting they are written to
 // localStorage once; the next launch reads and deletes that copy and re-applies it as threads reopen.
 const RESTART_KEY = "freddai.drafts-before-restart";

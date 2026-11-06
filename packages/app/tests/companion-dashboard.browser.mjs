@@ -43,6 +43,8 @@ try {
     await page.setViewportSize({ width, height });
     await page.evaluate(value => { document.documentElement.dataset.companionSidebar = String(value); }, sidebar);
     assert.equal(await columns(), count, `${width}×${height} columns`);
+    assert.ok(await first.getByRole('button', { name: 'New thread in Project One' }).isVisible(), 'new thread is directly on the card');
+    assert.ok(await first.getByRole('button', { name: 'Dictate task in Project One' }).isVisible(), 'microphone is directly on the card');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no horizontal page overflow');
     const bounds = await page.locator('.companion-dashboard').evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth }));
     assert.ok(bounds.scroll <= bounds.width, 'dashboard controls fit available width');

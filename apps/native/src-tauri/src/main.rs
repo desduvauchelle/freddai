@@ -3,6 +3,13 @@
 #[cfg(not(target_os = "ios"))]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--mcp") {
+        let root = args.get(2).map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Library/Application Support/com.freddai.desktop")));
+        let Some(root) = root else { eprintln!("Supply the Freddai workspace path after --mcp"); std::process::exit(1); };
+        let context = freddai_core::mcp::Context { project: args.get(3).cloned(), thread: args.get(4).cloned() };
+        if let Err(error) = freddai_core::mcp::run(&root, context) { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--watch-process") {
         if let Some(group) = args.get(2).and_then(|s| s.parse::<i32>().ok()) {
             freddai_core::watchdog::watch(std::io::stdin(), group);

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.freddai.parityprobe">
+  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+  <application android:label="Freddai offline UI probe" />
+  <instrumentation android:name="com.freddai.parityprobe.TreeProbe" android:targetPackage="com.freddai.parityprobe" />
+</manifest>

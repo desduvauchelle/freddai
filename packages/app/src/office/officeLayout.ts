@@ -1,7 +1,7 @@
 import { makeNav, type Nav, type Point } from "./officePath";
 
 /*
- * Fixed floor plan. Geometry is a pure function of the project list (order, names, colours) and the room-grid column count;
+ * Adaptive floor plan, fixed during thread activity. Geometry is a pure function of the project list (order, names, colours) and the room-grid column count;
  * thread states never feed into it, so the map cannot reflow when work starts, waits or finishes.
  * Logical pixel grid: 1 unit = 1 art pixel, scaled by the parent <svg>.
  */
@@ -20,7 +20,7 @@ export const CORRIDOR_H = 40;
 /** Walking line inside a corridor, measured from the bottom of the room row above it. */
 export const CORRIDOR_LINE = 28;
 export const BAND_H = 112;
-export const MIN_INNER_W = 560;
+export const MIN_INNER_W = 744;
 export const MAX_COLS = 8;
 export const DOOR_W = 34;
 export const LOUNGE_MAX = 8;
@@ -36,14 +36,16 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export type Layout = {
   width: number; height: number; innerW: number; cols: number; rows: number; spineX: number;
   rooms: PlacedRoom[]; corridors: (Rect & { line: number })[];
-  band: Rect; lobby: Rect; lounge: Rect; you: Rect;
-  door: Rect; reception: Rect; benches: Spot[]; coffee: Rect; tables: Point[]; loungeSpots: Spot[];
+  band: Rect; lobby: Rect; lounge: Rect; shrine: Rect; you: Rect;
+  door: Rect; reception: Rect; benches: Spot[]; projectWaiting: (Spot & { project: PlanProject })[]; coffee: Rect; tables: Point[]; loungeSpots: Spot[];
   deskUser: Rect; tray: Rect & { stand: Spot; cells: Point[] };
   nav: Nav;
 };
 
+const lobbyWidth = (count: number) => Math.max(160, 96 + Math.ceil(count / 3) * 24);
+
 const sizeFor = (count: number, cols: number) => {
-  const rows = Math.ceil(count / cols), innerW = Math.max(MIN_INNER_W, SPINE + cols * ROOM_W);
+  const rows = Math.ceil(count / cols), innerW = Math.max(MIN_INNER_W, lobbyWidth(count) + 156 + 224 + 144, SPINE + cols * ROOM_W);
   return { rows, innerW, width: innerW + 2 * WALL, height: 2 * WALL + Math.max(rows, 1) * CORRIDOR_H + rows * ROOM_H + BAND_H };
 };
 
@@ -61,7 +63,15 @@ export function floorPlan(projects: readonly PlanProject[], cols: number): Layou
   const count = projects.length, c = Math.max(1, Math.min(cols, Math.max(count, 1)));
   const { rows, innerW, width, height } = sizeFor(count, c);
   const rr = Math.max(rows, 1), spineX = WALL + SPINE / 2;
-  const x0 = WALL + SPINE + Math.floor((innerW - SPINE - c * ROOM_W) / 2);
+  const x0 = WALL + SPINE;
+  // Balance row populations first, then give their unused width back to rooms.
+  // Integer boundaries keep the pixel artwork crisp, including uneven row sizes.
+  const rowCounts = Array.from({ length: rows }, (_, row) => Math.floor(count / rows) + (row < count % rows ? 1 : 0));
+  const placements = rowCounts.flatMap((n, row) => Array.from({ length: n }, (_, col) => {
+    const left = Math.floor(col * (innerW - SPINE) / n);
+    const right = Math.floor((col + 1) * (innerW - SPINE) / n);
+    return { row, x: x0 + left, w: right - left };
+  }));
   const nodes: Record<string, Point> = {}, edges: [string, string][] = [];
   const node = (name: string, x: number, y: number) => { nodes[name] = { x, y }; return { node: name, x, y }; };
   const chain = (names: string[]) => { for (let i = 1; i < names.length; i++) edges.push([names[i - 1], names[i]]); };
@@ -76,46 +86,59 @@ export function floorPlan(projects: readonly PlanProject[], cols: number): Layou
   const onLine: string[][] = corridors.map((_, k) => [`spine:${k}`]);
 
   const rooms: PlacedRoom[] = projects.map((project, index) => {
-    const row = Math.floor(index / c), col = index % c;
-    const x = x0 + col * ROOM_W, y = WALL + row * (ROOM_H + CORRIDOR_H), floorY = y + FACE, doorX = x + ROOM_W / 2;
+    const { row, x, w } = placements[index];
+    const y = WALL + row * (ROOM_H + CORRIDOR_H), floorY = y + FACE, doorX = x + Math.floor(w / 2);
+    const cellWidth = (w - 2 * SIDE) / 2;
+    const deskX = (col: number) => x + SIDE + Math.floor(col * cellWidth + (cellWidth - CELL_W) / 2);
     const out = `door:${index}:out`, inn = `door:${index}:in`, innY = y + ROOM_H - SOUTH - 6;
     node(out, doorX, corridors[row].line); onLine[row].push(out);
     node(inn, doorX, innY);
     edges.push([out, inn]);
-    const aisle = [0, 1].map(k => x + SIDE + k * CELL_W + 66);
+    const aisle = [0, 1].map(k => deskX(k) + 66);
     const bottoms = aisle.map((ax, k) => node(`aisle:${index}:${k}`, ax, innY).node);
     chain([bottoms[0], inn, bottoms[1]]);
     const desks: DeskSpot[] = Array.from({ length: DESKS }, (_, slot) => {
-      const dx = x + SIDE + (slot % 2) * CELL_W, dy = floorY + Math.floor(slot / 2) * CELL_H;
+      const dx = deskX(slot % 2), dy = floorY + Math.floor(slot / 2) * CELL_H;
       const stand = node(`stand:${index}:${slot}`, dx + 66, dy + 66), ap = node(`ap:${index}:${slot}`, dx + 66, dy + 26), seat = node(`seat:${index}:${slot}`, dx + 28, dy + 26);
       edges.push([ap.node, seat.node]);
       return { slot, x: dx, y: dy, seat, stand };
     });
     // One aisle per desk column, top to bottom: row-0 approach, row-0 stand, row-1 approach, row-1 stand, room floor.
     for (let k = 0; k < 2; k++) chain([`ap:${index}:${k}`, desks[k].stand.node, `ap:${index}:${2 + k}`, desks[2 + k].stand.node, bottoms[k]]);
-    return { project, index, x, y, w: ROOM_W, h: ROOM_H, floorY, doorX, desks };
+    return { project, index, x, y, w, h: ROOM_H, floorY, doorX, desks };
   });
 
-  // Band along the bottom: lobby | coffee lounge | "you" desk. The lobby column is the spine itself, so the front door sits under it.
-  const lobbyW = Math.round(innerW * 0.36), loungeW = Math.round(innerW * 0.4);
-  const lobby: Rect = { x: WALL, y: by, w: lobbyW, h: BAND_H }, lounge: Rect = { x: WALL + lobbyW, y: by, w: loungeW, h: BAND_H }, you: Rect = { x: WALL + lobbyW + loungeW, y: by, w: innerW - lobbyW - loungeW, h: BAND_H };
+  // Band along the bottom: lobby | coffee lounge | clock shrine | "you" desk. The lobby column is the spine itself, so the front door sits under it.
+  const shrineW = 156, sharedW = innerW - shrineW;
+  const lobbyW = lobbyWidth(count), loungeW = Math.round((sharedW - lobbyW) * 0.65);
+  const lobby: Rect = { x: WALL, y: by, w: lobbyW, h: BAND_H }, lounge: Rect = { x: WALL + lobbyW, y: by, w: loungeW, h: BAND_H }, shrine: Rect = { x: WALL + lobbyW + loungeW, y: by, w: shrineW, h: BAND_H }, you: Rect = { x: shrine.x + shrine.w, y: by, w: sharedW - lobbyW - loungeW, h: BAND_H };
   const last = rr - 1, laneY = by + BAND_H - 12;
   node("door", spineX, height + 26);
   node("entry", spineX, by + BAND_H - 14);
   node("recep", spineX, by + 54);
   chain(["door", "entry", "recep", `spine:${last}`]);
   for (let k = last; k > 0; k--) edges.push([`spine:${k}`, `spine:${k - 1}`]);
-  const reception: Rect = { x: lobby.x + 38, y: by + 24, w: 86, h: 13 };
-  const nBench = Math.max(2, Math.min(LOBBY_MAX, Math.floor((lobbyW - 78) / 26) + 1));
+  const reception: Rect = { x: lobby.x + 34, y: by + 24, w: 48, h: 13 };
+  const nBench = 2;
   const benches: Spot[] = [];
   const bn: string[] = ["recep"];
   for (let i = 0; i < nBench; i++) {
-    const bx = lobby.x + 72 + i * 26;
+    const bx = lobby.x + 48 + i * 26;
     bn.push(node(`bench:${i}`, bx, by + 54).node);
     benches.push(node(`lobby:${i}`, bx, by + 78));
     edges.push([`bench:${i}`, `lobby:${i}`]);
   }
   chain(bn);
+  // Three compact rows of project-colored reserves, connected to the corridor above.
+  const projectWaiting = projects.map((project, i) => {
+    const x = lobby.x + 96 + Math.floor(i / 3) * 24;
+    const y = by + 40 + (i % 3) * 27;
+    const hub = node(`ready:hub:${i}`, x, corridors[last].line);
+    onLine[last].push(hub.node);
+    const spot = node(`ready:${project.id}`, x, y);
+    edges.push([hub.node, spot.node]);
+    return { ...spot, project };
+  });
 
   const hubLounge = node("hub:lounge", lounge.x + 14, corridors[last].line), laneLounge = node("lane:lounge", lounge.x + 14, laneY);
   edges.push([hubLounge.node, laneLounge.node]);
@@ -140,7 +163,7 @@ export function floorPlan(projects: readonly PlanProject[], cols: number): Layou
 
   onLine[last].push(hubLounge.node, hubYou.node);
   onLine.forEach(names => chain(sorted(names)));
-  return { width, height, innerW, cols: c, rows, spineX, rooms, corridors, band: { x: WALL, y: by, w: innerW, h: BAND_H }, lobby, lounge, you, door: { x: spineX - 14, y: height - WALL, w: 28, h: WALL }, reception, benches, coffee, tables, loungeSpots, deskUser, tray, nav: makeNav(nodes, edges) };
+  return { width, height, innerW, cols: c, rows, spineX, rooms, corridors, band: { x: WALL, y: by, w: innerW, h: BAND_H }, lobby, lounge, shrine, you, door: { x: spineX - 14, y: height - WALL, w: 28, h: WALL }, reception, benches, projectWaiting, coffee, tables, loungeSpots, deskUser, tray, nav: makeNav(nodes, edges) };
 }
 
 /**

@@ -14,6 +14,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         input.placeholderString = "Test text"
         window.contentView!.addSubview(label); window.contentView!.addSubview(button); window.contentView!.addSubview(input)
         window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(CommandLine.arguments.contains("--editing") ? input : button)
         NSApp.activate(ignoringOtherApps: true)
     }
     @objc func increment() { count += 1; label.stringValue = "Count: \(count)" }

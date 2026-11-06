@@ -92,3 +92,13 @@ it("counts only threads needing attention", () => {
   expect(attentionCount(list, { b: 5, c: 1, e: 5 })).toBe(3);
   expect(attentionCount([t("x", "done")], { x: 5 }, () => 1)).toBe(1);
 });
+
+it("keeps read pins above live threads without consuming recent slots", () => {
+  const l = [th("live", "p", 100), th("recent", "p", 90), { ...th("pin", "p", 10), pinned: true }];
+  const r = bucketThreads(l, { ...base, read: { recent: 90, pin: 10 }, recentCount: 1 });
+  expect(ids(r.active)).toEqual(["pin", "live"]);
+  expect(ids(r.recent)).toEqual(["recent"]);
+  expect(r.older).toEqual([]);
+  const unpinned = bucketThreads(l.map(t => ({ ...t, pinned: false })), { ...base, read: { recent: 90, pin: 10 }, recentCount: 1 });
+  expect(ids(unpinned.older)).toEqual(["pin"]);
+});

@@ -4,11 +4,11 @@ import { planRoute, routeWaypoints } from "./officePath";
 
 const projects = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, name: `Project ${i}`, color: "#88aa44" }));
 
-it("gives every project a same-sized room with four desks, in project order", () => {
+it("gives every project a room at least the minimum size with four desks, in project order", () => {
   const l = floorPlan(projects(7), 3);
   expect(l.rooms.map(r => r.project.id)).toEqual(projects(7).map(p => p.id));
   for (const r of l.rooms) {
-    expect([r.w, r.h]).toEqual([ROOM_W, ROOM_H]);
+    expect(r.w).toBeGreaterThanOrEqual(ROOM_W); expect(r.h).toBe(ROOM_H);
     expect(r.desks).toHaveLength(DESKS);
     expect(r.x).toBeGreaterThanOrEqual(0); expect(r.x + r.w).toBeLessThanOrEqual(l.width); expect(r.y + r.h).toBeLessThanOrEqual(l.band.y);
   }
@@ -23,7 +23,7 @@ it("is a pure function of the project list and column count, so thread states ca
   expect(planCols(6, 1440, 900)).toBe(planCols(6, 1440, 900));
   // A different project list is the only thing that changes the plan.
   expect(floorPlan(projects(7), 3).rooms).toHaveLength(7);
-  expect(floorPlan(projects(6), 3).rooms.map(r => [r.x, r.y])).toEqual(floorPlan(projects(7), 3).rooms.slice(0, 6).map(r => [r.x, r.y]));
+  // Adding projects may rebalance rows; activity cannot.
 });
 
 it("chooses the grid that scales largest into the box, preferring fewer columns on ties", () => {
@@ -48,8 +48,8 @@ it("only has axis-aligned walkways, so nothing walks diagonally through a wall",
   for (const [a, b] of edges(l)) { const p = l.nav.nodes[a], q = l.nav.nodes[b]; expect(p.x === q.x || p.y === q.y, `${a} - ${b}`).toBe(true); }
 });
 
-it("never routes through a room wall: a walkway inside a room's footprint stays in its interior or its doorway", () => {
-  const l = floorPlan(projects(6), 3);
+it.each([[1, 1], [2, 2], [6, 3], [9, 8], [10, 8], [20, 8]])("keeps walkways inside walls and doorways for %i projects with %i columns", (count, cols) => {
+  const l = floorPlan(projects(count), cols);
   for (const [a, b] of edges(l)) {
     const p = l.nav.nodes[a], q = l.nav.nodes[b];
     for (let t = 0; t <= 1; t += 0.05) {
@@ -88,4 +88,45 @@ it("mini plan: one row up to six rooms, two rows beyond, wider only when the car
 it("full plan picks the largest scale for the real stage and may exceed 1", () => {
   const l = bestFullLayout(projectsOf(8), 1650, 1080);
   expect(Math.min(1650 / l.width, 1080 / l.height)).toBeGreaterThan(1.5);
+});
+
+for (const count of [1, 2, 3, 7, 9, 10, 20, 25]) for (const cols of [1, 3, 5, 8]) {
+  it(`balances ${count} projects with column limit ${cols}, fills rows, and keeps desks reachable`, () => {
+    const l = floorPlan(projects(count), cols);
+    const rows = l.corridors.map((_, i) => l.rooms.filter(r => r.y === l.rooms[0].y + i * (ROOM_H + 40)));
+    expect(Math.max(...rows.map(r => r.length)) - Math.min(...rows.map(r => r.length))).toBeLessThanOrEqual(1);
+    for (const row of rows) {
+      expect(row[0].x).toBe(36);
+      expect(row.at(-1)!.x + row.at(-1)!.w).toBe(l.width - 8);
+      for (let i = 1; i < row.length; i++) expect(row[i].x).toBe(row[i - 1].x + row[i - 1].w);
+    }
+    for (const room of l.rooms) for (const desk of room.desks) {
+      expect(desk.x).toBeGreaterThan(room.x);
+      expect(desk.x + 80).toBeLessThan(room.x + room.w);
+      expect(planRoute(l.nav, "door", desk.seat.node)).not.toBeNull();
+    }
+    for (const [a, b] of edges(l)) {
+      const p = l.nav.nodes[a], q = l.nav.nodes[b];
+      expect(p.x === q.x || p.y === q.y).toBe(true);
+    }
+  });
+}
+
+it("turns eight-plus-two into five-plus-five with wider rooms", () => {
+  const l = floorPlan(projects(10), 8);
+  expect(l.rooms.filter(r => r.y === l.rooms[0].y)).toHaveLength(5);
+  expect(l.rooms.every(r => r.w > ROOM_W)).toBe(true);
+});
+
+it.each([1, 2, 9, 20, 40])("fits a compact reception and connected reserve for every one of %i projects", count => {
+  const l = floorPlan(projects(count), 8);
+  expect(l.projectWaiting).toHaveLength(count);
+  expect(l.reception.w).toBeLessThan(50);
+  for (const spot of l.projectWaiting) {
+    expect(spot.x - 10).toBeGreaterThan(l.lobby.x);
+    expect(spot.x + 10).toBeLessThan(l.lobby.x + l.lobby.w);
+    expect(spot.y - 24).toBeGreaterThan(l.band.y);
+    const room = l.rooms.find(r => r.project.id === spot.project.id)!;
+    expect(planRoute(l.nav, spot.node, room.desks[0].seat.node)).not.toBeNull();
+  }
 });

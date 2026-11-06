@@ -22,7 +22,7 @@ export type OfficeAgent = {
 };
 export type ProjectTotals = { msgs: number; threads: number; working: number };
 export type OfficeRoom = { projectId: string; name: string; color: string; totals: ProjectTotals; agents: OfficeAgent[] };
-export type OfficeShrine = { entries: { id: string; name: string; projectName: string; due: number }[]; next: number | null };
+export type OfficeShrine = { entries: { id: string; name: string; projectName: string; due: number; variant: number }[]; next: number | null };
 export type OfficeModel = {
   /** One room per project, in the order of the `projects` array. Never filtered or re-sorted by activity. */
   rooms: OfficeRoom[];
@@ -45,6 +45,7 @@ const live = (t: Session) => !t.archived && t.deleted_at == null && t.status !==
 const hash = (s: string) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
 
 export function agentState(t: Pick<Session, "status" | "pending">): OfficeAgentState {
+  if (t.pending) return "needs-you";
   const run = homeRunState(t);
   if (run === "failed") return "failed";
   if (run === "waiting") return "needs-you";
@@ -99,7 +100,7 @@ export function officeModel(sessions: readonly Session[], projects: readonly Pro
   const agents = found.sort((a, b) => a.id.localeCompare(b.id));
   const tray = agents.filter(a => a.place === "tray").sort((a, b) => b.updated - a.updated || a.id.localeCompare(b.id));
   const rooms = projects.map((p): OfficeRoom => ({ projectId: p.id, name: p.name, color: p.color, totals: totals.get(p.id)!, agents: agents.filter(a => a.projectId === p.id && a.place === "desk") }));
-  const entries = schedules.filter(s => s.enabled).map(s => ({ id: s.id, name: s.name, projectName: byId.get(s.project)?.name ?? s.project, due: s.next_due })).sort((a, b) => a.due - b.due || a.id.localeCompare(b.id));
+  const entries = schedules.filter(s => s.enabled).map(s => ({ id: s.id, name: s.name, projectName: byId.get(s.project)?.name ?? s.project, due: s.next_due, variant: hash(s.id) % 4 })).sort((a, b) => a.due - b.due || a.id.localeCompare(b.id));
   const shrine = entries.length ? { entries, next: entries[0].due } : null;
   const working = agents.filter(a => a.state === "working").length, waiting = needs.length;
   const summary = [working ? `${working} working` : "", waiting ? `${waiting} need${waiting === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · ") || (agents.length ? "All settled" : "Office is empty");

@@ -1,3 +1,5 @@
+import { removeConnection } from "./account-removal";
+import { agentDisplayName } from "./types";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
@@ -245,7 +247,7 @@ export function AccountSetup({
   const summary = readyAccounts.length
     ? `${readyAccounts.length} account${readyAccounts.length === 1 ? "" : "s"} ready${
         defaultAccount && statuses[defaultAccount.id] === "Signed in"
-          ? ` · New threads use ${names[defaultAccount.provider]} · ${defaultAccount.name}`
+          ? ` · New threads use ${agentDisplayName(defaultAccount)}`
           : ""
       }`
     : "No accounts ready yet. Connect an existing sign-in or add an account below.";
@@ -264,7 +266,7 @@ export function AccountSetup({
         <span className="account-color" style={{ background: a.color }} />
         <div className="setup-account-main">
           <div className="setup-account-name">
-            <strong>{a.name}</strong>
+            <strong>{agentDisplayName(a)}</strong>
             <span className="setup-tag">
               {a.config_home ? "Uses CLI sign-in" : "Separate login"}
             </span>
@@ -292,8 +294,8 @@ export function AccountSetup({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="dev-popup account-menu" onEscapeKeyDown={e => e.stopPropagation()} align="end" aria-label={`Actions for ${a.name}`}>
-              <DropdownMenuLabel className="thread-menu-label">{a.name}</DropdownMenuLabel>
-              <DropdownMenuItem disabled={pending || !native || !!db.host_update_pending}
+              <DropdownMenuLabel className="thread-menu-label">{agentDisplayName(a)}</DropdownMenuLabel>
+              <DropdownMenuItem disabled={pending || !native}
                 onSelect={() => {
                   renameTrigger.current = menuTriggers.current[a.id];
                   setConnectionName(a.name); setError("");
@@ -317,9 +319,8 @@ export function AccountSetup({
                   await onRefresh();
                 })}>Set as default</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="thread-menu-danger" disabled={pending || !native || busy}
+              <DropdownMenuItem className="thread-menu-danger" disabled={pending || !native}
                 onSelect={() => { setRenaming(""); setRemoving(a.id); }}>Remove connection…</DropdownMenuItem>
-              {busy && <DropdownMenuLabel className="thread-menu-label">Finish active work before removing</DropdownMenuLabel>}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -344,14 +345,14 @@ export function AccountSetup({
         {removing === a.id && (
           <div className="setup-remove-confirm" role="group" aria-label={`Remove ${a.name} connection`}>
             <p>Remove {a.name} from Freddai? CLI sign-in and conversation history are kept.
-              Threads and schedules using this connection will need your attention; they will not switch accounts.</p>
-            <Button size="sm" variant="outline" disabled={pending || busy}
+              Any active work and pending sign-in on this connection will be stopped. Threads and schedules using this connection will need your attention; they will not switch accounts.</p>
+            <Button size="sm" variant="outline" disabled={pending || !native}
               onClick={() => void run(async () => {
-                await invoke("remove_account", { account: a.id });
+                await removeConnection(a.id, invoke);
                 requestSerial.current[a.id] = (requestSerial.current[a.id] || 0) + 1;
                 setRemoving("");
                 await onRefresh();
-              })}>Remove connection</Button>
+              })}>{pending ? "Removing…" : busy ? "Stop work and remove connection" : "Remove connection"}</Button>
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => setRemoving("")}>Cancel</Button>
           </div>
         )}

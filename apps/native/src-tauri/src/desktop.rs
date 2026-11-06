@@ -111,7 +111,7 @@ fn cache_host_binary(exe: &std::path::Path, root: &std::path::Path) -> Result<Pa
         .map_err(|e| e.to_string());
     }
     // Unbundled development executables do not depend on a bundle Info.plist.
-    let target = dir.join(name);
+    let target = dir.join(if cfg!(windows) { format!("{name}.exe") } else { name });
     if !target.exists() {
         fs::copy(exe, &target).map_err(|e| e.to_string())?;
     }
@@ -132,6 +132,33 @@ fn verify_bundle(bundle: &std::path::Path) -> Result<(), String> {
     }
     Ok(())
 }
+// Windows GetModuleFileName (current_exe) and canonicalize can spell the same
+// executable differently (notably the \\?\ prefix). Compare resolved paths there.
+fn host_build_matches(build: Option<&str>, binary: &std::path::Path) -> bool {
+    if build == binary.to_str() { return true; }
+    #[cfg(windows)]
+    if let Some(build) = build {
+        if let (Ok(actual), Ok(expected)) = (fs::canonicalize(build), fs::canonicalize(binary)) {
+            return actual == expected;
+        }
+    }
+    false
+}
+#[cfg(all(test, windows))]
+mod windows_host_identity_tests {
+    use super::*;
+    #[test]
+    fn extended_and_regular_executable_paths_identify_the_same_host() {
+        let exe = std::env::current_exe().unwrap();
+        let canonical = fs::canonicalize(&exe).unwrap();
+        let extended = canonical.to_str().unwrap();
+        let regular = extended.strip_prefix(r"\\?\").expect("Windows canonical path prefix");
+        assert!(host_build_matches(Some(regular), &canonical));
+        assert!(host_build_matches(Some(extended), std::path::Path::new(regular)));
+        assert!(!host_build_matches(None, &canonical));
+        assert!(!host_build_matches(Some("missing-other-build.exe"), &canonical));
+    }
+}
 fn ensure_host(host: &Host) -> Result<(), String> {
     let mut last = host.upgrade_attempt.lock().unwrap();
     *last = Some(std::time::Instant::now());
@@ -146,9 +173,8 @@ fn ensure_host_inner(host: &Host, running: Option<usize>) -> Result<(), String> 
 }
 fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
     let binary = host.binary.clone();
-    let build = binary.to_string_lossy();
     if let Ok(reply) = freddai_core::host::call(&host.root, "hello", json!({})) {
-        if reply["version"] == freddai_core::host::VERSION && reply["build"] == build.as_ref() {
+        if reply["version"] == freddai_core::host::VERSION && host_build_matches(reply["build"].as_str(), &binary) {
             host.upgrade_resolved();
             return Ok(());
         }
@@ -158,7 +184,7 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(300));
     }
-    let mut cmd = Command::new(binary);
+    let mut cmd = freddai_core::platform::quiet_command(binary);
     cmd.arg("--host")
         .arg(&host.root)
         .current_dir(&host.root)
@@ -177,13 +203,19 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
             });
         }
     }
+    #[cfg(windows)]
+    {
+        let log_path = host.root.join("host.log");
+        let log = fs::OpenOptions::new().create(true).append(true).open(log_path).map_err(|e| e.to_string())?;
+        cmd.stderr(Stdio::from(log));
+    }
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     for _ in 0..50 {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return Err(format!("Background host exited during startup ({status}). See ~/Library/Logs/Freddai/native.log for details."));
+            return Err(format!("Background host exited during startup ({status}). {}", if cfg!(windows) { format!("See {} for details.", host.root.join("host.log").display()) } else { "See ~/Library/Logs/Freddai/native.log for details.".into() }));
         }
         if freddai_core::host::call(&host.root, "hello", json!({}))
-            .is_ok_and(|reply| reply["build"].as_str() == host.binary.to_str()) {
+            .is_ok_and(|reply| host_build_matches(reply["build"].as_str(), &host.binary)) {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
@@ -234,7 +266,7 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
     match freddai_core::host::call(&host.root, method, p.clone()) {
         result if method == "snapshot_since" && match &result {
             Err(e) => e.contains("Unknown host command"),
-            Ok(reply) => reply["build"].as_str() != host.binary.to_str(),
+            Ok(reply) => !host_build_matches(reply["build"].as_str(), &host.binary),
         } => {
             // Polling must retry after a startup upgrade was deferred by active work.
             // Otherwise the full-database compatibility fallback can remain active forever.
@@ -250,7 +282,7 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
             freddai_core::host::call(&host.root, method, p)
         }
         Err(e) if method == "thread_action" && e == "Unknown thread action"
-            && matches!(p["action"].as_str(), Some("purge" | "archive" | "delete" | "restore" | "unarchive" | "move")) => {
+            && matches!(p["action"].as_str(), Some("purge" | "archive" | "delete" | "restore" | "unarchive" | "move" | "pin" | "unpin")) => {
             // A preserved host can outlive the UI that introduced this action.
             // Upgrade only through the host's idle handshake; never stop active work.
             ensure_host(host)?;
@@ -293,9 +325,9 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                 let h2 = std::time::Instant::now();
                 let hello = freddai_core::host::call(&host.root, "hello", json!({}))?;
                 hello_ms = freddai_core::timing::ms(h2);
-                result["host_update_pending"] = json!(hello["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(hello["build"].as_str(), &host.binary));
             } else if result.get("host_update_pending").is_none() {
-                result["host_update_pending"] = json!(result["build"].as_str() != host.binary.to_str());
+                result["host_update_pending"] = json!(!host_build_matches(result["build"].as_str(), &host.binary));
             }
             static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
             let gap = {
@@ -398,6 +430,17 @@ async fn git_commit_message_start(h: State<'_, Host>, project: String, stat: Str
 async fn git_commit_message_state(h: State<'_, Host>, project: String) -> Result<Value, String> {
     rpc(h.inner().clone(), "commit_message_state", json!({"project":project})).await
 }
+/// Each thread gets one workspace webview backed by the same host, never a new agent.
+#[tauri::command]
+async fn open_thread_window(app: tauri::AppHandle, h: State<'_, Host>, session: String) -> Result<(), String> {
+    let snapshot = rpc(h.inner().clone(), "snapshot", json!({})).await?;
+    let thread = snapshot["sessions"].as_array()
+        .and_then(|sessions| sessions.iter().find(|t| t["id"].as_str() == Some(session.as_str())))
+        .ok_or("Thread no longer exists")?;
+    let base = app.config().app.windows.first().cloned().ok_or("Missing window configuration")?;
+    crate::thread_windows::open(app, base, session, thread["title"].as_str().unwrap_or("Thread")).await
+}
+
 #[tauri::command]
 async fn snapshot(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "snapshot", json!({})).await
@@ -472,7 +515,7 @@ async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, Strin
     .await
 }
 #[tauri::command]
-async fn save_thread_list(h: State<'_, Host>, settings: crate::companion_server::ThreadListSettings) -> Result<(), String> {
+async fn save_thread_list(h: State<'_, Host>, settings: crate::thread_list_settings::ThreadListSettings) -> Result<(), String> {
     let dir = h.root.join("companion");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("thread-list.json");
@@ -664,8 +707,49 @@ async fn remove_worktree(h: State<'_, Host>, session: String) -> Result<Value, S
     )
     .await
 }
+fn require_schedule_end_support(hello: &Value) -> Result<(), String> {
+    if hello["schedule_end_dates"] == true { return Ok(()) }
+    Err("The background host needs its update to enforce end dates. Let active work finish so it can update, then save again.".into())
+}
+#[cfg(test)]
+#[test]
+fn schedule_end_support_rejects_older_hosts() {
+    assert!(require_schedule_end_support(&json!({"version":"2"})).is_err());
+    assert!(require_schedule_end_support(&json!({"schedule_end_dates":false})).is_err());
+    assert!(require_schedule_end_support(&json!({"schedule_end_dates":true})).is_ok());
+}
+fn require_schedule_run_limit_support(hello: &Value) -> Result<(), String> {
+    if hello["schedule_run_limits"] == true { return Ok(()) }
+    Err("The background host needs its update to enforce run limits. Let active work finish so it can update, then save again.".into())
+}
+#[cfg(test)]
+#[test]
+fn schedule_run_limit_support_rejects_older_hosts() {
+    assert!(require_schedule_run_limit_support(&json!({"schedule_end_dates":true})).is_err());
+    assert!(require_schedule_run_limit_support(&json!({"schedule_run_limits":true})).is_ok());
+}
+fn require_schedule_delivery_support(hello: &Value) -> Result<(), String> {
+    if hello["schedule_delivery"] == true { return Ok(()) }
+    Err("The background host needs its update for routine notifications and thread reuse. Let active work finish so it can update, then save again.".into())
+}
+#[cfg(test)]
+#[test]
+fn schedule_delivery_support_rejects_older_hosts() {
+    assert!(require_schedule_delivery_support(&json!({"schedule_run_limits":true})).is_err());
+    assert!(require_schedule_delivery_support(&json!({"schedule_delivery":false})).is_err());
+    assert!(require_schedule_delivery_support(&json!({"schedule_delivery":true})).is_ok());
+}
 #[tauri::command]
 async fn save_schedule(h: State<'_, Host>, schedule: Value) -> Result<Value, String> {
+    // Old hosts ignore unknown JSON fields; never silently discard routine controls.
+    if !schedule["end_date"].is_null() || !schedule["max_runs"].is_null() || schedule["new_chat"] == false || !schedule["notifications"].is_null() {
+        let hello = rpc(h.inner().clone(), "hello", json!({})).await?;
+        if !schedule["end_date"].is_null() { require_schedule_end_support(&hello)?; }
+        if !schedule["max_runs"].is_null() { require_schedule_run_limit_support(&hello)?; }
+        if schedule["new_chat"] == false || !schedule["notifications"].is_null() {
+            require_schedule_delivery_support(&hello)?;
+        }
+    }
     rpc(
         h.inner().clone(),
         "save_schedule",
@@ -752,6 +836,10 @@ async fn voice_cancel_recording() -> Result<(), String> {
 }
 #[tauri::command]
 fn startup_status() -> bool {
+    #[cfg(windows)]
+    return crate::windows_startup::enabled();
+    #[cfg(not(windows))]
+    {
     std::env::var_os("HOME")
         .map(|h| {
             PathBuf::from(h)
@@ -760,11 +848,16 @@ fn startup_status() -> bool {
         })
         .unwrap_or(false)
 }
+}
 #[tauri::command]
 fn set_start_at_login(h: State<Host>, enabled: bool) -> Result<(), String> {
     configure_start_at_login(h.inner(), enabled)
 }
 fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    return crate::windows_startup::configure(&h.binary, &h.root, enabled);
+    #[cfg(not(windows))]
+    {
     let home = std::env::var_os("HOME").ok_or("Cannot find home directory")?;
     let dir = PathBuf::from(home).join("Library/LaunchAgents");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -784,6 +877,7 @@ fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
     let bin = h.binary.clone();
     let plist=format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>com.freddai.host</string><key>ProgramArguments</key><array><string>{}</string><string>--host</string><string>{}</string></array><key>RunAtLoad</key><true/><key>ProcessType</key><string>Background</string></dict></plist>",xml(&bin.to_string_lossy()),xml(&h.root.to_string_lossy()));
     fs::write(file, plist).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -841,6 +935,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             platform,
+            open_thread_window,
             companion_devices,
             companion_device_action,
             #[cfg(target_os = "macos")]
@@ -1178,6 +1273,24 @@ mod upgrade_retry_tests {
     use super::*;
 
     #[test]
+    fn thread_window_routes_exact_id_and_preserves_native_chrome() {
+        let mut base = tauri::utils::config::WindowConfig::default();
+        base.visible = false;
+        base.min_width = Some(640.);
+        let id = "thread / ?&=# café";
+        let config = crate::thread_windows::window_config(base, "thread-test".into(), id, "Focused task").unwrap();
+        assert_eq!(config.label, "thread-test");
+        assert_eq!(config.title, "Focused task — Freddai");
+        assert!(config.visible);
+        assert_eq!(config.min_width, Some(640.));
+        let tauri::WebviewUrl::App(path) = config.url else { panic!("Expected bundled app URL") };
+        let url = tauri::Url::parse(&format!("http://localhost/{}", path.display())).unwrap();
+        assert_eq!(url.path(), "/index.html");
+        assert_eq!(url.query_pairs().collect::<Vec<_>>(), vec![("thread".into(), id.into())]);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
     fn retry_waits_for_idle_and_throttles() {
         let ok = UPGRADE_RETRY_INTERVAL;
         assert!(upgrade_attempt_due(None, 0));
@@ -1194,6 +1307,7 @@ mod upgrade_retry_tests {
         assert_eq!(running_sessions(&json!({"error":"x"})), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn forced_restart_on_legacy_host_fails_loudly() {
         use std::os::unix::net::UnixListener;

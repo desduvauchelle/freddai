@@ -10,6 +10,8 @@ struct SetModeArgs: Decodable {
   var openDrawer: Bool?
 }
 
+struct SetDashboardArgs: Decodable { let model: DashboardModel }
+
 struct SetThreadsArgs: Decodable {
   let model: ThreadsModel
 }
@@ -86,6 +88,9 @@ class NativeShellPlugin: Plugin {
       return
     }
     let shell = ShellViewController(webView: webview)
+    shell.onDashboardAction = { [weak self] action in
+      try? self?.trigger("dashboardAction", data: action)
+    }
     shell.onSend = { [weak self] text, files in
       try? self?.trigger("composerSend", data: ComposerSendPayload(text: text, files: files))
     }
@@ -166,7 +171,7 @@ class NativeShellPlugin: Plugin {
 
   @objc func ping(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
-      invoke.resolve(["installed": self?.shell != nil])
+      invoke.resolve(["installed": self?.shell != nil, "nativeDashboardContent": true])
     }
   }
 
@@ -199,6 +204,11 @@ class NativeShellPlugin: Plugin {
       self?.drawer?.apply(args.model)
       invoke.resolve()
     }
+  }
+
+  @objc func setDashboard(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SetDashboardArgs.self)
+    DispatchQueue.main.async { [weak self] in self?.shell?.setDashboard(args.model); invoke.resolve() }
   }
 
   @objc func setThreadMeta(_ invoke: Invoke) throws {

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
-import { Paperclip } from 'lucide-react';
+import { LoaderCircle, Paperclip } from 'lucide-react';
 import type { Attachment, BackgroundTask, Message } from '../desktop/types';
 import { MessageMarkdown } from './MessageMarkdown';
 import { BackgroundTasks } from './BackgroundTasks';
@@ -9,7 +9,7 @@ import { groupTranscript, placeBackgroundTasks } from './transcript';
 import './ThreadTranscript.css';
 
 /** An outgoing message that the host has not yet echoed back in the thread's messages. */
-export type PendingOutgoing = { id: string; text: string; attachments?: readonly Attachment[]; status?: string };
+export type PendingOutgoing = { id: string; text: string; attachments?: readonly Attachment[]; status?: string; sending?: boolean };
 
 export type ThreadTranscriptProps = {
   messages: readonly Message[];
@@ -77,7 +77,7 @@ export function ThreadTranscript({ messages, density = 'comfortable', pending = 
       <div className="native-message">
         {chips(p.attachments)}
         <MessageMarkdown text={p.text} />
-        {p.status && <small role="status">{p.status}</small>}
+        {p.status && <small role="status" className={p.sending ? "outgoing-sending" : undefined}>{p.sending && <LoaderCircle size={14} aria-hidden="true" />}{p.status}</small>}
       </div>
     </article>)}
     {children}

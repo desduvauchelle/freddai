@@ -1,3 +1,4 @@
+import { statusReadCursors } from "../desktop/status-read-cursors";
 import { bucketThreads, compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, threadListStatus } from '../desktop/types.ts';
 import type { ConversationUsage } from '../desktop/conversation-usage';
 import type { Model } from '../desktop/agent-selection';
@@ -6,10 +7,11 @@ import type { BackgroundTask, Message, Pending, Attachment } from '../desktop/ty
 // Intentionally excludes account credentials, filesystem paths and settings.
 export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[] };
 export type CompanionThread = { id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
-export type CompanionSnapshot = { projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; recentFinished?: number } };
+export type CompanionSnapshot = { schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
 export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
 export type ComposerTarget = { thread?: string; project?: string; assistant?: string };
 export type CompanionClient = {
+  scheduleCommand?: import("../desktop/ScheduleManager").ScheduleCommand;
   summaries?: import("../desktop/DaySummaries").DaySummariesClient;
   transcribeAudio?(audio: Blob): Promise<{ text: string }>;
   models?(target: ComposerTarget): Promise<Model[]>;
@@ -35,7 +37,12 @@ export type CompanionClient = {
 };
 export type ThreadFilter = 'all' | 'attention' | 'running' | 'done';
 export type ThreadSort = 'recent' | 'oldest' | 'title';
+/** Apply the Mac's presentation preference without changing shared read history. */
+export function companionStatusRead(snapshot: CompanionSnapshot, read: Record<string, number>) {
+  return statusReadCursors(snapshot.threads, read, snapshot.threadList?.ignoreUnread === true);
+}
 export function selectThreads(snapshot: CompanionSnapshot, project: string, query: string, filter: ThreadFilter, sort: ThreadSort, read: Record<string, number> = {}) {
+  read = companionStatusRead(snapshot, read);
   const search = query.trim().toLocaleLowerCase();
   const names = new Map(snapshot.projects.map(p => [p.id, p.name]));
   return snapshot.threads.filter(t => (!project || t.project === project)
@@ -52,7 +59,7 @@ export function groupCompanionThreads(snapshot: CompanionSnapshot, threads: Comp
   const settings = snapshot.threadList;
   const grouped = settings?.grouped ?? true;
   const buckets = bucketThreads(threads, {
-    read: options.read, selected: options.selected, filter: options.filter,
+    read: companionStatusRead(snapshot, options.read), selected: options.selected, filter: options.filter,
     hideRead: settings?.hideRead ?? true, recentCount: settings?.recentFinished ?? RECENT_FINISHED_DEFAULT,
     scope: grouped ? 'grouped' : 'flat', queued: t => t.queued,
   });

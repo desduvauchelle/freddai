@@ -152,3 +152,51 @@ it("keeps a finished thread's character until it has left through the front door
   expect(buttons).toHaveLength(1);
   expect(within(screen.getByLabelText("Your desk")).getByRole("button", { name: /Title 1/ })).toBeTruthy();
 });
+
+it("gathers enabled schedules at a separate shrine with bounded admirers and overflow", () => {
+  const schedules = Array.from({ length: 7 }, (_, i) => ({ id: `s${i}`, name: `Task ${i}`, project: 'alpha', next_due: NOW + (i + 1) * 3600_000, enabled: i !== 0 }));
+  const { rerender } = render(<Office variant="mini" sessions={[]} projects={projects} schedules={schedules} now={NOW} onOpenThread={vi.fn()} />);
+  const shrine = screen.getByLabelText('Clock shrine');
+  expect(within(shrine).getAllByRole('img')).toHaveLength(4);
+  expect(shrine.textContent).toContain('6 scheduled · +2 more');
+  expect(within(shrine).queryByRole('img', { name: /Task 0/ })).toBeNull();
+  expect(within(shrine).getByRole('img', { name: /Alpha · Task 1/ })).toBeTruthy();
+  expect(within(shrine).queryByRole('button')).toBeNull();
+  expect(screen.getByLabelText('Coffee lounge').contains(shrine)).toBe(false);
+  const before = floors();
+  rerender(<Office variant="mini" sessions={[]} projects={projects} schedules={[]} now={NOW} onOpenThread={vi.fn()} />);
+  expect(floors()).toEqual(before);
+  expect(screen.getByLabelText('Clock shrine').textContent).toContain('NO SCHEDULED TASKS');
+  expect(screen.queryByLabelText('Scheduled work')).toBeNull();
+});
+
+it("keeps a project-colored reserve for every project even without threads", () => {
+  mini({ sessions: [] });
+  for (const p of projects) {
+    const reserve = screen.getByRole('img', { name: `${p.name} · Ready for a task` });
+    expect(reserve.querySelector(`rect[fill="${p.color}"]`)).toBeTruthy();
+    expect(screen.getByLabelText('Lobby').contains(reserve)).toBe(true);
+  }
+});
+
+it("walks a new task from its project reserve, then to coffee for confirmation and back to its desk", () => {
+  vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] });
+  const { rerender } = render(<Office variant="mini" sessions={sessions} projects={projects} now={NOW} onOpenThread={vi.fn()} />);
+  const reserve = screen.getByRole('img', { name: 'Alpha · Ready for a task' }).querySelector('g[transform]')!.getAttribute('transform');
+  act(() => { vi.advanceTimersByTime(3000); });
+  const updated = [...sessions, thread('new')];
+  const paint = (items: Session[]) => rerender(<Office variant="mini" sessions={items} projects={projects} now={NOW} onOpenThread={vi.fn()} />);
+  paint(updated);
+  expect(at(/Title new/)).toBe(reserve);
+  act(() => { vi.advanceTimersByTime(60_000); });
+  const desk = at(/Title new/);
+  expect(desk).not.toBe(reserve);
+  paint([...sessions, thread('new', { status: 'failed', pending })]);
+  act(() => { vi.advanceTimersByTime(60_000); });
+  const coffee = at(/Title new/);
+  expect(coffee).not.toBe(desk);
+  expect(screen.getByRole('button', { name: /Title new · Needs you/ })).toBeTruthy();
+  paint(updated);
+  act(() => { vi.advanceTimersByTime(60_000); });
+  expect(at(/Title new/)).toBe(desk);
+});

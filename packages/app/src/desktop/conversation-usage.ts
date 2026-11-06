@@ -1,3 +1,4 @@
+import { remainingPercent } from "./usage";
 export type ConversationUsage = {
   context_tokens: number | null;
   context_window: number | null;
@@ -10,7 +11,8 @@ export function usageLabels(usage?: ConversationUsage | null) {
     ? Math.min(100, Math.max(0, tokens / window * 100)) : null;
   return {
     percent,
-    context: percent === null ? null : `Context ${Math.round(percent)}%`,
+    remaining: remainingPercent(percent),
+    context: percent === null ? null : `Context ${Math.round(remainingPercent(percent)!)}% left`,
     // Cached token counts do not establish a cache expiry.
     cache: null,
   };

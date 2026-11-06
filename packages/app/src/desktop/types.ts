@@ -1,4 +1,9 @@
 export const providerName = (provider: string) => ({codex:"Codex",claude:"Claude Code",antigravity:"Antigravity CLI",gemini:"Gemini CLI (legacy)",grok:"Grok",opencode:"OpenCode",cursor:"Cursor CLI"}[provider] || provider);
+/** User-facing identity: coding agent first, followed by the user's connection name. */
+export function agentDisplayName(agent: { provider: string; name: string }): string {
+  const provider = ({ claude: "Claude", gemini: "Gemini", antigravity: "Antigravity", cursor: "Cursor" } as Record<string, string>)[agent.provider] || providerName(agent.provider);
+  return agent.name.trim() ? `${provider} · ${agent.name}` : provider;
+}
 export type Account = {
   id: string;
   name: string;
@@ -41,6 +46,7 @@ export type Pending = {
 };
 export type Session = {
   archived?: boolean;
+  pinned?: boolean;
   deleted_at?: number | null;
   execution_project?: string | null;
   usage?: import("./conversation-usage").ConversationUsage | null;
@@ -51,6 +57,7 @@ export type Session = {
   status: string;
   updated: number;
   last_user_message_at?: number | null;
+  turn_started_at?: number | null;
   /** Host-stored read cursor shared with the iPhone: the `updated` value last seen. */
   read_at?: number | null;
   provider_id: string | null;
@@ -62,7 +69,7 @@ export type Session = {
   pending: Pending | null;
   error: string | null;
 };
-export type Schedule = { id: string; name: string; project: string; account: string; routing: string; cron: string; timezone: string; prompt: string; enabled: boolean; options: LaunchOptions; next_due: number; runs: {id: string; due: number; state: string; session: string | null; reason: string | null}[] };
+export type Schedule = { id: string; name: string; project: string; account: string; routing: string; cron: string; timezone: string; end_date?: string | null; max_runs?: number | null; new_chat?: boolean; thread?: string | null; notifications?: "off" | "important" | "all" | null; prompt: string; enabled: boolean; options: LaunchOptions; next_due: number; runs: {id: string; due: number; state: string; session: string | null; reason: string | null}[] };
 export type ThreadQueue = { session: string; paused: boolean; error: string | null; messages: { id: string; prompt: string; options: LaunchOptions }[] };
 export type Database = {
   queues?: ThreadQueue[];
@@ -99,7 +106,7 @@ export function resolveAccount(db: Database, project?: Project): string {
 export function accountLabel(db: Database, id: string): string {
   const account = db.accounts.find((a) => a.id === id);
   return account
-    ? `${providerName(account.provider)} · ${account.name}`
+    ? agentDisplayName(account)
     : "No account configured";
 }
 
@@ -172,12 +179,12 @@ export interface ThreadBuckets<T> { active: T[]; recent: T[]; older: T[] }
  * across all threads when "flat"), `older` = the rest. A selected (or `pinned`, e.g. the other split pane) thread that would land in `older` is appended to `recent` so it stays visible.
  * With hideRead off or a done/failed/archived/deleted filter every thread is active (no recent bucket).
  */
-export function bucketThreads<T extends Pick<Session, "id" | "status" | "updated"> & { project?: string; pending?: unknown }>(threads: T[], options: {
+export function bucketThreads<T extends Pick<Session, "id" | "status" | "updated"> & { project?: string; pending?: unknown; pinned?: boolean }>(threads: T[], options: {
   read: Record<string, number>; selected: string; recentCount: number; scope: "flat" | "grouped"; hideRead: boolean; filter: string;
   queued?: (thread: T) => number; pinned?: string;
 }): ThreadBuckets<T> {
   const active: T[] = [], rest: T[] = [];
-  for (const t of threads) (threadInActiveList(t, options.read, "", options.hideRead, options.filter, options.queued?.(t) ?? 0) ? active : rest).push(t);
+  for (const t of threads) (t.pinned || threadInActiveList(t, options.read, "", options.hideRead, options.filter, options.queued?.(t) ?? 0) ? active : rest).push(t);
   const n = sanitizeRecentCount(options.recentCount);
   const taken = new Map<string, number>();
   const recent: T[] = [], older: T[] = [];
@@ -190,6 +197,7 @@ export function bucketThreads<T extends Pick<Session, "id" | "status" | "updated
     const at = id ? older.findIndex(t => t.id === id) : -1;
     if (at >= 0) recent.push(...older.splice(at, 1));
   }
+  active.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
   return { active, recent, older };
 }
 

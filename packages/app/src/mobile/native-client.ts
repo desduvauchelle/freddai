@@ -17,6 +17,7 @@ export const nativeCompanionClient: CompanionClient = {
     refreshWakeInfo();
     return value;
   },
+  scheduleCommand: (operation, input) => composer(operation, input),
   wake: () => invoke<number>('companion_wake'),
   hasWakeInfo: async () => !!(await invoke<unknown>('companion_wake_info')),
   models: target => composer<Model[]>('models', target),

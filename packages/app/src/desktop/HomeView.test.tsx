@@ -127,14 +127,14 @@ it("shows the resolved agent chip as soon as + is pressed", () => {
   render(<HomeView {...props([thread("1")])} />);
   expect(screen.queryByLabelText(/^Agent:/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  expect(screen.getByLabelText("Agent: Claude Code · Main · default model · default effort")).toBeTruthy();
+  expect(screen.getByLabelText("Agent: Claude · Main · default model · default effort")).toBeTruthy();
 });
 
 it("shows the chip when the mic is pressed", () => {
   mic.ready = true;
   render(<HomeView {...props([thread("1")])} />);
   fireEvent.pointerDown(within(screen.getByRole("article", { name: "Project Alpha" })).getByRole("button", { name: "Dictate" }));
-  expect(screen.getByLabelText(/^Agent: Claude Code · Main/)).toBeTruthy();
+  expect(screen.getByLabelText(/^Agent: Claude · Main/)).toBeTruthy();
 });
 
 it("disables submit and shows an error when no account resolves", () => {

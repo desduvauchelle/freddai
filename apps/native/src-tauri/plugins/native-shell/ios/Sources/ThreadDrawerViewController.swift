@@ -6,6 +6,7 @@ struct ThreadRowModel: Decodable, Equatable {
   let id: String
   let title: String
   let status: String
+  let faded: Bool?
   let unread: Bool
   let updatedAt: Double
 }
@@ -57,6 +58,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   var onNewThread: ((String) -> Void)?
   var onShowOlder: ((String) -> Void)?
 
+  private var collapsedProjects = Set<String>()
   private var model: ThreadsModel?
   private var rows: [String: ThreadRowModel] = [:]
   private var groups: [String: ThreadGroupModel] = [:]
@@ -228,7 +230,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private func configureDataSource() {
     let headerReg = UICollectionView.CellRegistration<ProjectHeaderCell, String> { [weak self] cell, _, project in
       guard let self = self, let group = self.groups[project] else { return }
-      cell.configure(group: group) { [weak self] in self?.onNewThread?(project) }
+      cell.configure(group: group, collapsed: self.collapsedProjects.contains(project)) { [weak self] in self?.onNewThread?(project) }
     }
     let threadReg = UICollectionView.CellRegistration<ThreadCell, String> { [weak self] cell, _, id in
       if let row = self?.rows[id] { cell.configure(row) }
@@ -264,8 +266,11 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     var sections = Set<String>()
     for group in new.groups where sections.insert(group.project).inserted {
       snapshot.appendSections([group.project])
-      var items: [DrawerItem] = [.header(group.project)] + group.threads.map { .thread($0.id) }
-      if group.olderRemaining > 0 { items.append(.older(group.project)) }
+      var items: [DrawerItem] = [.header(group.project)]
+      if !collapsedProjects.contains(group.project) {
+        items += group.threads.map { .thread($0.id) }
+        if group.olderRemaining > 0 { items.append(.older(group.project)) }
+      }
       snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: group.project)
     }
     if new.groups.allSatisfy({ $0.threads.isEmpty }) {
@@ -277,7 +282,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       switch item {
       case .thread(let id): if previousRows[id] != rows[id] { changed.append(item) }
       case .header(let p):
-        if let old = previousGroups[p], let now = groups[p], old.label != now.label || old.canStart != now.canStart || old.color != now.color { changed.append(item) }
+        changed.append(item)
       case .older(let p): if previousGroups[p]?.olderLabel != groups[p]?.olderLabel { changed.append(item) }
       case .empty: changed.append(item)
       }
@@ -313,13 +318,17 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
 
   func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
     switch dataSource.itemIdentifier(for: indexPath) {
-    case .thread, .older: return true
+    case .header, .thread, .older: return true
     default: return false
     }
   }
 
   func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
     switch dataSource.itemIdentifier(for: indexPath) {
+    case .header(let project):
+      collectionView.deselectItem(at: indexPath, animated: false)
+      if !collapsedProjects.insert(project).inserted { collapsedProjects.remove(project) }
+      if let model = model { apply(model) }
     case .thread(let id): onSelectThread?(id)
     case .older(let project):
       collectionView.deselectItem(at: indexPath, animated: true)
@@ -350,6 +359,7 @@ private extension UIFont {
 final class ProjectHeaderCell: UICollectionViewListCell {
   private let icon = UIImageView(image: UIImage(systemName: "folder.fill"))
   private let label = UILabel()
+  private let chevron = UIImageView()
   private let addButton = UIButton(type: .system)
   private var onAdd: (() -> Void)?
 
@@ -371,7 +381,7 @@ final class ProjectHeaderCell: UICollectionViewListCell {
     addButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
     let spacer = UIView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    let stack = UIStackView(arrangedSubviews: [icon, label, spacer, addButton])
+    let stack = UIStackView(arrangedSubviews: [chevron, icon, label, spacer, addButton])
     stack.axis = .horizontal
     stack.alignment = .center
     stack.spacing = 8
@@ -389,10 +399,19 @@ final class ProjectHeaderCell: UICollectionViewListCell {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-  func configure(group: ThreadGroupModel, onAdd: @escaping () -> Void) {
+  func configure(group: ThreadGroupModel, collapsed: Bool, onAdd: @escaping () -> Void) {
     self.onAdd = onAdd
+    chevron.image = UIImage(systemName: collapsed ? "chevron.right" : "chevron.down")
+    chevron.tintColor = .secondaryLabel
+    chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+    accessibilityLabel = group.label
+    accessibilityValue = collapsed ? "Collapsed" : "Expanded"
+    accessibilityHint = "Double tap to toggle threads"
+    accessibilityTraits = [.button, .header]
     label.text = group.label
-    icon.tintColor = color(fromHex: group.color) ?? .secondaryLabel
+    let projectColor = color(fromHex: group.color) ?? .secondaryLabel
+    icon.tintColor = projectColor
+    label.textColor = projectColor
     addButton.isEnabled = group.canStart
     addButton.accessibilityLabel = "New thread in \(group.label)"
   }
@@ -512,6 +531,7 @@ final class ThreadCell: UICollectionViewListCell {
   }
 
   func configure(_ row: ThreadRowModel) {
+    contentView.alpha = row.faded == true ? 0.65 : 1
     titleLabel.text = row.title
     let body = UIFont.preferredFont(forTextStyle: .body)
     let font = row.unread ? body.bold() : body

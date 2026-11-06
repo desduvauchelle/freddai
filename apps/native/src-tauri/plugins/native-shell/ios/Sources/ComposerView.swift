@@ -23,6 +23,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   private let voiceStatusLabel = UILabel()
   private let voiceSpinner = UIActivityIndicatorView(style: .medium)
   private let recorder = VoiceRecorder()
+  private let recordingFeedback = UIImpactFeedbackGenerator(style: .medium)
   private var voiceEnabled = false
   private var voiceState = "idle"
   private var micPressing = false
@@ -202,7 +203,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -6),
       placeholderLabel.centerYAnchor.constraint(equalTo: textView.topAnchor, constant: 26),
 
-      micButton.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -6),
+      micButton.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -16),
       micButton.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
       micButton.widthAnchor.constraint(equalToConstant: 36),
       micButton.heightAnchor.constraint(equalToConstant: 36),
@@ -432,6 +433,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   @objc private func micHold(_ gesture: UILongPressGestureRecognizer) {
     switch gesture.state {
     case .began:
+      recordingFeedback.prepare()
       micPressing = true
       VoiceRecorder.requestPermission { [weak self] granted in
         guard let self = self, self.micPressing else { return }
@@ -458,7 +460,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       return
     }
     recording = true
-    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    recordingFeedback.impactOccurred()
     showElapsed(0)
     updateVoiceUI()
   }

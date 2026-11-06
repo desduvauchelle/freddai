@@ -24,6 +24,6 @@ it("fails with a reason when there is no agent at all", () => {
 it("uses the selected model and effort for the resolved account only", () => {
   const selections = { global: { model: "sonnet", effort: "high" }, proj: { model: "opus", effort: "max" } };
   expect(resolveHomeLaunch(db(), "p", "ask", selections)).toMatchObject({ model: "sonnet", effort: "high" });
-  expect(resolveHomeLaunch(db({ projects: [proj({ policy: "fixed", account: "proj" })] }), "p", "ask", selections)).toMatchObject({ model: "opus", effort: "max", label: "Claude Code · proj · opus · max" });
+  expect(resolveHomeLaunch(db({ projects: [proj({ policy: "fixed", account: "proj" })] }), "p", "ask", selections)).toMatchObject({ model: "opus", effort: "max", label: "Claude · proj · opus · max" });
   expect(resolveHomeLaunch(db(), "p", "ask", { global: { model: "", effort: "default" } })).toMatchObject({ model: null, effort: null });
 });

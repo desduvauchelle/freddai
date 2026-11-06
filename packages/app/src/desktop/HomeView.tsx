@@ -1,3 +1,4 @@
+import { agentDisplayName } from "./types";
 import { AgentControls } from "./AgentControls";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
 import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, Plus, X } from "lucide-react";
@@ -153,8 +154,8 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
     <section className="home-section" aria-label="Projects">
       <div className="home-section-title"><span>Projects</span>
         <div className="home-header-actions">
-          {onHomeSelection && launchAccounts.map(account => <div key={account.id} className="home-model" aria-label={`Model for ${account.name}`} title={`Agent for Home microphones and new threads · ${account.name}`}>
-            {launchAccounts.length > 1 && <span>{account.name}</span>}
+          {onHomeSelection && launchAccounts.map(account => <div key={account.id} className="home-model" aria-label={`Model for ${agentDisplayName(account)}`} title={`Agent for Home microphones and new threads · ${agentDisplayName(account)}`}>
+            {launchAccounts.length > 1 && <span>{agentDisplayName(account)}</span>}
             <AgentControls account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="Home microphones and new threads" />
           </div>)}
         <Button type="button" variant="ghost" size="sm" onClick={onAddProject}><FolderPlus size={13} aria-hidden="true" />Add project</Button>

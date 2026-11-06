@@ -5,7 +5,7 @@ export function ConversationUsage({ usage }: { usage?: Usage | null }) {
   if (!labels.context && !labels.cache) return null;
   return <PopoverDetails className="conversation-usage">
     <summary aria-label={`${[labels.context, labels.cache].filter(Boolean).join(". ")}. View last reported usage.`}>
-      {labels.context && <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" className="context-track"/>{labels.percent !== null && <circle cx="12" cy="12" r="9" className="context-fill" strokeDasharray={`${labels.percent * .56549} 56.549`}/>}</svg>}
+      {labels.context && <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" className="context-track"/>{labels.remaining !== null && labels.remaining > 0 && <circle cx="12" cy="12" r="9" className="context-fill" pathLength="100" strokeDasharray={`${labels.remaining} 100`}/>}</svg>}
       {labels.context && <span>{labels.context}</span>}{labels.cache && <span>{labels.cache}</span>}
     </summary>
     <div className="conversation-usage-details">

@@ -20,7 +20,7 @@ Open Freddai on the Mac, use Settings → Pair phone, transfer the displayed Mac
 
 Use the existing `VITE_COMPANION_FIXTURE=1` build flag only for isolated emulator UI checks. Production builds omit fixture content. Never pair accounts or execute provider turns as test fixtures. Verify real-device pairing, uploads and relay access separately with explicit authorization.
 
-Android uses the system document picker for files/photos; direct camera capture and the iPad persistent sidebar are not implemented. The direct-download beta uses the persistent release identity and runtime Mac enrollment described below.
+Android offers Photos, Files and delegated system Camera capture, composer and dashboard dictation, and a persistent landscape sidebar on sufficiently wide tablet windows. The native dashboard shares the iOS single-scroll workspace, summaries, project controls and Schedules layout. The direct-download beta uses the persistent release identity and runtime Mac enrollment described below.
 
 For an offline UI smoke test, boot a dedicated Android emulator, build with `VITE_COMPANION_FIXTURE=1 pnpm android:build`, install that APK on the emulator, then run `python3 scripts/test-android-ui.py`. The script refuses physical device serials and checks for fixture content before interacting. It covers the native drawer, filters, thread selection, Back, picker dismissal/reopening and typed-draft retention across rotation and Activity recreation. Rebuild with `VITE_COMPANION_FIXTURE=0 pnpm android:build` before distributing an APK.
 
@@ -44,4 +44,12 @@ Publish the APK and `.apk.sha256` as an Android-specific prerelease, keeping des
 
 ## Beta verification (2026-11-04)
 
-Production release APK: built, release signature verified, 16 KB ZIP and native ELF alignment verified. Installed and opened in the dedicated ARM64 Android 16/API 36 emulator; the production Mac setup form appeared with no fixture conversations. Unit checks cover setup rejection, approval gating and preservation of existing Mac identity. No physical phone, real-device pairing, relay, attachment transfer, credential persistence after a real pairing or provider turn was exercised. Public beta availability does not imply those checks passed. Direct camera capture and native Android dictation remain unavailable.
+Production release APK: built, release signature verified, 16 KB ZIP and native ELF alignment verified. Installed and opened in the dedicated ARM64 Android 16/API 36 emulator; the production Mac setup form appeared with no fixture conversations. Unit checks cover setup rejection, approval gating and preservation of existing Mac identity. No physical phone, real-device pairing, relay, attachment transfer, credential persistence after a real pairing or provider turn was exercised. Public beta availability does not imply those checks passed. That beta predates the November 5 Android parity changes; its camera/dictation limitations do not describe the current source. See the parity verification below for the rebuilt APK.
+
+## Android parity update (2026-11-05)
+
+Current source includes the native single-scroll dashboard and cached summaries, compact project controls, composer dictation (including release-to-send), image attachment previews, delegated Camera capture, and the landscape tablet thread sidebar. Shared conversation/upload/read-state/connection fixes are included by rebuilding the shared mobile entrypoint. Android retains Android-native controls and Keystore storage; it does not run agents on the phone.
+
+For the complete offline acceptance run, build with `VITE_COMPANION_FIXTURE=1 pnpm android:build`, install on a **dedicated** emulator, and run `FREDDAI_ANDROID_DEVICE=emulator-<port> python3 scripts/test-android-parity.py`. This includes the baseline UI smoke test and builds a separate self-targeted accessibility probe to inspect animated screens without an idle wait. The probe never instruments or restarts Freddai. Tablet checks temporarily override only that emulator's display size/density, then reset them. It uses synthetic fixture connections and never contacts a provider. Use `pnpm android:release` afterwards for the distributable production APK; never distribute the fixture APK or test probe.
+
+The November 4 public beta URL above is historical; producing a local signed parity APK does not replace that hosted release. Verification details for this update are recorded in `docs/spec.md`.

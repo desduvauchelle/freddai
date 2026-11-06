@@ -85,9 +85,9 @@ const walking = (w: Walker) => w.route.length > 0 && w.cur.next < w.route.length
 /** The node the walker is heading for (or sits at), so a re-route never backtracks through a wall. */
 const headingFor = (w: Walker): string => (walking(w) ? w.route[w.cur.next].node ?? w.node : w.node);
 
-function setRoute(w: Walker, nav: Nav, to: string, dwell: Record<string, number>, fromDoor = false) {
+function setRoute(w: Walker, nav: Nav, to: string, dwell: Record<string, number>, fromNode?: string) {
   const here = walking(w) ? { x: w.cur.x, y: w.cur.y } : null;
-  const pts = routeWaypoints(nav, fromDoor ? "door" : headingFor(w), to, dwell);
+  const pts = routeWaypoints(nav, fromNode ?? headingFor(w), to, dwell);
   if (!pts) return placeAt(w, nav, to);
   if (here) pts.unshift(here);
   w.route = pts; w.cur = startCursor(pts);
@@ -109,7 +109,7 @@ function reconcile(e: Engine, model: OfficeModel, layout: Layout, reduced: boole
     if (!w) {
       w = { agent, dest, node: dest.node, phase: "go", route: [], cur: { x: 0, y: 0, next: 0, wait: 0 }, flip: false, moving: false, clock: 0 };
       e.walkers.set(id, w);
-      if (instant) placeAt(w, nav, dest.node); else setRoute(w, nav, dest.node, { recep: CHECK_IN_MS }, true);
+      if (instant) placeAt(w, nav, dest.node); else setRoute(w, nav, dest.node, {}, layout.projectWaiting.find(s => s.project.id === agent.projectId)?.node ?? "door");
       continue;
     }
     w.agent = agent;

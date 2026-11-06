@@ -1,7 +1,12 @@
+import { useThreadPins } from "./thread-pins";
+import { scheduleEnded } from "./schedule-end";
+import { agentDisplayName } from "./types";
+import { CalendarClock, Pin, PinOff, AppWindow, CheckCheck, ClipboardCheck, Play, Archive, ArchiveRestore, FolderInput, Import, Trash2, RotateCcw, Pencil } from "lucide-react";
 import brandMascotUrl from "../../../../assets/brand/dormouse/dormouse-v3.svg?url";
+import { statusReadCursors } from "./status-read-cursors";
 import { threadListTitle } from "./thread-list-title";
 import { AttachmentLabel } from "./AttachmentLabel";
-import { previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
+import { previewQueues, previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
 import { browserThreadRecencyTracker } from "../thread-recency";
 import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
@@ -19,7 +24,6 @@ import { PermissionSelect, effectivePermissionMode } from "./PermissionSelect";
 import { savedPermissionMode } from "./permission-mode";
 import type { PermissionMode } from "./types";
 import { AgentControls, defaultSelection, type AgentSelection } from "./AgentControls";
-import { providerName } from "./types";
 import { ApprovalMouse, ConversationActivity, MascotHero } from "./MascotScenes";
 import { ScheduleManager } from "./ScheduleManager";
 import { GitHistoryPanel } from "./GitHistoryPanel";
@@ -32,6 +36,7 @@ import { Switch } from "@freddai/ui/components/switch";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
 import { SettingsPanel } from "./SettingsPanel";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { useFontSizes } from "./use-font-sizes";
 import { useTheme } from "./use-theme";
 import { CompanionSettings } from "./CompanionSettings";
 import { BackgroundSettings } from "./BackgroundSettings";
@@ -47,11 +52,12 @@ import { ThreadTranscript } from "../conversation/ThreadTranscript";
 import { TodoPanel } from "../conversation/TodoList";
 import { reconcileSnapshot } from "./reconcileSnapshot";
 import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
-import { getDraft, setDraft as setThreadDraft, updateDraft, pruneDrafts, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts } from "./drafts";
+import { getDraft, setDraft as setThreadDraft, updateDraft, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts } from "./drafts";
 import { updateBanner } from "./app-update";
 import { useAppUpdate } from "./use-app-update";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type Ref } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { mergeAttachments, runScreenGrab, type ScreenGrabDestination } from "./screen-grab";
@@ -260,11 +266,12 @@ function SendButton({ threadId, label, blocked }: { threadId: string; label: str
 }
 // One conversation (header, transcript, composer). Drafts, attachments and agent controls arrive as props keyed by thread in the parent.
 function ConversationPane({
-  task, db, read, native, working, staging, split, side, focused, canToggleSplit, composerRef,
+  task, db, read, native, working, staging, standalone = false, split, side, focused, canToggleSplit, composerRef,
   attachments, onAttachments, permission, onPermission, selection, onSelection,
-  onFocus, onClose, onToggleSplit, onFork, onRename, onSend, onQueueAction, onAttach,
+  onFocus, onClose, onOpenThread, onToggleSplit, onFork, onPopOut, onRename, onSend, onQueueAction, onAttach,
   action, refresh, changeThread, openAccounts, fileChips, resumeThread,
 }: {
+  standalone?: boolean;
   task: Session; db: Database; read: Record<string, number>; native: boolean; working: boolean; staging: number;
   split: boolean; side: SplitSide; focused: boolean; canToggleSplit: boolean;
   composerRef?: Ref<HTMLTextAreaElement>;
@@ -272,6 +279,8 @@ function ConversationPane({
   permission: PermissionMode; onPermission: (value: PermissionMode) => void;
   selection: AgentSelection; onSelection: (value: AgentSelection) => void;
   onFocus: () => void; onClose: () => void; onToggleSplit: () => void; onFork: () => void;
+  onPopOut: () => void;
+  onOpenThread: (id: string) => void;
   onRename: (title: string) => Promise<void>;
   onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
   onQueueAction: (action: string, message?: string, prompt?: string) => Promise<boolean | undefined>;
@@ -288,6 +297,7 @@ function ConversationPane({
     taskAccount = db.accounts.find((a) => a.id === task.account),
     taskQueue = db.queues?.find(q => q.session === task.id);
   const capabilities = threadCapabilities(task, !!taskAccount);
+  const [scheduleOpen,setScheduleOpen] = useState(false);
   const [renameRequest, setRenameRequest] = useState(0);
   const renameChosen = useRef(false);
   const transcript = useRef<HTMLDivElement>(null);
@@ -328,15 +338,16 @@ function ConversationPane({
       onFocusCapture={onFocus}
       onPointerDownCapture={onFocus}
     >
-      <div className="pane-title" aria-current={split && focused ? "true" : undefined}>
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}><DialogContent className="dark capture-panel"><DialogHeader><DialogTitle>Recurring tasks</DialogTitle><DialogDescription>Create from this thread or manage existing schedules.</DialogDescription></DialogHeader><ScheduleManager db={db} native={native} context={task} onRefresh={refresh} onSelect={id=>{setScheduleOpen(false);onOpenThread(id);}}/></DialogContent></Dialog>
+      <div className="pane-title" data-tauri-drag-region={standalone || undefined} aria-current={split && focused ? "true" : undefined}>
         <span className="pane-project" title={project?.name}>
           <span className="pane-project-dot" style={{ background: project?.color }} aria-hidden="true" />
           <span className="pane-project-name">{project?.name}</span>
         </span>
         <span className="pane-sep" aria-hidden="true">/</span>
-        <span className="pane-account" style={{ color: taskAccount?.color }} title={taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}>
+        <span className="pane-account" style={{ color: taskAccount?.color }} title={taskAccount ? agentDisplayName(taskAccount) : "Connection removed"}>
           {taskAccount?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
-          <span>{taskAccount ? providerName(taskAccount.provider) : "Connection removed"}</span>
+          <span>{taskAccount ? agentDisplayName(taskAccount) : "Connection removed"}</span>
         </span>
         <span className="pane-sep" aria-hidden="true">/</span>
         <h1 className="pane-thread-title"><ThreadTitle key={task.id} title={task.title} onRename={onRename} editRequest={renameRequest} /></h1>
@@ -349,15 +360,18 @@ function ConversationPane({
               <Button variant="ghost" size="icon" aria-label="Thread actions" title="Thread actions"><Ellipsis size={16} /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onCloseAutoFocus={e => { if (renameChosen.current) { e.preventDefault(); renameChosen.current = false; } }}>
-              <DropdownMenuLabel className="thread-menu-label">{taskAccount ? `${providerName(taskAccount.provider)} · ${taskAccount.name}` : "Connection removed"}</DropdownMenuLabel>
-              <DropdownMenuItem onSelect={() => { renameChosen.current = true; setRenameRequest(n => n + 1); }}>Rename<DropdownMenuShortcut>F2</DropdownMenuShortcut></DropdownMenuItem>
-              <DropdownMenuItem onSelect={onFork}>Fork thread<DropdownMenuShortcut>⌘⇧F</DropdownMenuShortcut></DropdownMenuItem>
+              <DropdownMenuLabel className="thread-menu-label">{taskAccount ? agentDisplayName(taskAccount) : "Connection removed"}</DropdownMenuLabel>
+              {native && !standalone && <DropdownMenuItem onSelect={onPopOut}><AppWindow size={14} aria-hidden="true" />Open in New Window</DropdownMenuItem>}
+              {task.deleted_at == null && <DropdownMenuItem onSelect={() => void changeThread(task.id, task.pinned ? "unpin" : "pin")}>{task.pinned ? <PinOff size={14} aria-hidden="true" /> : <Pin size={14} aria-hidden="true" />}{task.pinned ? "Unpin thread" : "Pin to project"}</DropdownMenuItem>}
+              <DropdownMenuItem onSelect={() => { renameChosen.current = true; setRenameRequest(n => n + 1); }}><Pencil size={14} aria-hidden="true" />Rename<DropdownMenuShortcut>F2</DropdownMenuShortcut></DropdownMenuItem>
+              {!standalone && <DropdownMenuItem onSelect={()=>setScheduleOpen(true)}><CalendarClock size={14} aria-hidden="true" />Schedule recurring task…</DropdownMenuItem>}
+              {!standalone && <DropdownMenuItem onSelect={onFork}><GitFork size={14} aria-hidden="true" />Fork thread<DropdownMenuShortcut>⌘⇧F</DropdownMenuShortcut></DropdownMenuItem>}
               {!task.deleted_at && <DropdownMenuItem
                 disabled={working || !native || (task.archived ? !capabilities.change : !capabilities.archive || busy(task))}
                 onSelect={() => void changeThread(task.id, task.archived ? "unarchive" : "archive")}
-              >{task.archived ? "Unarchive" : "Archive"}</DropdownMenuItem>}
+              >{task.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}{task.archived ? "Unarchive" : "Archive"}</DropdownMenuItem>}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onClose}>{split ? `Close ${side} pane` : "Close conversation"}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onClose}><X size={14} aria-hidden="true" />{standalone ? "Close window" : split ? `Close ${side} pane` : "Close conversation"}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -375,7 +389,7 @@ function ConversationPane({
         <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
           <ThreadTranscript messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
           {(task.error || task.status === "interrupted") && (
-            <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={openAccounts}
+            <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={standalone ? undefined : openAccounts}
               onContinue={task.status === "interrupted" && capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
               continueDisabled={working || !native || !!db.host_update_pending} />
           )}
@@ -502,35 +516,46 @@ function EmptyPane({ side, focused, canToggleSplit, onFocus, onClose, onToggleSp
 }
 export function DesktopApp() {
   const native = isTauri();
+  const [windowThread] = useState(() => native ? new URLSearchParams(window.location.search).get("thread") || "" : "");
   const { theme, setTheme, saved: themeSaved, appearance } = useTheme();
+  const fontSizes = useFontSizes();
   const [snapshot, setDb] = useState<Database>(empty),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [view, setView] = useState<SplitView>(() => restoreSplitView(readPreference<Partial<SplitPreference> | null>("freddai.split", null)));
+    [view, setView] = useState<SplitView>(() => windowThread ? { split: false, left: windowThread, right: "", focus: "left" } : restoreSplitView(readPreference<Partial<SplitPreference> | null>("freddai.split", null)));
   // The focused pane's thread is "the selected thread"; selecting routes through the split-view state.
   const selected = focusedThread(view), secondary = otherThread(view);
-  const setSelected = (id: string) => setView(current => selectThread(current, id));
+  const [scheduleView, setScheduleView] = useState<{project: string; id?: string} | null>(null);
+  const [scheduleProjects, setScheduleProjects] = useState<string[]>([]);
+  const setSelected = (id: string) => { if (windowThread) return; setScheduleView(null); setView(current => selectThread(current, id)); };
+  const selectScheduleRun = (id: string) => setView(current => selectThread(current, id));
   const narrow = useNarrow();
   const splitActive = view.split && !narrow;
-  useEffect(() => { localStorage.setItem("freddai.split", JSON.stringify(splitPreference(view))); }, [view.split, view.right]);
+  useEffect(() => { if (!windowThread) localStorage.setItem("freddai.split", JSON.stringify(splitPreference(view))); }, [view.split, view.right, windowThread]);
   // Non-thread main pane (git history). Cleared whenever a thread or the new-thread pane is chosen.
   const [pane, setPane] = useState<PaneSelection>(null);
   useEffect(() => { if (selected) setPane(null); }, [selected]);
   const [launching, setLaunching] = useState<Session | null>(null);
   // Home hub is the landing view; it yields to any thread, new-thread draft or git pane the user opens.
-  const [home, setHome] = useState(true);
+  const [home, setHome] = useState(!windowThread);
   const lastSelected = useRef(selected);
   useEffect(() => { if (selected && selected !== lastSelected.current) setHome(false); lastSelected.current = selected; }, [selected]);
   useEffect(() => { if (pane) setHome(false); }, [pane]);
   const [outgoing, setOutgoing] = useState<OutgoingReply[]>([]);
   // Stable identities: these are rebuilt only when the snapshot, pending sends or launch actually change.
-  const visibleSnapshot = useMemo(() => ({ ...snapshot, sessions: previewReplies(snapshot.sessions, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)) }), [snapshot, outgoing]);
+  const [threadPins, setThreadPin] = useThreadPins();
+  const visibleSnapshot = useMemo(() => ({ ...snapshot, queues: previewQueues(snapshot.queues, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)), sessions: previewReplies(snapshot.sessions, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)).map(t => Object.hasOwn(threadPins, t.id) ? { ...t, pinned: threadPins[t.id] } : t) }), [snapshot, outgoing, JSON.stringify(threadPins)]);
   useEffect(() => {
     setOutgoing(old => old.length ? unconfirmedReplies(old, snapshot.sessions, snapshot.queues) : old);
   }, [snapshot]);
   // Keep the launch visible even when an older in-flight snapshot arrives.
   const db = useMemo(() => launching && launching.id !== "pending-launch" && !visibleSnapshot.sessions.some(t => t.id === launching.id)
     ? { ...visibleSnapshot, sessions: [launching, ...visibleSnapshot.sessions] } : visibleSnapshot, [visibleSnapshot, launching]);
+  useEffect(() => {
+    if (!scheduleView?.id || selected) return;
+    const run = [...(db.schedules?.find(s=>s.id===scheduleView.id)?.runs || [])].reverse().find(r=>r.session && db.sessions.some(t=>t.id===r.session));
+    if (run?.session) selectScheduleRun(run.session);
+  }, [db.schedules, db.sessions, scheduleView?.id, selected]);
   useEffect(() => {
     if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
   }, [snapshot, launching]);
@@ -544,6 +569,7 @@ export function DesktopApp() {
   const [projectDrag, setProjectDrag] = useState<{ id: string; target: string; after: boolean } | null>(null);
   const [collapsedProjects, setCollapsedProjects] = usePreference<string[]>("freddai.collapsedProjects", []);
   const [grouped, setGrouped] = usePreference("freddai.grouped", true),
+    [ignoreUnread, setIgnoreUnread] = usePreference("freddai.ignoreUnread", false),
     [hideRead, setHideRead] = usePreference("freddai.hideRead", true),
     [recentFinishedPref, setRecentFinished] = usePreference<number>("freddai.recentFinished", RECENT_FINISHED_DEFAULT),
     [readOverlay, setReadOverlay] = useState<Record<string, number>>({}),
@@ -552,21 +578,22 @@ export function DesktopApp() {
   const threadListSave = useRef(Promise.resolve<unknown>(undefined));
   useEffect(() => {
     if (!native) return;
-    const thread_list = { projectOrder: savedProjectOrder, grouped, hideRead, recentFinished: sanitizeRecentCount(recentFinishedPref) };
+    const thread_list = { projectOrder: savedProjectOrder, grouped, hideRead, ignoreUnread, recentFinished: sanitizeRecentCount(recentFinishedPref) };
     threadListSave.current = threadListSave.current
       .then(() => invoke("save_thread_list", { settings: thread_list }))
       .catch(e => setError(String(e)));
-  }, [native, savedProjectOrder, grouped, hideRead, recentFinishedPref]);
+  }, [native, savedProjectOrder, grouped, hideRead, ignoreUnread, recentFinishedPref]);
   const [projectId, setProjectId] = useState(""),
     [accountId, setAccountId] = useState("default"),
     [draft, setDraft] = useState(""),
     [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
   const [threadDialog, setThreadDialog] = useState<{ id: string; action: "move" | "delete" | "resume" | "review" } | null>(null);
   // Read state lives on the host (`read_at` per session); the overlay only bridges the poll gap after a local mark.
-  const read = useMemo(() => readFromThreads(db.sessions, readOverlay), [db.sessions, readOverlay]);
+  const actualRead = useMemo(() => readFromThreads(db.sessions, readOverlay), [db.sessions, readOverlay]);
+  const read = useMemo(() => statusReadCursors(db.sessions, actualRead, ignoreUnread), [db.sessions, actualRead, ignoreUnread]);
   const readSent = useRef(new Set<string>());
   function markThreadRead(t: Pick<Session, "id" | "updated">) {
-    if ((read[t.id] ?? -1) >= t.updated) return;
+    if ((actualRead[t.id] ?? -1) >= t.updated) return;
     setReadOverlay(r => (r[t.id] ?? -1) >= t.updated ? r : { ...r, [t.id]: t.updated });
     const key = `${t.id}:${t.updated}`;
     if (!native || readSent.current.has(key)) return;
@@ -589,7 +616,7 @@ export function DesktopApp() {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
   const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
   const [replySelections, setReplySelections] = useState<Record<string, AgentSelection>>({});
-  // Reply drafts and attachments belong to a thread, so each open pane keeps its own and they follow a thread between panes.
+  // Reply drafts and attachments belong to a thread and survive navigation for this app session.
   // Reply text lives in the external draft store (./drafts) so keystrokes do not re-render this component.
   const [replyAttachments, setReplyAttachments] = useState<Record<string, Attachment[]>>({});
   const draftRequest = useRef(crypto.randomUUID()), replyRequests = useRef<Record<string, string>>({});
@@ -644,11 +671,18 @@ export function DesktopApp() {
   const openTasks = openIds.flatMap(id => db.sessions.find(t => t.id === id) ?? []);
   liveTargets.current = dialog === "new" ? ["new"] : openIds;
   const threadPaneLayout = useDefaultLayout({
-    id: "freddai.thread-panes",
+    id: windowThread ? "freddai.thread-window-panes" : "freddai.thread-panes",
     onlySaveAfterUserInteractions: true,
   });
   const listPanel = useRef<PanelImperativeHandle | null>(null);
-  const [listHidden, setListHidden] = useState(false);
+  const [listHidden, setListHidden] = useState(!!windowThread);
+  const threadWindowFocused = useRef(false);
+  useEffect(() => {
+    if (windowThread && task && listPanel.current && !threadWindowFocused.current) {
+      listPanel.current.collapse();
+      threadWindowFocused.current = true;
+    }
+  }, [windowThread, task]);
   function toggleList() {
     const panel = listPanel.current;
     if (!panel) return;
@@ -722,7 +756,7 @@ export function DesktopApp() {
         if (!disposed) {
           if (!onboardingChecked.current) {
             onboardingChecked.current = true;
-            if (!d.accounts.length) setDialog("accounts");
+            if (!windowThread && !d.accounts.length) setDialog("accounts");
           }
         }
       } catch (e) {
@@ -753,14 +787,10 @@ export function DesktopApp() {
       document.removeEventListener("visibilitychange", markVisibleRead);
     };
   }, [openTasks.map(t => `${t.id}:${t.status}:${t.updated}`).join(), dialog, threadDialog, native, read]);
-  // A draft is dropped once its thread leaves every pane, as switching threads always did.
+  // Navigation restores saved text without deleting drafts or staged files from other threads.
   useEffect(() => {
-    const keep = (current: Record<string, any>) => Object.keys(current).some(id => !openIds.includes(id))
-      ? Object.fromEntries(Object.entries(current).filter(([id]) => openIds.includes(id))) : current;
-    pruneDrafts(openIds); setReplyAttachments(keep);
     const savedNewDraft = restoreDrafts(openIds);
     if (savedNewDraft) setDraft(current => current || savedNewDraft);
-    for (const id of Object.keys(replyRequests.current)) if (!openIds.includes(id)) delete replyRequests.current[id];
   }, [openIds.join()]);
   function selectNewAccount(value: string) {
     setAccountId(value);
@@ -782,12 +812,14 @@ export function DesktopApp() {
   // Above the single-pane (mobile) breakpoint the list always has a pane beside it: with nothing open, that is the new-thread draft.
   // Opening it only fills in local draft state; no thread is created until the user sends.
   useEffect(() => {
-    if (!narrow && !home && !selected && !dialog && !pane && !threadDialog && !launching) openNewThread(false);
-  }, [narrow, home, selected, dialog, pane, threadDialog, launching]);
+    if (!narrow && !home && !selected && !dialog && !pane && !scheduleView && !threadDialog && !launching) openNewThread(false);
+  }, [narrow, home, selected, dialog, pane, scheduleView, threadDialog, launching]);
   useEffect(() => { if (dialog === "new") setHome(false); }, [dialog]);
-  const homeActive = home && dialog !== "new";
+  const homeActive = home && dialog !== "new" && !scheduleView;
   function goHome() {
-    setDialog(current => current === "new" ? null : current);
+    setScheduleView(null);
+    setDialog(null);
+    setAccountReturn(null);
     setPane(null);
     setHome(true);
   }
@@ -796,6 +828,7 @@ export function DesktopApp() {
     if (dialog === "new" && !projectId && db.projects.length) setProjectId(projectFilter !== "all" ? projectFilter : db.projects[0].id);
   }, [dialog, projectId, db.projects.length]);
   function newThreadInProject(project: string, focus = true) {
+    setScheduleView(null);
     setWorktree(db.preferences.use_worktree ?? false);
     setModel(""); setEffort("default");
     draftRequest.current = crypto.randomUUID();
@@ -911,6 +944,7 @@ export function DesktopApp() {
   const voiceShortcut = useSyncExternalStore(voice.subscribe, () => { const s = voice.getSnapshot().status; return s?.ready ? s.shortcut : ""; });
   useEffect(() => {
     if (!native) return;
+    if (!/Mac/.test(navigator.platform)) return;
     void voice.refresh();
     const refresh = () => void voice.refresh();
     window.addEventListener("focus", refresh);
@@ -928,6 +962,7 @@ export function DesktopApp() {
       const command = commandFor(e);
       if (threadDialog || document.querySelector('[role="menu"], .attachment-preview')) return;
       if (settingsVisible) {
+        if (command === "home") { e.preventDefault(); goHome(); return; }
         if (settingsVisible && e.key === "Escape" && !e.isComposing && !document.querySelector('[role="listbox"], [role="dialog"]')) {
           e.preventDefault();
           if (dialog === "accounts") finishAccounts();
@@ -936,6 +971,7 @@ export function DesktopApp() {
         }
         return;
       }
+      if (windowThread && command && !["terminal", "composer", "attach", "stop"].includes(command)) { e.preventDefault(); return; }
       if (command) {
         e.preventDefault();
         switch (command) {
@@ -1039,7 +1075,7 @@ export function DesktopApp() {
   // saved worktree preference, current default permission mode). Errors propagate to the tile.
   const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode, homeSelections);
   async function createHomeThread(project: string, prompt: string): Promise<string> {
-    if (!native) throw new Error("Open the Freddai macOS app to start threads.");
+    if (!native) throw new Error("Open the Freddai desktop app to start threads.");
     const plan = resolveHomeTile(project);
     if (!plan.ok) { if (!db.accounts.length) openAccounts(); throw new Error(plan.reason); }
     if (actionLock.current) throw new Error("Another action is still running.");
@@ -1103,11 +1139,12 @@ export function DesktopApp() {
     if (!native || working || staging || !taskAccount || (task.status === "archived" || !!task.archived || task.deleted_at != null) || !reply.trim()) return;
     await action(async () => {
       const requestId = replyRequest(task.id);
-      setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
+      const command = steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.length ? "queue_message" : "launch";
+      setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, queued: command === "queue_message", options: { attachments: attachments.map(f => f.id) }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
       setThreadDraft(task.id, "");
       setReplyAttachments(previous => ({ ...previous, [task.id]: [] }));
       try {
-        await invoke(steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.length ? "queue_message" : "launch", {
+        await invoke(command, {
         session: task.id,
         project: task.project,
         account: null,
@@ -1185,6 +1222,10 @@ export function DesktopApp() {
     setDb(current => ({ ...current, sessions: current.sessions.map(t => t.id === session ? { ...t, title } : t) }));
   }
   async function changeThread(id: string, operation: string, project?: string) {
+    if (operation === "pin" || operation === "unpin") {
+      setThreadPin(id, operation === "pin");
+      return;
+    }
     await action(async () => {
       await invoke("thread_action", { session: id, action: operation, project: project || null });
       await refresh();
@@ -1246,8 +1287,8 @@ export function DesktopApp() {
       >
         <span
           className="session-agent"
-          title={`${a?.provider} · ${a?.name}`}
-          aria-label={`${a?.provider} · ${a?.name}`}
+          title={a ? agentDisplayName(a) : "Connection removed"}
+          aria-label={a ? agentDisplayName(a) : "Connection removed"}
           style={{ color: a?.color }}
         >
           {a?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
@@ -1262,22 +1303,25 @@ export function DesktopApp() {
             {db.projects.find((p) => p.id === t.project)?.name}
           </span>
         )}
+        {t.pinned && <Pin size={12} aria-label="Pinned to project" className="thread-pin" />}
         <Dot status={threadListStatus(t, read)} />
       </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="thread-context-menu" aria-label={`Actions for ${t.title}`}>
         <ContextMenuLabel className="thread-menu-label">{t.title}</ContextMenuLabel>
-        {(t.status === "done" || t.status === "failed") && <ContextMenuItem onSelect={() => markThreadRead(t)}>Mark as read</ContextMenuItem>}
-        <ContextMenuItem disabled={working || !native || !capabilities.review} onSelect={() => openThreadDialog(t, "review")}>Review decision…</ContextMenuItem>
-        <ContextMenuItem disabled={disabled || !capabilities.stop} onSelect={() => void action(async () => { await invoke("stop", { session: t.id }); await refresh(); })}>Stop</ContextMenuItem>
-        <ContextMenuItem disabled={disabled || !capabilities.resume} onSelect={() => openThreadDialog(t, "resume")}>Resume…</ContextMenuItem>
+        {native && <ContextMenuItem onSelect={() => void action(() => invoke("open_thread_window", { session: t.id }))}><AppWindow size={14} aria-hidden="true" />Open in New Window</ContextMenuItem>}
+        {t.deleted_at == null && <ContextMenuItem onSelect={() => void changeThread(t.id, t.pinned ? "unpin" : "pin")}>{t.pinned ? <PinOff size={14} aria-hidden="true" /> : <Pin size={14} aria-hidden="true" />}{t.pinned ? "Unpin thread" : "Pin to project"}</ContextMenuItem>}
+        {!ignoreUnread && (t.status === "done" || t.status === "failed") && <ContextMenuItem onSelect={() => markThreadRead(t)}><CheckCheck size={14} aria-hidden="true" />Mark as read</ContextMenuItem>}
+        <ContextMenuItem disabled={working || !native || !capabilities.review} onSelect={() => openThreadDialog(t, "review")}><ClipboardCheck size={14} aria-hidden="true" />Review decision…</ContextMenuItem>
+        <ContextMenuItem disabled={disabled || !capabilities.stop} onSelect={() => void action(async () => { await invoke("stop", { session: t.id }); await refresh(); })}><Square size={14} aria-hidden="true" />Stop</ContextMenuItem>
+        <ContextMenuItem disabled={disabled || !capabilities.resume} onSelect={() => openThreadDialog(t, "resume")}><Play size={14} aria-hidden="true" />Resume…</ContextMenuItem>
         <ContextMenuSeparator />
         {capabilities.restore ?
-          <ContextMenuItem disabled={disabled || busy(t)} onSelect={() => void changeThread(t.id, "restore")}>Restore thread</ContextMenuItem> : <>
-          <ContextMenuItem disabled={t.archived ? disabled || !capabilities.change : removalDisabled || !capabilities.archive} onSelect={() => void changeThread(t.id, t.archived ? "unarchive" : "archive")}>{t.archived ? "Unarchive" : "Archive"}</ContextMenuItem>
-          <ContextMenuItem disabled={disabled || !capabilities.change || db.projects.length < 2} onSelect={() => openThreadDialog(t, "move")}>Change project…</ContextMenuItem>
-          <ContextMenuItem disabled={!native} onSelect={() => setDialog("import")}>Import sessions…</ContextMenuItem>
-          <ContextMenuItem className="thread-menu-danger" disabled={removalDisabled || !capabilities.delete} onSelect={() => openThreadDialog(t, "delete")}>Delete…</ContextMenuItem>
+          <ContextMenuItem disabled={disabled || busy(t)} onSelect={() => void changeThread(t.id, "restore")}><RotateCcw size={14} aria-hidden="true" />Restore thread</ContextMenuItem> : <>
+          <ContextMenuItem disabled={t.archived ? disabled || !capabilities.change : removalDisabled || !capabilities.archive} onSelect={() => void changeThread(t.id, t.archived ? "unarchive" : "archive")}>{t.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}{t.archived ? "Unarchive" : "Archive"}</ContextMenuItem>
+          <ContextMenuItem disabled={disabled || !capabilities.change || db.projects.length < 2} onSelect={() => openThreadDialog(t, "move")}><FolderInput size={14} aria-hidden="true" />Change project…</ContextMenuItem>
+          <ContextMenuItem disabled={!native} onSelect={() => setDialog("import")}><Import size={14} aria-hidden="true" />Import sessions…</ContextMenuItem>
+          <ContextMenuItem className="thread-menu-danger" disabled={removalDisabled || !capabilities.delete} onSelect={() => openThreadDialog(t, "delete")}><Trash2 size={14} aria-hidden="true" />Delete…</ContextMenuItem>
         </>}
       </ContextMenuContent>
       </ContextMenu>
@@ -1334,9 +1378,10 @@ export function DesktopApp() {
   function conversation(side: SplitSide) {
     const id = splitActive ? view[side] : selected, thread = db.sessions.find(t => t.id === id);
     const focused = !splitActive || view.focus === side;
-    const toggle = { canToggleSplit: !narrow && (!splitActive || side === "right"), onToggleSplit: () => setView(toggleSplit) };
+    const toggle = { canToggleSplit: !windowThread && !narrow && (!splitActive || side === "right"), onToggleSplit: () => setView(toggleSplit) };
     const onFocus = () => setView(current => focusPane(current, side));
     const onClose = () => {
+      if (windowThread) { void action(() => getCurrentWindow().close()); return; }
       if (splitActive) setView(current => closePane(current, side));
       else setSelected("");
       setTimeout(focusList, 0);
@@ -1345,6 +1390,7 @@ export function DesktopApp() {
     return (
       <ConversationPane
         key={thread.id}
+        standalone={!!windowThread}
         task={thread} db={db} read={read} native={native} working={working} staging={staging}
         split={splitActive} side={side} focused={focused} {...toggle}
         composerRef={focused ? composer : undefined}
@@ -1352,7 +1398,8 @@ export function DesktopApp() {
         permission={replyPermissions[thread.id] || savedPermissionMode(thread.options?.permission_mode)}
         onPermission={value => setReplyPermissions(previous => ({ ...previous, [thread.id]: value }))}
         selection={replySelectionFor(thread)} onSelection={value => setReplySelections(previous => ({ ...previous, [thread.id]: value }))}
-        onFocus={onFocus} onClose={onClose} onFork={() => forkThread(thread)}
+        onOpenThread={setSelected} onFocus={onFocus} onClose={onClose} onFork={() => forkThread(thread)}
+        onPopOut={() => void action(() => invoke("open_thread_window", { session: thread.id }))}
         onRename={title => renameThread(thread.id, title)}
         onSend={(e, steer) => send(thread, e, steer)}
         onQueueAction={(queueAction, message, prompt) => queueActionFor(thread, queueAction, message, prompt)}
@@ -1361,6 +1408,15 @@ export function DesktopApp() {
       />
     );
   }
+  // Secondary windows mount only the conversation, never the workspace chrome or settings.
+  if (windowThread) return (
+    <div className={`dev-app native-workspace thread-window${native && /Mac/.test(navigator.platform) ? " native-macos" : ""}`}>
+      {error && <div role="alert" className="native-error">{error}<Button variant="ghost" size="icon" aria-label="Dismiss error" onClick={() => setError("")}><X size={14}/></Button></div>}
+      <main className="thread-window-content" aria-label="Thread window">
+        {task ? conversation("left") : <div className="native-empty" role="status">{snapshot.sessions.length ? "This thread is unavailable." : "Loading thread…"}</div>}
+      </main>
+    </div>
+  );
   return (
     <div className={`dev-app native-workspace${settingsVisible ? " settings-visible" : ""}${native && /Mac/.test(navigator.platform) ? " native-macos" : ""}`}>
       <a className="skip-link" href={settingsVisible ? "#settings-content" : "#thread-composer"}>
@@ -1373,7 +1429,7 @@ export function DesktopApp() {
             size="icon"
             className="titlebar-home"
             aria-label="Home"
-            aria-pressed={home && dialog !== "new"}
+            aria-pressed={homeActive && !settingsVisible}
             title="Home (⌘ 1)"
             onClick={goHome}
           >
@@ -1468,7 +1524,7 @@ export function DesktopApp() {
       )}
       <div className="app-body">
         <main className="workbench">
-          <div className={`workbench-panes ${(task && !homeActive) || dialog === "new" ? "has-detail" : ""}`}>
+          <div className={`workbench-panes ${scheduleView || (task && !homeActive) || dialog === "new" ? "has-detail" : ""}`}>
             <ResizablePanelGroup orientation="horizontal" defaultLayout={threadPaneLayout.defaultLayout} onLayoutChanged={threadPaneLayout.onLayoutChanged}>
               <ResizablePanel id="thread-list" defaultSize="42%" minSize="25%" collapsible collapsedSize="0%" panelRef={listPanel} onResize={size => setListHidden(size.asPercentage === 0)}>
                 <section ref={projectNavigation} className="thread-browser project-navigation" aria-label="Threads" aria-busy={projectImportBusy}>
@@ -1524,10 +1580,10 @@ export function DesktopApp() {
                       }}
                       options={[
                         { value: "all", label: "All threads" },
-                        { value: "attention", label: "Needs attention" },
-                        { value: "running", label: "Running" },
+                        { value: "attention", label: ignoreUnread ? "Needs you" : "Needs attention" },
+                        { value: "running", label: ignoreUnread ? "Working" : "Running" },
                         { value: "failed", label: "Failed" },
-                        { value: "done", label: "Finished" },
+                        { value: "done", label: ignoreUnread ? "Done" : "Finished" },
                         { value: "scheduled", label: "Scheduled runs" },
                         { value: "archived", label: "Archived" },
                         { value: "deleted", label: "Deleted" },
@@ -1545,6 +1601,7 @@ export function DesktopApp() {
                       projectOrder.map((pid) => {
                         const p = db.projects.find((p) => p.id === pid);
                         const collapsed = collapsedProjects.includes(pid);
+                        const projectSchedules = (db.schedules || []).filter(s => s.project === pid);
                         const attention = collapsed ? attentionCount(sorted.filter(t => t.project === pid), read, t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) : 0;
                         return (
                           <section key={pid} data-project-id={pid} aria-label={`${p?.name} threads`}
@@ -1599,6 +1656,12 @@ export function DesktopApp() {
                               {collapsed && attention > 0 && <span className="project-attention" role="status" aria-label={`${attention} ${attention === 1 ? "thread needs" : "threads need"} attention in ${p?.name}`}>{attention}</span>}
                               {native && p?.path && <ShipButton projectId={pid} projectName={p.name} path={p.path} client={tauriGitClient} onShip={pid2 => createHomeThread(pid2, SHIP_PROMPT)}
                                 activity={db.sessions.filter(t => t.project === pid).map(t => `${t.id}:${t.status}`).join("|")} />}
+                              {native && <Button variant="ghost" size="icon" className="project-settings-button project-schedule-button"
+                                aria-label={`Scheduled tasks for ${p?.name}`} title={`${projectSchedules.length} scheduled ${projectSchedules.length === 1 ? "task" : "tasks"} for ${p?.name}`} aria-expanded={scheduleProjects.includes(pid)}
+                                onClick={() => { setScheduleProjects(ids => ids.includes(pid) ? ids.filter(id => id !== pid) : [...ids, pid]); setCollapsedProjects(ids => ids.filter(id => id !== pid)); }}>
+                                <CalendarClock size={14}/>
+                                {projectSchedules.length > 0 && <span className="project-schedule-count" aria-hidden="true">{projectSchedules.length}</span>}
+                              </Button>}
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1606,7 +1669,7 @@ export function DesktopApp() {
                                 title={`Git history for ${p?.name}`}
                                 aria-pressed={pane?.kind === "git" && pane.projectId === pid}
                                 className="project-settings-button project-git-button"
-                                onClick={e => { e.stopPropagation(); if (!view.split) setSelected(""); setDialog(null); setPane({ kind: "git", projectId: pid }); }}
+                                onClick={e => { e.stopPropagation(); if (!view.split) setSelected(""); setDialog(null); setScheduleView(null); setPane({ kind: "git", projectId: pid }); }}
                               >
                                 <GitBranch size={13} />
                               </Button>
@@ -1622,6 +1685,13 @@ export function DesktopApp() {
                               </Button>
                             </div>
                             {!collapsed && <>
+                            {native && scheduleProjects.includes(pid) && <div className="project-schedules" aria-label={`${p?.name} scheduled tasks`}>
+                              {projectSchedules.map(s => <button type="button" className="schedule-thread-row" key={s.id} aria-pressed={scheduleView?.id === s.id} onClick={() => {
+                                setScheduleView({project: pid, id: s.id}); setHome(false); setDialog(null); setPane(null);
+                                selectScheduleRun([...s.runs].reverse().find(r => r.session && db.sessions.some(t => t.id === r.session))?.session || (s.new_chat===false&&db.sessions.some(t=>t.id===s.thread)?s.thread!:""));
+                              }}><CalendarClock size={15}/><span><strong>{s.name}</strong><small>{scheduleEnded(s) ? "Ended" : s.enabled ? `Next ${new Date(s.next_due).toLocaleString()}` : "Paused"}</small></span></button>)}
+                              <Button variant="ghost" size="sm" onClick={() => { setScheduleView({project:pid}); setHome(false); setDialog(null); setPane(null); selectScheduleRun(""); }}> <Plus size={13}/> New scheduled task</Button>
+                            </div>}
                             <ThreadList key={`${filter}:${query}:${hideRead}:${recentFinished}`} threads={visible.filter((t) => t.project === pid)} renderRow={row} />
                             {recentGroup(recentFor(pid), pid)}
                             {older(pid)}
@@ -1682,7 +1752,7 @@ export function DesktopApp() {
                         }}/>
                         <div className="new-conversation-options">
                           <Picker label="Project" value={projectId} onChange={setProjectId} options={db.projects.map(p => ({ value: p.id, label: p.name }))}/>
-                          <Picker label="Agent and account" disabled={!native || working} value={accountId} onChange={selectNewAccount} options={[{ value: "default", label: resolveAccount(db, destination) ? accountLabel(db, resolveAccount(db, destination)) : "No default account configured" }, ...db.accounts.map(a => ({ value: a.id, label: `${providerName(a.provider)} · ${a.name}` }))]}/>
+                          <Picker label="Agent and account" disabled={!native || working} value={effective || "default"} onChange={selectNewAccount} options={[...(!effective ? [{ value: "default", label: "No default account configured" }] : []), ...db.accounts.map(a => ({ value: a.id, label: agentDisplayName(a) }))]}/>
                           <label className="new-worktree" title={worktree ? "New branch from the current commit; uncommitted files stay in the original folder." : "Use the project folder directly. Your choice is remembered."}><input type="checkbox" checked={worktree} onChange={e => {
                             setWorktree(e.target.checked);
                             if (native) void action(() => invoke("save_preferences", { patch: { use_worktree: e.target.checked } }));
@@ -1726,13 +1796,27 @@ export function DesktopApp() {
                   </div>
                 </ResizablePanel>
               </>}
-              {pane?.kind === "git" && !dialog && !homeActive && <>
+              {pane?.kind === "git" && !dialog && !homeActive && !scheduleView && <>
                 <ResizableHandle withHandle />
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <GitHistoryPanel key={pane.projectId} project={db.projects.find(p => p.id === pane.projectId)} native={native} onClose={() => { setPane(null); setTimeout(focusList, 0); }} />
                 </ResizablePanel>
               </>}
-              {dialog !== "new" && !homeActive && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
+              {scheduleView && dialog !== "new" && <>
+                <ResizableHandle withHandle/>
+                <ResizablePanel id="schedule-workspace" defaultSize="70%" minSize="30%">
+                  <ScheduleManager key={`${scheduleView.project}:${scheduleView.id || "new"}`} db={db} native={native} projectId={scheduleView.project} scheduleId={scheduleView.id} onRefresh={refresh} onSelect={selectScheduleRun} onDeleted={() => setScheduleView(null)} onClose={() => setScheduleView(null)} onSaved={id=>setScheduleView({project:scheduleView.project,id})}
+                    conversation={({form}) => task ? conversation(view.focus) : <section className="thread-detail new-conversation" aria-label="Routine conversation">
+                      <div className="pane-title"><span>{form.name || "New routine"}</span></div>
+                      <div className="chat-surface">
+                        <div className="chat-transcript"><div className="routine-empty"><CalendarClock size={24}/><h2>This routine hasn’t been run yet</h2><p>{form.id ? "Choose Run now in the configuration panel to start its first conversation." : "Add a name and schedule, then save your routine."}</p></div></div>
+
+                      </div>
+                    </section>}/>
+
+                </ResizablePanel>
+              </>}
+              {dialog !== "new" && !homeActive && !scheduleView && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
@@ -1982,7 +2066,7 @@ export function DesktopApp() {
                       }
                       options={db.accounts.map((a) => ({
                         value: a.id,
-                        label: `${a.provider} · ${a.name}`,
+                        label: agentDisplayName(a),
                       }))}
                     />
                   )}
@@ -2046,7 +2130,7 @@ export function DesktopApp() {
                   }
                   options={db.accounts.map((a) => ({
                     value: a.id,
-                    label: `${a.provider} · ${a.name}`,
+                    label: agentDisplayName(a),
                   }))}
                 />
               )}
@@ -2057,18 +2141,22 @@ export function DesktopApp() {
             </>
           )}
           {dialog === "companion" && <CompanionSettings native={native} />}
-          {dialog === "appearance" && <AppearanceSettings appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
-          {dialog === "voice" && <VoiceSettings native={native}/>}
+          {dialog === "appearance" && <AppearanceSettings fontSizes={fontSizes} appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
+          {dialog === "voice" && <VoiceSettings native={native && /Mac/.test(navigator.platform)}/>}
           {dialog === "agentconfig" && <AgentConfigSettings native={native} accounts={db.accounts} projects={db.projects}/>}
           {dialog === "background" && <BackgroundSettings native={native}/>}
           {dialog === "threads" && (
             <FieldGroup>
               <Field orientation="horizontal">
+                <FieldContent><FieldLabel htmlFor="ignore-unread">Ignore unread status (experimental)</FieldLabel><FieldDescription>Focus on Working, Needs you, and Done. Finished replies count as Done immediately, without opening them or marking them as read. Approvals, errors, and interruptions still need your attention. Also applies to your companion app. Turn off anytime to restore unread indicators.</FieldDescription></FieldContent>
+                <Switch id="ignore-unread" checked={ignoreUnread} onCheckedChange={setIgnoreUnread} />
+              </Field>
+              <Field orientation="horizontal">
                 <FieldContent><FieldLabel htmlFor="group-by-project">Group by project</FieldLabel><FieldDescription>Organize your thread list by project folder.</FieldDescription></FieldContent>
                 <Switch id="group-by-project" checked={grouped} onCheckedChange={setGrouped} />
               </Field>
               <Field orientation="horizontal">
-                <FieldContent><FieldLabel htmlFor="hide-read-threads">Hide completed threads after reading</FieldLabel><FieldDescription>Completed conversations remain available in the Finished filter.</FieldDescription></FieldContent>
+                <FieldContent><FieldLabel htmlFor="hide-read-threads">{ignoreUnread ? "Move completed threads out of the active list" : "Hide completed threads after reading"}</FieldLabel><FieldDescription>{ignoreUnread ? "Finished replies move to recent or older threads immediately. They remain available in the Done filter." : "Completed conversations remain available in the Finished filter."}</FieldDescription></FieldContent>
                 <Switch id="hide-read-threads" checked={hideRead} onCheckedChange={setHideRead} />
               </Field>
               <Field orientation="horizontal">

@@ -8,6 +8,8 @@ import type { NativeThreadsModel } from './native-threads';
  */
 const PLUGIN = 'native-shell';
 let available = false;
+let dashboardContent = false;
+export function hasNativeDashboardContent(): boolean { return dashboardContent; }
 let probe: Promise<boolean> | null = null;
 
 function inTauri(): boolean {
@@ -24,8 +26,8 @@ export function probeNativeShell(): Promise<boolean> {
     try {
       // The native plugin may still be waiting for Tauri's root controller to attach.
       for (let attempt = 0; attempt < 50; attempt++) {
-        const result = await invoke<{ installed?: boolean }>(`plugin:${PLUGIN}|ping`);
-        if (result?.installed) return (available = true);
+        const result = await invoke<{ installed?: boolean; nativeDashboardContent?: boolean }>(`plugin:${PLUGIN}|ping`);
+        if (result?.installed) { dashboardContent = !!result.nativeDashboardContent; return (available = true); }
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     } catch { /* Desktop builds have no native-shell plugin. */ }
@@ -133,3 +135,9 @@ export const onNewThread = (handler: (payload: { project?: unknown }) => void) =
 export const onShowOlder = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('showOlder', handler);
 
 export const onDashboard = (handler: () => void) => listen<unknown>('dashboard', handler);
+
+export function setDashboard(model: import('./native-dashboard').NativeDashboardModel): Promise<void> {
+  if (!available) return Promise.resolve();
+  return invoke<void>(`plugin:${PLUGIN}|set_dashboard`, { model });
+}
+export const onDashboardAction = (handler: (payload: import('./native-dashboard').DashboardAction) => void) => listen<import('./native-dashboard').DashboardAction>('dashboardAction', handler);

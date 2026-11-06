@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
-import { providerName, type Database } from "./types";
+import { agentDisplayName, type Database } from "./types";
 import {
   blockedReason, buildRequests, candidateKey, filterCandidates, foldersNeedingProject, groupByFolder, importable,
   pruneSelection, selectedCandidates, summarizeOutcomes, toggleGroup, toggleOne,
@@ -85,7 +85,7 @@ export function ImportSessions({ db, native, onImported }: { db: Database; nativ
               <span className="grid min-w-0 flex-1">
                 <span className="truncate">{c.title}</span>
                 <span className="text-xs text-muted-foreground">
-                  {providerName(c.provider)}{accountName(c.account) ? ` · ${accountName(c.account)}` : ""} · {when(c.updated)}
+                  {agentDisplayName({ provider: c.provider, name: accountName(c.account) || "" })} · {when(c.updated)}
                   {c.message_count != null ? ` · ${c.message_count} messages` : ""}{c.git_branch ? ` · ${c.git_branch}` : ""}
                 </span>
                 {blocked && <span className="text-xs text-destructive">{blocked}</span>}

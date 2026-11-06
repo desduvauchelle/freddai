@@ -105,7 +105,7 @@ impl LaunchOptions {
         if let Some(mode) = next.permission_mode {
             self.permission_mode = Some(mode);
         }
-        if next.update_agent_controls {
+        if next.update_agent_controls && !next.scheduled {
             self.model = next.model.clone();
             self.effort = next.effort.clone();
         }
@@ -121,6 +121,8 @@ pub struct Message {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub pinned: bool,
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
@@ -142,6 +144,9 @@ pub struct Session {
     pub updated: u64,
     #[serde(default)]
     pub last_user_message_at: Option<u64>,
+    /// Dispatch time of the current turn; independent of streaming updates and queued messages.
+    #[serde(default)]
+    pub turn_started_at: Option<u64>,
     pub provider_id: Option<String>,
     pub messages: Vec<Message>,
     pub pending: Option<Value>,
@@ -361,22 +366,6 @@ pub(crate) fn private_dir(path: &Path) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     Ok(())
 }
-fn is_executable(path: &Path) -> bool {
-    let Ok(meta) = fs::metadata(path) else {
-        return false;
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
 fn is_acp(provider: &str) -> bool {
     matches!(
         provider,
@@ -394,22 +383,7 @@ fn executable(provider: &str) -> Result<PathBuf> {
         "cursor" => "agent",
         _ => return Err("Unsupported agent".into()),
     };
-    let mut dirs = vec![
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ];
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        dirs.push(home.join(".local/bin"));
-        dirs.push(home.join(".opencode/bin"));
-        dirs.push(home.join(".cursor/bin"));
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        dirs.extend(std::env::split_paths(&path));
-    }
-    dirs.into_iter()
-        .map(|d| d.join(name))
-        .find(|p| is_executable(p))
+    crate::platform::executable_in(name, crate::platform::cli_dirs())
         .ok_or_else(|| format!("Install {name} CLI before using this account."))
 }
 #[derive(Serialize)]
@@ -480,7 +454,7 @@ fn command_with_resolver(
     if account.config_home.is_none() {
         private_dir(&home)?;
     }
-    let mut cmd = Command::new(resolve(&account.provider)?);
+    let mut cmd = crate::platform::quiet_command(resolve(&account.provider)?);
     for key in AUTH_ENV {
         cmd.env_remove(key);
     }
@@ -492,7 +466,7 @@ fn command_with_resolver(
         if account.config_home.is_none() {
             return Err("Antigravity uses the shared CLI sign-in. Connect it in Accounts.".into());
         }
-        let help = Command::new(resolve("antigravity")?)
+        let help = crate::platform::quiet_command(resolve("antigravity")?)
             .args(["acp", "--help"])
             .output()
             .map_err(|e| e.to_string())?;
@@ -525,8 +499,7 @@ fn command_with_resolver(
         cmd.args(["-c", "cli_auth_credentials_store=\"file\""]);
     }
     // GUI applications do not inherit the user's interactive shell PATH.
-    let path = std::env::var("PATH").unwrap_or_default();
-    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{path}"));
+    cmd.env("PATH", crate::platform::cli_path()?);
     #[cfg(unix)]
     cmd.process_group(0);
     Ok(cmd)
@@ -556,11 +529,14 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
     } else {
         c.args(["auth", "status"]);
     }
-    let mut child = c
+    c
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    let (mut child, job) = crate::windows_process::spawn(&mut c).map_err(|e|e.to_string())?;
+    #[cfg(not(windows))]
+    let mut child = c.spawn()
         .map_err(|e| e.to_string())?;
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -572,6 +548,8 @@ fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) ->
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    #[cfg(windows)]
+    drop(job);
     terminate(&mut child);
     let name = if provider == "codex" {
         "Codex"
@@ -600,7 +578,7 @@ fn local_account_from_env(
     let claude_default_config = provider == "claude" && override_home.is_none();
     let home = override_home
         .clone()
-        .or_else(|| get_env("HOME").map(|h| PathBuf::from(h).join(folder)))
+        .or_else(|| crate::platform::home_from_env(&get_env).map(|h| h.join(folder)))
         .ok_or("Cannot locate CLI configuration")?;
     let resolved = fs::canonicalize(&home).map_err(|_| "No existing CLI configuration found")?;
     if !resolved.is_dir() {
@@ -1181,6 +1159,12 @@ impl Runtime {
         let exe = executable(&a.provider)?;
         let home = i.root.join("accounts").join(&a.id);
         private_dir(&home)?;
+        #[cfg(windows)]
+        return crate::platform::interactive_login(&exe, &home,
+            if a.provider == "gemini" { "GEMINI_CLI_HOME" } else { "CLAUDE_CONFIG_DIR" }, AUTH_ENV,
+            if a.provider == "gemini" { &[] } else { &["auth", "login", "--claudeai"] });
+        #[cfg(not(windows))]
+        {
         fn q(s: &str) -> String {
             format!("'{}'", s.replace('\'', "'\\''"))
         }
@@ -1205,6 +1189,7 @@ impl Runtime {
             .spawn()
             .map_err(|e| e.to_string())?;
         Ok(())
+        }
     }
     pub fn login_state(&self, account: &str) -> Option<crate::login::LoginState> {
         self.1.state(account)
@@ -1274,7 +1259,10 @@ impl Runtime {
         check_auth(command(&a, &root)?, &a.provider)
     }
 
-    pub fn save_schedule(&self, mut schedule: crate::schedules::Schedule) -> Result<()> {
+    pub fn save_schedule(&self, schedule: crate::schedules::Schedule) -> Result<()> {
+        self.save_schedule_returning(schedule).map(|_| ())
+    }
+    pub fn save_schedule_returning(&self, mut schedule: crate::schedules::Schedule) -> Result<crate::schedules::Schedule> {
         let mut i = self.0.lock().unwrap();
         if schedule.prompt.trim().is_empty() || schedule.name.trim().is_empty() {
             return Err("Enter a schedule name and prompt".into());
@@ -1284,7 +1272,20 @@ impl Runtime {
         {
             return Err("Choose an existing project and stable fallback account".into());
         }
-        schedule.next_due = crate::schedules::next(&schedule.cron, &schedule.timezone, now())?;
+        // Counts are host-owned. Never let stale or forged UI history reset a run limit.
+        schedule.runs = if schedule.id.is_empty() { Vec::new() } else {
+            i.db.schedules.iter().find(|s| s.id == schedule.id).ok_or("Schedule not found")?.runs.clone()
+        };
+        for run in &mut schedule.runs {
+            if ["done","failed","interrupted","stopped","blocked","skipped","missed","archived"].contains(&run.state.as_str()) { run.finished=true; }
+            if !matches!(schedule.notifications.as_deref(),Some("all"|"important")) {
+                for notice in &mut run.notices { notice.delivered=true; }
+            }
+        }
+        schedule.validate_delivery(&i.db.sessions)?;
+        if schedule.new_chat { schedule.thread = None; }
+        schedule.next_due = schedule.next_automatic(now())?.unwrap_or(0);
+        if schedule.next_due == 0 { schedule.enabled = false; }
         if !["fixed", "project"].contains(&schedule.routing.as_str()) {
             return Err("Invalid schedule routing".into());
         }
@@ -1293,20 +1294,25 @@ impl Runtime {
         if schedule.id.is_empty() {
             schedule.id = id();
             schedule.runs.clear();
-            i.db.schedules.push(schedule)
+            i.db.schedules.push(schedule.clone())
         } else {
             let old =
                 i.db.schedules
                     .iter_mut()
                     .find(|s| s.id == schedule.id)
                     .ok_or("Schedule not found")?;
-            schedule.runs = old.runs.clone();
-            *old = schedule;
+            *old = schedule.clone();
         }
-        write_db(&i)
+        write_db(&i)?;
+        Ok(schedule)
     }
     pub fn schedule_action(&self, sid: &str, action: &str) -> Result<()> {
         let mut i = self.0.lock().unwrap();
+        if action == "delete" {
+            let index = i.db.schedules.iter().position(|s| s.id == sid).ok_or("Schedule not found")?;
+            i.db.schedules.remove(index);
+            return write_db(&i);
+        }
         let s =
             i.db.schedules
                 .iter_mut()
@@ -1315,14 +1321,24 @@ impl Runtime {
         match action {
             "pause" => s.enabled = false,
             "resume" => {
+                let due = s.next_automatic(now())?.ok_or("This routine has ended. Extend or clear its stopping condition first.")?;
+                s.next_due = due;
                 s.enabled = true;
-                s.next_due = crate::schedules::next(&s.cron, &s.timezone, now())?
             }
             "run" => {
+                if s.run_limit_reached() { return Err("Run limit reached. Increase or remove the limit first.".into()) }
                 s.run_now = Some(now());
             }
             _ => return Err("Unsupported schedule action".into()),
         }
+        write_db(&i)
+    }
+    pub fn schedule_notifications(&self) -> Vec<crate::schedules::Notice> {
+        self.0.lock().unwrap().db.schedules.iter().flat_map(|s|s.runs.iter()).flat_map(|r|r.notices.iter()).filter(|n|!n.delivered).take(20).cloned().collect()
+    }
+    pub fn acknowledge_schedule_notification(&self, notice: &str) -> Result<()> {
+        let mut i=self.0.lock().unwrap();
+        if let Some(n)=i.db.schedules.iter_mut().flat_map(|s|s.runs.iter_mut()).flat_map(|r|r.notices.iter_mut()).find(|n|n.id==notice) { n.delivered=true; }
         write_db(&i)
     }
     pub fn scheduler_tick(&self) {
@@ -1335,23 +1351,24 @@ impl Runtime {
             let db = i.db.clone();
             let time = now();
             for s in &mut i.db.schedules {
+                for session in &db.sessions { s.observe_session(session); }
                 for run in &mut s.runs {
-                    if let Some(session) = run
-                        .session
-                        .as_ref()
-                        .and_then(|id| db.sessions.iter().find(|x| &x.id == id))
-                        .or_else(|| db.sessions.iter().find(|x| x.requests.contains(&run.id)))
-                    {
-                        run.session = Some(session.id.clone());
-                        run.state = session.status.clone();
-                        run.reason = session.error.clone();
-                    } else if run.state == "dispatching" {
+                    if run.finished { continue; }
+                    if run.state == "dispatching" && run.session.is_none() {
                         run.state = "uncertain".into();
-                        run.reason = Some(
-                            "Host restarted during dispatch. Inspect history before running again."
-                                .into(),
-                        );
+                        run.reason = Some("Host restarted during dispatch. Inspect history before running again.".into());
                     }
+                    run.queue_notice(&s.name, s.notifications.as_deref(), "");
+                }
+                if s.run_limit_reached() {
+                    s.enabled = false;
+                    s.next_due = 0;
+                    s.run_now = None;
+                    continue;
+                }
+                if !s.allows_automatic_at(time).unwrap_or(false) {
+                    s.enabled = false;
+                    s.next_due = 0;
                 }
                 if s.run_now.is_none() && (!s.enabled || s.next_due > time) {
                     continue;
@@ -1360,8 +1377,9 @@ impl Runtime {
                 let due = manual.unwrap_or(s.next_due);
                 let occurrence = format!("{}:{}", s.id, due);
                 if manual.is_none() {
-                    s.next_due = match crate::schedules::next(&s.cron, &s.timezone, time) {
-                        Ok(n) => n,
+                    s.next_due = match s.next_automatic(time) {
+                        Ok(Some(n)) => n,
+                        Ok(None) => { s.enabled = false; 0 },
                         Err(e) => {
                             s.enabled = false;
                             s.runs.push(crate::schedules::Run {
@@ -1370,6 +1388,7 @@ impl Runtime {
                                 state: "blocked".into(),
                                 session: None,
                                 reason: Some(e),
+                                ..Default::default()
                             });
                             continue;
                         }
@@ -1383,7 +1402,8 @@ impl Runtime {
                 }) {
                     continue;
                 }
-                let overlapping = s
+                let target_busy = s.target_thread(&db.sessions).ok().flatten().is_some_and(|t| ["starting","running","waiting"].contains(&t.status.as_str()));
+                let overlapping = target_busy || s
                     .runs
                     .iter()
                     .any(|r| ["starting", "running", "waiting"].contains(&r.state.as_str()));
@@ -1401,22 +1421,23 @@ impl Runtime {
                     state: state.into(),
                     session: None,
                     reason: if overlapping {
-                        Some("Previous run is still active".into())
+                        Some(if target_busy { "The selected thread is busy".into() } else { "Previous run is still active".into() })
                     } else if missed {
                         Some("Host was offline or asleep. Run now explicitly to catch up.".into())
                     } else {
                         None
                     },
+                    ..Default::default()
                 });
                 if state == "dispatching" {
-                    dispatch.push((s.clone(), occurrence));
+                    dispatch.push((s.clone(), occurrence, manual.is_some()));
                 }
             }
             if write_db(&i).is_err() {
                 return;
             }
         }
-        for (s, occurrence) in dispatch {
+        for (s, occurrence, manual) in dispatch {
             let db = self.snapshot();
             let p = db.projects.iter().find(|p| p.id == s.project);
             let account = if s.routing == "project" {
@@ -1435,12 +1456,19 @@ impl Runtime {
             let mut options = s.options.clone();
             options.scheduled = true;
             options.request_id = Some(occurrence.clone());
-            let result = match account {
+            let result = if db.schedules.iter().find(|current| current.id == s.id).is_some_and(|current| current.run_limit_reached()) {
+                Err("Run limit reached before dispatch".into())
+            } else if !manual && !db.schedules.iter().find(|current| current.id == s.id).is_some_and(|current| current.allows_automatic_at(now()).unwrap_or(false)) {
+                Err("Routine ended before dispatch".into())
+            } else { match account {
                 Some(account) => {
-                    self.launch_with(s.project, Some(account), s.prompt, None, options)
+                    match s.target_thread(&db.sessions) {
+                        Ok(thread) => self.launch_with(s.project.clone(), Some(account), s.prompt.clone(), thread.map(|t| t.id.clone()), options),
+                        Err(error) => Err(error),
+                    }
                 }
                 None => Err("Project account is unavailable".into()),
-            };
+            }};
             let mut i = self.0.lock().unwrap();
             if let Some(run) =
                 i.db.schedules
@@ -1451,13 +1479,20 @@ impl Runtime {
                 match result {
                     Ok(id) => {
                         run.session = Some(id);
-                        run.state = "starting".into()
+                        if !run.finished && run.state == "dispatching" { run.state = "starting".into(); }
                     }
                     Err(e) => {
                         run.state = "blocked".into();
                         run.reason = Some(e)
                     }
                 }
+            }
+            if let Some(schedule) = i.db.schedules.iter_mut().find(|x| x.id == s.id) {
+                for run in &mut schedule.runs {
+                    run.queue_notice(&schedule.name, schedule.notifications.as_deref(), "");
+                    if ["blocked","skipped","missed"].contains(&run.state.as_str()) { run.finished=true; }
+                }
+                if schedule.run_limit_reached() { schedule.enabled = false; schedule.next_due = 0; schedule.run_now = None; }
             }
             let _ = write_db(&i);
         }
@@ -1480,6 +1515,19 @@ impl Runtime {
                 .iter()
                 .find(|s| s.id == sid)
                 .ok_or("Thread not found")?;
+        // Pinning is presentation metadata: never interrupt a turn or pause its queue.
+        if ["pin", "unpin"].contains(&action) {
+            if current.deleted_at.is_some() {
+                return Err("Restore this thread first".into());
+            }
+            let previous = i.db.clone();
+            i.db.sessions.iter_mut().find(|s| s.id == sid).unwrap().pinned = action == "pin";
+            if let Err(error) = write_db(&i) {
+                i.db = previous;
+                return Err(error);
+            }
+            return Ok(());
+        }
         if !["archive", "delete", "purge"].contains(&action)
             && (i.running.contains_key(sid)
                 || ["starting", "running", "waiting"].contains(&current.status.as_str()))
@@ -1806,6 +1854,7 @@ impl Runtime {
             } else {
                 Session {
                     archived: false,
+                    pinned: false,
                     deleted_at: None,
                     execution_project: None,
                     read_at: None,
@@ -1817,6 +1866,7 @@ impl Runtime {
                     status: "starting".into(),
                     updated: now(),
                     last_user_message_at: None,
+                    turn_started_at: None,
                     provider_id: None,
                     messages: vec![],
                     pending: None,
@@ -1839,6 +1889,7 @@ impl Runtime {
                     .ok_or("Account not found")?;
             if existing.is_some() {
                 s.options.update_controls(&options);
+                s.options.scheduled=options.scheduled;
             }
             if s.options.permission_mode == Some(PermissionMode::Bypass)
                 && !["codex", "claude"].contains(&a.provider.as_str())
@@ -1932,6 +1983,14 @@ impl Runtime {
             } else {
                 agent_prompt
             };
+            let agent_prompt = if options.scheduled && options.request_id.as_ref().is_some_and(|request| i.db.schedules.iter().any(|routine| routine.notifications.as_deref()==Some("important") && routine.runs.iter().any(|run| &run.id==request))) {
+                format!("{agent_prompt}\n\nRoutine notification preference: report actionable findings, meaningful changes, or anything needing the user's attention. If there is no important update, your final response must be exactly: No important updates. Otherwise summarize the important findings normally.")
+            } else { agent_prompt };
+            // Freeze a previous scheduled turn before replacing the shared thread's current state.
+            if let Some(previous)=i.db.sessions.iter().find(|previous|previous.id==s.id).cloned() {
+                for routine in &mut i.db.schedules { routine.observe_session(&previous); }
+            }
+            s.turn_started_at = Some(now());
             s.status = "starting".into();
             s.pending = None;
             s.error = None;
@@ -2327,6 +2386,14 @@ impl Runtime {
             critical = s.status != status || s.provider_id != provider;
             found = true;
         }
+        if critical {
+            if let Some(session)=i.db.sessions.iter().find(|s|s.id==sid).cloned() {
+                if i.db.schedules.iter().any(|s|s.runs.iter().any(|r|!r.finished && session.requests.contains(&r.id))) {
+                    for schedule in &mut i.db.schedules { schedule.observe_session(&session); }
+                    i.floor=i.revision+1;
+                }
+            }
+        }
         if found {
             i.revision += 1;
             let rev = i.revision;
@@ -2475,7 +2542,7 @@ impl Runtime {
                 cmd.args(["--resume", resume]);
             }
         }
-        crate::computer_use::configure(&mut cmd, &a.provider);
+        crate::agent_mcp::configure(&mut cmd, &a.provider, root, &p.id, &s.id);
         self.run_protocol(s, a, p, prompt, control, cmd)
     }
     fn run_protocol(
@@ -2489,7 +2556,13 @@ impl Runtime {
     ) -> Result<()> {
         let root = self.0.lock().unwrap().root.clone();
         let attachments = crate::attachments::blocks(&root, &s.options.attachments, &a.provider)?;
+        #[cfg(windows)]
+        let (mut child, job) = crate::windows_process::spawn(&mut cmd).map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        let guard = Some(job);
+        #[cfg(not(windows))]
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        #[cfg(not(windows))]
         let guard = match crate::watchdog::Guard::start(child.id()) {
             Ok(g) => g,
             Err(e) => {
@@ -2793,10 +2866,11 @@ impl Runtime {
                                 ) {
                                     send(
                                         &mut stdin,
-                                        crate::acp::session(
+                                        crate::acp::session_with_mcp(
                                             &p.path,
                                             s.provider_id.as_deref(),
                                             &acp_init,
+                                            crate::agent_mcp::servers(&root, &p.id, &s.id),
                                         )?,
                                     )?;
                                 } else {
@@ -2809,10 +2883,11 @@ impl Runtime {
                             if v["id"] == 102 && !v["result"].is_null() {
                                 send(
                                     &mut stdin,
-                                    crate::acp::session(
+                                    crate::acp::session_with_mcp(
                                         &p.path,
                                         s.provider_id.as_deref(),
                                         &acp_init,
+                                        crate::agent_mcp::servers(&root, &p.id, &s.id),
                                     )?,
                                 )?;
                             }
@@ -3489,7 +3564,7 @@ fn account_home(a: &Account, root: &Path) -> PathBuf {
 }
 /// The CLI homes a user's own terminal sessions write to (not owned by any Freddai account unless matched).
 pub fn default_import_roots() -> Vec<crate::import::ImportRoot> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::platform::home_dir();
     [
         ("claude", "CLAUDE_CONFIG_DIR", ".claude"),
         ("codex", "CODEX_HOME", ".codex"),
@@ -3716,7 +3791,29 @@ impl Runtime {
 }
 #[cfg(test)]
 mod tests {
+    use crate::platform::is_executable;
     use super::*;
+    #[test]
+    fn thread_pins_persist_without_changing_running_work() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"p","account":"a","title":"Keep","status":"running","updated":42,"provider_id":"saved","messages":[],"pending":null,"error":null})).unwrap());
+            assert!(!i.db.sessions[0].pinned);
+            i.db.queues.push(ThreadQueue { session: "thread".into(), paused: false, error: None, messages: vec![] });
+        }
+        rt.thread_action("thread", "pin", None).unwrap();
+        let snapshot = rt.snapshot();
+        assert!(snapshot.sessions[0].pinned);
+        assert_eq!(snapshot.sessions[0].status, "running");
+        assert_eq!(snapshot.sessions[0].updated, 42);
+        assert!(!snapshot.queues[0].paused);
+        let stored: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("workspace.json")).unwrap()).unwrap();
+        assert_eq!(stored["sessions"][0]["pinned"], true);
+        rt.thread_action("thread", "unpin", None).unwrap();
+        assert!(!rt.snapshot().sessions[0].pinned);
+    }
     #[test]
     fn thread_actions_preserve_identity_history_and_execution_folder() {
         let root = std::env::temp_dir().join(id());
@@ -4052,6 +4149,19 @@ mod tests {
         let restored: LaunchOptions =
             serde_json::from_value(serde_json::to_value(saved).unwrap()).unwrap();
         assert_eq!(restored.permission_mode, Some(PermissionMode::Ask));
+    }
+    #[test]
+    fn scheduled_controls_apply_permissions_without_replacing_thread_settings() {
+        let mut saved = LaunchOptions { permission_mode: Some(PermissionMode::Ask), model: Some("keep".into()), effort: Some("high".into()), worktree: true, ..Default::default() };
+        saved.update_controls(&LaunchOptions { scheduled: true, permission_mode: Some(PermissionMode::Bypass), update_agent_controls: true, model: Some("ignore".into()), ..Default::default() });
+        assert_eq!(saved.permission_mode, Some(PermissionMode::Bypass));
+        assert_eq!(saved.model.as_deref(), Some("keep"));
+        assert_eq!(saved.effort.as_deref(), Some("high"));
+        assert!(saved.worktree);
+        saved.update_controls(&LaunchOptions { scheduled: true, ..Default::default() });
+        assert_eq!(saved.permission_mode, Some(PermissionMode::Bypass));
+        saved.update_controls(&LaunchOptions { scheduled: true, permission_mode: Some(PermissionMode::Ask), ..Default::default() });
+        assert_eq!(saved.permission_mode, Some(PermissionMode::Ask));
     }
     #[test]
     fn resumed_controls_preserve_legacy_settings_and_allow_explicit_reset() {
@@ -4448,6 +4558,149 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn deleting_schedule_persists_without_removing_sessions() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"scheduled-thread","project":"removed-project","account":"removed-account","title":"Previous scheduled run","status":"running","updated":0,"provider_id":null,"messages":[{"id":"message","role":"user","text":"Keep this message"}],"pending":null,"error":null})).unwrap());
+            i.db.schedules.push(serde_json::from_value(json!({"id":"schedule","name":"Check","project":"removed-project","account":"removed-account","routing":"fixed","cron":"0 9 * * *","timezone":"UTC","prompt":"Check","enabled":false})).unwrap());
+        }
+        let sessions = serde_json::to_value(rt.snapshot().sessions).unwrap();
+        rt.schedule_action("schedule", "delete").unwrap();
+        assert!(rt.snapshot().schedules.is_empty());
+        assert_eq!(serde_json::to_value(rt.snapshot().sessions).unwrap(), sessions);
+        assert!(rt.schedule_action("schedule", "delete").is_err());
+        drop(rt);
+        assert!(Runtime::open(root.clone()).unwrap().snapshot().schedules.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn scheduler_skips_busy_selected_thread_without_starting_provider_work() {
+        let root=std::env::temp_dir().join(id());
+        let rt=Runtime::open(root.clone()).unwrap();
+        {
+            let mut i=rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"target","project":"p","account":"removed-account","title":"Busy","status":"running","updated":1,"provider_id":"established","messages":[],"pending":null,"error":null})).unwrap());
+            i.db.schedules.push(serde_json::from_value(json!({"id":"routine","name":"Check","project":"p","account":"removed-account","routing":"fixed","cron":"* * * * *","timezone":"UTC","prompt":"Check","enabled":true,"next_due":now()-1000,"new_chat":false,"thread":"target"})).unwrap());
+        }
+        rt.scheduler_tick();
+        let db=rt.snapshot();
+        assert_eq!(db.sessions.len(),1);
+        assert_eq!(db.sessions[0].status,"running");
+        assert_eq!(db.schedules[0].runs[0].state,"skipped");
+        assert_eq!(db.schedules[0].runs[0].reason.as_deref(),Some("The selected thread is busy"));
+        assert!(db.schedules[0].runs[0].session.is_none());
+        drop(rt); fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn schedule_notice_outbox_persists_and_acknowledges_without_replay() {
+        let root=std::env::temp_dir().join(id());
+        let rt=Runtime::open(root.clone()).unwrap();
+        {
+            let mut i=rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"target","project":"p","account":"removed-account","title":"Check","status":"running","updated":1,"provider_id":"established","messages":[],"pending":null,"error":null,"requests":["run"]})).unwrap());
+            i.db.schedules.push(serde_json::from_value(json!({"id":"routine","name":"Check","project":"p","account":"removed-account","routing":"fixed","cron":"* * * * *","timezone":"UTC","prompt":"Check","enabled":false,"notifications":"important","runs":[{"id":"run","due":1,"state":"running","session":"target","reason":null}]})).unwrap());
+        }
+        rt.update("target",|s|{s.status="failed".into();s.error=Some("Needs attention".into());});
+        let notices=rt.schedule_notifications();
+        assert_eq!(notices.len(),1);
+        assert_eq!(notices[0].body,"Needs attention");
+        drop(rt);
+        let restored=Runtime::open(root.clone()).unwrap();
+        assert_eq!(restored.schedule_notifications().len(),1);
+        restored.acknowledge_schedule_notification(&notices[0].id).unwrap();
+        restored.scheduler_tick();
+        assert!(restored.schedule_notifications().is_empty());
+        drop(restored);
+        let final_rt=Runtime::open(root.clone()).unwrap();
+        assert!(final_rt.schedule_notifications().is_empty());
+        drop(final_rt);fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn scheduler_run_limit_survives_restart_and_blocks_manual_runs_until_extended() {
+        let root=std::env::temp_dir().join(id());
+        let rt=Runtime::open(root.clone()).unwrap();
+        {
+            let mut i=rt.0.lock().unwrap();
+            i.db.schedules.push(serde_json::from_value(json!({"id":"limited","name":"Limited","project":"removed-project","account":"removed-account","routing":"fixed","cron":"* * * * *","timezone":"UTC","prompt":"Never launch","enabled":true,"max_runs":1,"next_due":now()-1000,"run_now":now(),"runs":[{"id":"past","due":1,"state":"done","session":"deleted-session","reason":null}]})).unwrap());
+        }
+        rt.scheduler_tick();
+        let saved=rt.snapshot();
+        assert!(!saved.schedules[0].enabled);
+        assert_eq!(saved.schedules[0].next_due,0);
+        assert_eq!(saved.schedules[0].runs.len(),1);
+        assert!(saved.schedules[0].run_now.is_none());
+        assert!(saved.sessions.is_empty());
+        assert!(rt.schedule_action("limited","run").is_err());
+        assert!(rt.schedule_action("limited","resume").is_err());
+        drop(rt);
+        let restored=Runtime::open(root.clone()).unwrap();
+        assert!(restored.snapshot().schedules[0].run_limit_reached());
+        assert!(restored.schedule_action("limited","run").is_err());
+        { restored.0.lock().unwrap().db.schedules[0].max_runs=Some(2); }
+        restored.schedule_action("limited","resume").unwrap();
+        assert!(restored.snapshot().schedules[0].enabled);
+        restored.schedule_action("limited","run").unwrap();
+        assert!(restored.snapshot().schedules[0].run_now.is_some());
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn scheduler_end_date_keeps_final_occurrence_when_no_future_run_remains() {
+        let root=std::env::temp_dir().join(id());
+        let rt=Runtime::open(root.clone()).unwrap();
+        {
+            let mut i=rt.0.lock().unwrap();
+            let end=chrono::Utc::now().format("%Y-%m-%d").to_string();
+            i.db.schedules.push(serde_json::from_value(json!({"id":"final","name":"Final","project":"removed-project","account":"removed-account","routing":"fixed","cron":"0 0 * * *","timezone":"UTC","end_date":end,"prompt":"Never launch","enabled":true,"next_due":now()-120000})).unwrap());
+        }
+        // Exercise final-occurrence advancement without any provider dispatch.
+        rt.scheduler_tick();
+        let saved=rt.snapshot();
+        assert!(!saved.schedules[0].enabled);
+        assert_eq!(saved.schedules[0].next_due,0);
+        assert_eq!(saved.schedules[0].runs.len(),1);
+        assert_eq!(saved.schedules[0].runs[0].state,"missed");
+        assert!(saved.sessions.is_empty());
+        {
+            let mut i=rt.0.lock().unwrap();
+            i.db.schedules[0].end_date=None;
+        }
+        rt.schedule_action("final","resume").unwrap();
+        assert!(rt.snapshot().schedules[0].enabled);
+        assert!(rt.snapshot().schedules[0].next_due>now());
+        drop(rt);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn scheduler_end_date_expires_without_dispatch_and_stays_expired_after_restart() {
+        let root=std::env::temp_dir().join(id());
+        let rt=Runtime::open(root.clone()).unwrap();
+        {
+            let mut i=rt.0.lock().unwrap();
+            i.db.schedules.push(serde_json::from_value(json!({"id":"expired","name":"Expired","project":"removed-project","account":"removed-account","routing":"fixed","cron":"* * * * *","timezone":"UTC","end_date":"2000-01-01","prompt":"Never launch","enabled":true,"next_due":now()-1000})).unwrap());
+        }
+        rt.scheduler_tick();
+        let saved=rt.snapshot();
+        assert!(!saved.schedules[0].enabled);
+        assert_eq!(saved.schedules[0].next_due,0);
+        assert!(saved.schedules[0].runs.is_empty());
+        assert!(saved.sessions.is_empty());
+        assert!(rt.schedule_action("expired","resume").unwrap_err().contains("ended"));
+        drop(rt);
+        let restored=Runtime::open(root.clone()).unwrap();
+        restored.scheduler_tick();
+        assert!(!restored.snapshot().schedules[0].enabled);
+        assert!(restored.snapshot().schedules[0].runs.is_empty());
+        // Manual action remains explicit and does not enable the routine.
+        restored.schedule_action("expired","run").unwrap();
+        assert!(restored.snapshot().schedules[0].run_now.is_some());
+        assert!(!restored.snapshot().schedules[0].enabled);
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn scheduler_recovers_dispatch_and_records_missed_without_replay() {
         let root = std::env::temp_dir().join(id());
         let rt = Runtime::open(root.clone()).unwrap();
@@ -4518,6 +4771,7 @@ mod tests {
             let mut i = rt.0.lock().unwrap();
             i.db.sessions.push(Session {
                 archived: false,
+                    pinned: false,
                 deleted_at: None,
                 execution_project: None,
                 read_at: None,
@@ -4529,6 +4783,7 @@ mod tests {
                 status: "waiting".into(),
                 updated: 0,
                 last_user_message_at: None,
+                turn_started_at: None,
                 provider_id: Some("provider".into()),
                 options: Default::default(),
                 working_dir: None,
@@ -4808,6 +5063,7 @@ mod tests {
         fs::remove_file(sample).unwrap();
         let s = Session {
             archived: false,
+                    pinned: false,
             deleted_at: None,
             execution_project: None,
             read_at: None,
@@ -4819,6 +5075,7 @@ mod tests {
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
+            turn_started_at: None,
             provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor") {
                 Some("provider-session".into())
             } else {
@@ -5013,6 +5270,7 @@ mod tests {
         fs::remove_file(sample).unwrap();
         let s = Session {
             archived: false,
+                    pinned: false,
             deleted_at: None,
             execution_project: None,
             read_at: None,
@@ -5024,6 +5282,7 @@ mod tests {
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
+            turn_started_at: None,
             provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor") {
                 Some("provider-session".into())
             } else {

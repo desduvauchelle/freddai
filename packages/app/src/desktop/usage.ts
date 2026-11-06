@@ -1,7 +1,11 @@
 export type UsageWindow = { label: string; used_percent: number; resets_at: number | null };
 
+export function remainingPercent(used: number | null | undefined): number | null {
+  return typeof used === "number" && Number.isFinite(used) ? Math.max(0, Math.min(100, 100 - used)) : null;
+}
+
 export function limitingWindow(windows: UsageWindow[]) {
-  return windows.reduce<UsageWindow | undefined>((selected, window) =>
+  return windows.filter(window => remainingPercent(window.used_percent) !== null).reduce<UsageWindow | undefined>((selected, window) =>
     !selected || window.used_percent > selected.used_percent ? window : selected, undefined);
 }
 

@@ -2,6 +2,44 @@ import XCTest
 import UIKit
 
 final class CompanionLayoutTests: XCTestCase {
+  @MainActor
+  func testDashboardCompactControlsShareTitleRows() throws {
+    let dashboard = DashboardView(frame: CGRect(x: 0, y: 0, width: 393, height: 700))
+    let data = Data(##"{"connected":true,"busy":false,"agent":"Project defaults","projects":[{"id":"sample","name":"Sample","color":"#123456","assistant":"","activity":"No activity","model":"Model default","canStart":false}]}"##.utf8)
+    dashboard.apply(try JSONDecoder().decode(DashboardModel.self, from: data))
+    dashboard.layoutIfNeeded()
+    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    let views = descendants(dashboard)
+    let create = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-new-sample" } as? UIButton)
+    let mic = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-mic-sample" } as? UIButton)
+    XCTAssertTrue(dashboard.touchesShouldCancel(in: create))
+    XCTAssertNil(create.configuration?.title)
+    XCTAssertNil(mic.configuration?.title)
+    XCTAssertLessThanOrEqual(create.bounds.width, 48)
+    XCTAssertEqual(create.convert(create.bounds, to: dashboard).midY, mic.convert(mic.bounds, to: dashboard).midY, accuracy: 1)
+    let agent = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-agent" })
+    let heading = try XCTUnwrap(views.first { ($0 as? UILabel)?.text == "Your projects" })
+    XCTAssertEqual(agent.convert(agent.bounds, to: dashboard).midY, heading.convert(heading.bounds, to: dashboard).midY, accuracy: 1)
+  }
+
+  @MainActor
+  func testDashboardProjectsPrecedeSummariesAndRefreshIsCompact() throws {
+    let dashboard = DashboardView(frame: CGRect(x: 0, y: 0, width: 393, height: 900))
+    let data = Data(##"{"connected":true,"busy":false,"agent":"Project defaults","projects":[{"id":"sample","name":"Sample","color":"#123456","assistant":"","activity":"No activity","model":"Model default","canStart":false}],"summaries":[{"date":"2026-11-05","label":"Today","text":"Cached summary","action":"Refresh","busy":false}]}"##.utf8)
+    dashboard.apply(try JSONDecoder().decode(DashboardModel.self, from: data))
+    dashboard.layoutIfNeeded()
+    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    let views = descendants(dashboard)
+    let project = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-new-sample" })
+    let summary = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-summary-2026-11-05" })
+    let refresh = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-summary-action-2026-11-05" } as? UIButton)
+    XCTAssertLessThan(dashboard.workspace.convert(dashboard.workspace.bounds, to: dashboard).maxY, project.convert(project.bounds, to: dashboard).minY)
+    XCTAssertLessThan(project.convert(project.bounds, to: dashboard).maxY, summary.convert(summary.bounds, to: dashboard).minY)
+    XCTAssertNil(refresh.configuration?.title)
+    XCTAssertEqual(refresh.bounds.width, 44, accuracy: 1)
+    XCTAssertEqual(refresh.accessibilityLabel, "Refresh Today summary")
+  }
+
   func testSidebarUsesWindowSizeAndDeviceRatherThanScreenSize() {
     for size in [CGSize(width: 1133, height: 744), CGSize(width: 1194, height: 834), CGSize(width: 1366, height: 1024)] {
       XCTAssertTrue(CompanionLayout.showsSidebar(size: size, isPad: true, regularWidth: true))

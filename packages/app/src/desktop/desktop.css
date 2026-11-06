@@ -464,10 +464,10 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 .account-usage-heading > div > span { font-size: 11px; color: var(--adaptive-muted, #979dab); margin-top: 2px; }
 .account-default { margin-left: auto; font-size: 10px; color: var(--adaptive-text, #b9c3ba); border: 1px solid var(--adaptive-border, #46514a); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
 .account-usage-window + .account-usage-window { margin-top: 18px; }
-.account-usage-window > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.account-usage-window { display: flex; align-items: center; gap: 12px; }
+.account-usage-window-copy { flex: 1; min-width: 0; }
+.account-usage-window-copy > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
 .account-usage-window strong { flex-shrink: 0; }
-.account-usage-track { height: 5px; border-radius: 4px; background: var(--adaptive-surface, #353740); margin-top: 9px; overflow: hidden; }
-.account-usage-track > i { display: block; height: 100%; border-radius: inherit; }
 .account-usage-window p { color: var(--adaptive-muted, #a1a7b4); font-size: 11px; margin: 7px 0 0; overflow-wrap: anywhere; }
 .account-usage-card > small { display: block; font-size: 10px; color: var(--adaptive-muted, #858c9a); margin-top: 16px; }
 .account-usage-unavailable { color: var(--adaptive-muted, #a0a7b5); font-size: 11px; }
@@ -513,7 +513,7 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 .usage-ring-button small { display: grid; gap: 0; line-height: 13px; text-align: left; }
 .usage-ring-button small > span { font-size: 10px; color: var(--muted-foreground); }
 .usage-ring { position: relative; width: 26px; height: 26px; display: grid; place-items: center; flex: none; }
-.usage-ring > svg:first-child { position: absolute; inset: 0; width: 26px; height: 26px; transform: rotate(-90deg); }
+.usage-ring > svg:first-child { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .usage-ring circle { fill: none; stroke-width: 2.5; stroke-linecap: round; }
 .usage-ring-track { stroke: #42444c; }
 .schedule-card { padding: 16px 0; border-bottom: 1px solid var(--adaptive-border, #303238); }
@@ -1185,7 +1185,9 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .git-diff-hunk { color: #7aa7ff; }
 .git-diff-meta { color: var(--muted-foreground); }
 .project-ship-wrap { position: relative; margin-left: auto; display: inline-flex; align-items: center; flex-shrink: 0; }
-.project-ship-wrap + .project-git-button { margin-left: 0; }
+.project-group-heading .project-ship-wrap + .project-schedule-button,
+.project-group-heading .project-schedule-button + .project-git-button,
+.project-group-heading .project-ship-wrap + .project-git-button { margin-left: 0; }
 .project-group-heading .project-ship-wrap > .project-ship-button { margin-left: 0; width: 24px; height: 24px; color: var(--adaptive-muted, #8c8e9b); position: relative; }
 .project-ship-button[aria-disabled="true"] { opacity: 0.35; cursor: default; background: transparent; }
 .project-ship-button[aria-disabled="true"]:hover { background: transparent; color: var(--adaptive-muted, #8c8e9b); }
@@ -1204,3 +1206,67 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .native-workspace .task-row.compact-session:has(> .state-Done) { opacity: .82; }
 .native-workspace .task-row.compact-session:has(> .state-Done):is(:hover, :focus-within) { opacity: 1; }
 .native-workspace .task-row.compact-session > .state-Done { background: transparent; }
+
+.conversation-activity { flex-wrap: wrap; }
+.turn-metrics { display: inline-flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.turn-metrics > span + span::before { content: "·"; margin-right: 8px; }
+
+.project-schedules { margin: 2px 8px 10px; padding: 4px 0 8px; border-bottom: 1px solid var(--adaptive-border, #303238); }
+.schedule-thread-row { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 10px; border-radius: 6px; }
+.schedule-thread-row:hover, .schedule-thread-row[aria-pressed="true"] { background: var(--adaptive-surface, #23252b); }
+.schedule-thread-row span { min-width: 0; }
+.schedule-thread-row strong, .schedule-thread-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-thread-row strong { font-size: 12px; font-weight: 500; }
+.schedule-thread-row small { font-size: 11px; color: var(--adaptive-muted, #a7aab4); }
+.schedule-workspace { display: flex; height: 100%; min-height: 0; min-width: 0; overflow: hidden; contain: layout paint; }
+.schedule-conversation { flex: 1; min-width: 0; }
+.schedule-conversation > .thread-detail { height: 100%; }
+.schedule-configuration { width: 340px; max-width: 50%; overflow-y: auto; border-left: 1px solid var(--adaptive-border, #303238); }
+.schedule-configuration .schedule-manager { padding: 16px; }
+.schedule-configuration form { display: grid; gap: 12px; }
+.schedule-configuration label { display: grid; gap: 5px; font-size: 12px; }
+.schedule-configuration .capture-controls { flex-wrap: wrap; }
+@media (max-width: 800px) {
+  .schedule-workspace { flex-direction: column; overflow-y: auto; }
+  .schedule-conversation { min-height: 300px; }
+  .schedule-configuration { width: 100%; max-width: none; overflow: visible; border-left: 0; border-top: 1px solid var(--adaptive-border, #303238); }
+}
+.schedule-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 36px; }
+.schedule-configuration [data-slot="select-trigger"] { width: 100%; }
+.schedule-configuration .pane-title > button { margin-left: auto; }
+.routine-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 48px 24px; color: var(--adaptive-muted, #a7aab4); }
+.routine-empty h2 { font-size: 15px; color: var(--adaptive-text, #dedee3); }
+.routine-empty p { font-size: 12px; }
+.schedule-entries { display: grid; gap: 12px; min-width: 0; }
+.schedule-entries-heading, .schedule-entry-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.schedule-entries-heading strong { font-size: 12px; font-weight: 500; }
+.schedule-entry { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--adaptive-border, #303238); border-radius: 8px; padding: 10px; }
+.schedule-entry legend { padding: 0 5px; font-size: 11px; color: var(--adaptive-muted, #a7aab4); }
+.schedule-entry-controls > label { flex: 1; min-width: 0; }
+.schedule-entry-controls > button { flex-shrink: 0; align-self: end; }
+.schedule-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.schedule-weekdays button { min-width: 0; padding: 0; height: 30px; font-size: 11px; }
+.schedule-weekdays button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+
+/* Independent desktop reading sizes; shared mobile transcript styles keep their own sizing. */
+.native-workspace .thread-browser .session-title { font-size: var(--threads-font-size, 12px); }
+.native-workspace .thread-browser .project-toggle > strong { font-size: calc(var(--threads-font-size, 12px) + 1px); line-height: 1.4; }
+.native-workspace .thread-browser .thread-history { font-size: calc(var(--threads-font-size, 12px) - 1px); }
+.native-workspace .chat-surface .native-message,
+.native-workspace .chat-surface .chat-composer textarea { font-size: var(--chat-font-size, 14px); }
+.native-workspace .chat-surface .native-message code { font-size: calc(var(--chat-font-size, 14px) - 3px); }
+.native-workspace .chat-surface .native-message :is(h1, h2, h3) { font-size: var(--chat-font-size, 14px); }
+
+/* Secondary windows contain one conversation; the header shares the native titlebar. */
+.native-workspace.thread-window { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.thread-window-content { flex: 1; min-height: 0; min-width: 0; }
+.thread-window .pane-title { min-height: 52px; }
+.thread-window.native-macos .pane-title { padding-left: 100px; }
+.thread-window .native-empty { -webkit-app-region: drag; }
+
+.thread-context-menu [role="menuitem"] { display: flex; align-items: center; gap: 8px; }
+.thread-context-menu [role="menuitem"] > svg { flex-shrink: 0; opacity: .8; }
+
+/* The count overlays the existing icon button without taking layout space. */
+.native-workspace .project-group-heading .project-schedule-button { position: relative; }
+.project-schedule-count { position: absolute; top: -2px; right: -2px; color: var(--adaptive-text, #dedee3); font-size: 9px; line-height: 11px; font-weight: 500; font-variant-numeric: tabular-nums; pointer-events: none; }

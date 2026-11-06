@@ -49,6 +49,10 @@ async fn set_threads<R: Runtime>(app: AppHandle<R>, model: serde_json::Value) ->
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn set_dashboard<R: Runtime>(app: AppHandle<R>, model: serde_json::Value) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("setDashboard", serde_json::json!({"model": model})).map_err(|e| e.to_string())
+}
+#[tauri::command]
 async fn set_thread_meta<R: Runtime>(app: AppHandle<R>, meta: serde_json::Value) -> Result<(), String> {
     app.state::<NativeShell<R>>().0
         .run_mobile_plugin("setThreadMeta", serde_json::json!({"meta": meta}))
@@ -102,7 +106,7 @@ async fn remove_listener<R: Runtime>(app: AppHandle<R>, event: String, channel_i
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("native-shell")
-        .invoke_handler(tauri::generate_handler![ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
+        .invoke_handler(tauri::generate_handler![ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_dashboard, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
         .setup(|app, api| {
             #[cfg(target_os = "ios")]
             {

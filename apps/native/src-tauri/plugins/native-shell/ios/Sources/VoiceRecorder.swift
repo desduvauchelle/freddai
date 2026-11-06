@@ -34,6 +34,8 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
     guard !isRecording else { return }
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+    // iOS otherwise suppresses the composer’s start haptic while the microphone is active.
+    try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
     try session.setActive(true)
     let dir = AttachmentStore.root.appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -3,15 +3,15 @@ import { Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Project, Session } from "../desktop/types";
 import { officeModel, STATE_CUE, STATE_LABEL, totalsLabel, type OfficeAgent, type OfficeAgentState, type OfficeModel, type OfficeSchedule } from "./officeModel";
-import { BAND_H, CELL_W, CELL_H, FACE, SIDE, SOUTH, TRAY_COLS, TRAY_MAX, WALL, bestFullLayout, floorPlan, miniCols, type Layout, type PlacedRoom, type PlanProject } from "./officeLayout";
+import { BAND_H, CELL_H, FACE, SIDE, SOUTH, TRAY_COLS, TRAY_MAX, WALL, bestFullLayout, floorPlan, miniCols, type Layout, type PlacedRoom, type PlanProject } from "./officeLayout";
 import { useOfficeStage, type Char, type Stage } from "./officeStage";
-import { Bench, Bubble, Character, CoffeeMachine, DeskFurniture, Folder, Plant, STATE_COLOR, Table, UserAvatar, WallClock, FUR } from "./sprites";
+import { Bench, Bubble, Character, ClockAdmirer, CoffeeMachine, DeskFurniture, Folder, Plant, STATE_COLOR, Table, UserAvatar, WallClock, FUR } from "./sprites";
 import "./office.css";
 
 export type OfficeProps = {
   sessions: readonly Session[];
   projects: readonly Project[];
-  /** Optional scheduled work; rendered as the wall clock in the coffee lounge. Omit and no clock is drawn. */
+  /** Optional scheduled work; represented by admirers at the clock shrine beside the coffee lounge. */
   schedules?: readonly OfficeSchedule[];
   /** Thread ids with queued runs; a settled thread in this set waits in the lobby. Omit if the host has no queue data. */
   queuedThreadIds?: ReadonlySet<string>;
@@ -89,8 +89,8 @@ function FloorDefs({ id, rooms }: { id: string; rooms: PlacedRoom[] }) {
 function RoomShell({ r, id, stage, extra }: { r: PlacedRoom; id: string; stage: Stage; extra: { totals: string; overflow: number } }) {
   const { x, y, w, h, project } = r, color = project.color;
   const door = 34, dx = Math.round(r.doorX - door / 2), floorY = r.floorY;
-  const plateW = w - 16, chars = Math.floor((plateW - 12) / 5.6);
-  const rugW = 2 * CELL_W - 20, rugH = 2 * CELL_H - 26;
+  const plateW = w - 16, chars = Math.floor((plateW - 12) / 8.1);
+  const rugW = w - 2 * SIDE - 20, rugH = 2 * CELL_H - 26;
   const owners = stage.destinations.owners.get(r.index);
   const charById = new Map(stage.chars.map(c => [c.agent.id, c] as const));
   const scoreW = extra.overflow ? plateW - 24 : plateW;
@@ -106,10 +106,10 @@ function RoomShell({ r, id, stage, extra }: { r: PlacedRoom; id: string; stage: 
     <rect x={dx - 2} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" /><rect x={dx + door} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" />
     <rect x={dx} y={y + h - SOUTH} width={door} height={SOUTH} fill={mix(color, "#1b1a24", 0.5)} opacity={0.55} />
     {/* name plate and scoreboard on the wall */}
-    <rect x={x + 7} y={y + 5} width={plateW + 2} height={15} fill="#1b1a24" /><rect x={x + 8} y={y + 6} width={plateW} height={13} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
-    <text x={x + 8 + plateW / 2} y={y + 17} textAnchor="middle" fontSize={9} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, chars)}</text>
+    <rect x={x + 7} y={y + 5} width={plateW + 2} height={18} fill="#1b1a24" /><rect x={x + 8} y={y + 6} width={plateW} height={16} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
+    <text x={x + 8 + plateW / 2} y={y + 20} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, chars)}</text>
     <g role="group" aria-label={`${project.name} scoreboard`}>
-      <rect x={x + 7} y={y + 21} width={scoreW + 2} height={13} fill="#1b1a24" /><rect x={x + 8} y={y + 22} width={scoreW} height={11} fill="#14231c" />
+      <rect x={x + 7} y={y + 23} width={scoreW + 2} height={11} fill="#1b1a24" /><rect x={x + 8} y={y + 24} width={scoreW} height={9} fill="#14231c" />
       <text x={x + 8 + scoreW / 2} y={y + 30.4} textAnchor="middle" fontSize={7.4} fontWeight={700} fill="#7bd88f" fontFamily={MONO} {...(extra.totals.length * 4.5 > scoreW - 6 ? { textLength: scoreW - 6, lengthAdjust: "spacingAndGlyphs" as const } : {})}>{extra.totals}</text>
       {extra.overflow > 0 && <g><rect x={x + 8 + scoreW + 2} y={y + 21} width={22} height={13} fill="#1b1a24" /><rect x={x + 9 + scoreW + 2} y={y + 22} width={20} height={11} fill="#f2c14e" /><text x={x + 19 + scoreW + 2} y={y + 30.6} textAnchor="middle" fontSize={8} fontWeight={800} fill="#1b1a24" fontFamily={MONO}>+{extra.overflow}</text></g>}
     </g>
@@ -143,14 +143,14 @@ function CharacterView({ c, onOpen, show, hide }: { c: Char; onOpen: (id: string
   const bubble = !seated && (a.state === "needs-you" || a.state === "failed");
   return <Hot agent={a} label={`${a.projectName} · ${a.title} · ${a.stateLabel}`} onOpen={onOpen} show={show} hide={hide} rect={rect}>
     <g className={c.leaving ? "office-char office-leaving" : "office-char"}>
-      <Character x={c.x} y={c.y} variant={a.variant} pose={pose} moving={c.moving} frame={c.frame} flip={c.flip} carry={c.carry} folder={a.projectColor} />
+      <Character x={c.x} y={c.y} variant={a.variant} shirtColor={a.projectColor} pose={pose} moving={c.moving} frame={c.frame} flip={c.flip} carry={c.carry} folder={a.projectColor} />
     </g>
     {bubble && <g className="office-attn"><Bubble x={c.x - 9} y={c.y - 44} w={18} h={15} glyph={a.state === "failed" ? "!" : "?"} fill={a.state === "failed" ? "#ef5f5f" : "#f2c14e"} size={13} tag={a.state === "needs-you" ? a.tag : null} /></g>}
   </Hot>;
 }
 
 function Band({ layout, id, model, stage, now, show, hide, onOpen }: { layout: Layout; id: string; model: OfficeModel; stage: Stage; now: number; show: (a: OfficeAgent, el: Element) => void; hide: () => void; onOpen: (id: string) => void }) {
-  const { lobby, lounge, you, reception: rc, coffee, tray, deskUser, band } = layout;
+  const { lobby, lounge, shrine, you, reception: rc, coffee, tray, deskUser, band } = layout;
   const by = band.y, doorX = layout.door.x;
   const { lobbyExtra, loungeExtra } = stage.destinations;
   const folders = model.tray.filter(a => !stage.carrying.has(a.id));
@@ -168,13 +168,21 @@ function Band({ layout, id, model, stage, now, show, hide, onOpen }: { layout: L
     {/* lobby: reception desk with the receptionist, waiting benches, front door */}
     <g role="group" aria-label="Lobby">
       {plate(lobby.x + 38, by + 5, 50, "LOBBY")}
-      <Character x={rc.x + 62} y={rc.y + 4} variant={2} pose="seated" headset />
+      <Character x={rc.x + rc.w - 12} y={rc.y + 4} variant={2} pose="seated" headset />
       <rect x={rc.x + 6} y={rc.y - 8} width={14} height={9} fill="#23222d" /><rect x={rc.x + 7} y={rc.y - 7} width={12} height={6} fill="#14203a" /><rect x={rc.x + 10} y={rc.y + 1} width={6} height={2} fill="#4a4860" />
       <rect x={rc.x} y={rc.y} width={rc.w} height={13} fill="#b98550" /><rect x={rc.x} y={rc.y} width={rc.w} height={3} fill="#d9a86e" /><rect x={rc.x} y={rc.y + 13} width={rc.w} height={4} fill="#8a5f36" />
-      <text x={rc.x + rc.w / 2} y={rc.y + 10.5} textAnchor="middle" fontSize={6.6} fontWeight={800} fill="#2a1a0c" fontFamily={MONO} letterSpacing={0.5}>RECEPTION</text>
+      <text x={rc.x + rc.w / 2} y={rc.y + 10.5} textAnchor="middle" fontSize={5} fontWeight={800} fill="#2a1a0c" fontFamily={MONO} letterSpacing={0.5}>RECEPTION</text>
       {layout.benches.map(b => <Bench key={b.node} x={b.x} y={b.y} />)}
-      <text x={lobby.x + 72} y={by + 96} fontSize={6.4} fontWeight={700} fill="#e8d9c8" fontFamily={MONO}>{lobbyExtra > 0 ? `WAITING · +${lobbyExtra} more` : "WAITING"}</text>
-      <Plant x={lobby.x + lobby.w - 16} y={by + 96} />
+      <text x={lobby.x + 34} y={by + 94} fontSize={6.4} fontWeight={700} fill="#e8d9c8" fontFamily={MONO}>{lobbyExtra > 0 ? `WAITING +${lobbyExtra}` : "WAITING"}</text>
+      {layout.projectWaiting.map((spot, i) => {
+        // The reserve becomes the departing task; replenish once it clears the waiting spot.
+        const departing = stage.chars.some(c => c.agent.projectId === spot.project.id && c.moving && Math.hypot(c.x - spot.x, c.y - spot.y) < 24);
+        return departing ? null : <g key={spot.project.id} role="img" aria-label={`${spot.project.name} · Ready for a task`}>
+          <title>{spot.project.name} · Ready for a task</title>
+          <rect x={spot.x - 10} y={spot.y - 2} width={20} height={5} fill={spot.project.color} opacity={0.4} />
+          <Character x={spot.x} y={spot.y} variant={i % 4} shirtColor={spot.project.color} pose="stand" />
+        </g>;
+      })}
     </g>
 
     {/* coffee lounge */}
@@ -185,12 +193,32 @@ function Band({ layout, id, model, stage, now, show, hide, onOpen }: { layout: L
       {plate(coffee.x + coffee.w + 8, by + 6, 74, "COFFEE LOUNGE", 6.6)}
       {layout.tables.map((t, i) => <Table key={i} x={t.x} y={t.y} />)}
       <text x={lounge.x + 44} y={by + 107} fontSize={6.4} fontWeight={700} fill="#4a3a2a" fontFamily={MONO}>{waiting ? `WAITING FOR YOU · ${waiting}${loungeExtra > 0 ? ` (+${loungeExtra} more)` : ""}` : "NOBODY IS WAITING FOR YOU"}</text>
-      {model.shrine && model.shrine.next != null && <g role="group" aria-label="Scheduled work">
-        <WallClock x={lounge.x + lounge.w - 26} y={by + 6} due={model.shrine.next} />
-        <rect x={lounge.x + lounge.w - 78} y={by + 27} width={72} height={20} fill="#1b1a24" /><rect x={lounge.x + lounge.w - 77} y={by + 28} width={70} height={18} fill="#2c2638" />
-        <text x={lounge.x + lounge.w - 42} y={by + 36.5} textAnchor="middle" fontSize={7} fontWeight={800} fill="#f2c14e" fontFamily={MONO}>NEXT {timeLabel(model.shrine.next, now)}</text>
-        <text x={lounge.x + lounge.w - 42} y={by + 43.5} textAnchor="middle" fontSize={6.4} fill="#c9c6dc" fontFamily={MONO}>{model.shrine.entries.length} scheduled</text>
-      </g>}
+    </g>
+
+    {/* Scheduled tasks admire the clock; they are schedules, not runnable thread buttons. */}
+    <g role="group" aria-label="Clock shrine">
+      <rect className="office-floor" x={shrine.x} y={by} width={shrine.w} height={BAND_H} fill="#37304b" />
+      <rect x={shrine.x} y={by + 6} width={3} height={BAND_H - 6} fill="#211c30" />
+      <rect x={shrine.x + 12} y={by + 58} width={shrine.w - 24} height={34} fill="#514064" />
+      <rect x={shrine.x + 15} y={by + 60} width={shrine.w - 30} height={30} fill="none" stroke="#b49a65" />
+      {plate(shrine.x + 32, by + 4, 92, "CLOCK SHRINE", 7)}
+      <rect x={shrine.x + 60} y={by + 45} width={36} height={10} fill="#9c7546" />
+      <rect x={shrine.x + 51} y={by + 53} width={54} height={5} fill="#dfbb72" />
+      <g transform={`translate(${shrine.x + 60} ${by + 17}) scale(2)`}>
+        <WallClock x={0} y={0} due={model.shrine?.next ?? now} />
+      </g>
+      {[shrine.x + 42, shrine.x + 110].map(x => <g key={x}>
+        <rect x={x} y={by + 43} width={4} height={10} fill="#f4e5bc" />
+        <rect x={x + 1} y={by + 39} width={2} height={4} fill="#ffd371" />
+      </g>)}
+      {model.shrine ? <g role="group" aria-label="Scheduled work">
+        {model.shrine.entries.slice(0, 4).map((entry, i, entries) => <g key={entry.id} role="img" aria-label={`${entry.projectName} · ${entry.name} · Scheduled ${timeLabel(entry.due, now)}`}>
+          <title>{entry.projectName} · {entry.name} · {timeLabel(entry.due, now)}</title>
+          <ClockAdmirer x={shrine.x + shrine.w / 2 + (i - (entries.length - 1) / 2) * 28} y={by + 87} variant={entry.variant} />
+        </g>)}
+        <text x={shrine.x + shrine.w / 2} y={by + 99} textAnchor="middle" fontSize={7} fontWeight={800} fill="#ffe49a" fontFamily={MONO}>NEXT {timeLabel(model.shrine.next!, now)}</text>
+        <text x={shrine.x + shrine.w / 2} y={by + 108} textAnchor="middle" fontSize={6.4} fill="#e0d7ed" fontFamily={MONO}>{model.shrine.entries.length} scheduled{model.shrine.entries.length > 4 ? ` · +${model.shrine.entries.length - 4} more` : ""}</text>
+      </g> : <text x={shrine.x + shrine.w / 2} y={by + 104} textAnchor="middle" fontSize={7} fill="#c9c6dc" fontFamily={MONO}>NO SCHEDULED TASKS</text>}
     </g>
 
     {/* you: desk and in-tray */}
@@ -233,6 +261,7 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
   const stage = useOfficeStage(model, layout, reduced);
   const stageEl = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip | null>(null);
+  const [overview, setOverview] = useState(true);
   const show = useCallback((agent: OfficeAgent, el: Element) => {
     const s = stageEl.current?.getBoundingClientRect(), r = el.getBoundingClientRect();
     if (!s) return;
@@ -242,7 +271,8 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
   const hide = useCallback(() => setTip(null), []);
   const { width, height: h } = layout;
   return <div ref={stageEl} className="office-stage" data-variant={variant} style={height ? { height } : undefined} onClick={e => { if (onBackground && !(e.target as Element).closest("[role='button']")) onBackground(); }}>
-    <svg className="office-svg" viewBox={`0 0 ${width} ${h}`} preserveAspectRatio="xMidYMid meet" role="group" aria-label="Office floor plan" shapeRendering="crispEdges">
+    <div className="office-map" onScroll={hide}>
+    <svg className="office-svg" style={overview ? undefined : { width: `max(100%, ${width * 1.65}px)`, height: `max(100%, ${h * 1.65}px)` }} viewBox={`0 0 ${width} ${h}`} preserveAspectRatio="xMidYMid meet" role="group" aria-label="Office floor plan" shapeRendering="crispEdges">
       <FloorDefs id={id} rooms={layout.rooms} />
       <clipPath id={`${id}-clip`}><rect width={width} height={h} /></clipPath>
       <rect width={width} height={h} fill="#221e2c" />
@@ -259,6 +289,9 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
       <rect x={0} y={0} width={WALL} height={h} fill="#2a2536" /><rect x={width - WALL} y={0} width={WALL} height={h} fill="#2a2536" />
       <rect x={0} y={h - WALL} width={layout.door.x - 4} height={WALL} fill="#2a2536" /><rect x={layout.door.x + 32} y={h - WALL} width={width - layout.door.x - 32} height={WALL} fill="#2a2536" />
     </svg>
+    </div>
+    <button type="button" className="office-view-toggle" aria-pressed={!overview} onClick={e => { e.stopPropagation(); hide(); setOverview(v => !v); }}>{overview ? "Zoom in" : "Fit all"}</button>
+    {!overview && <span className="office-pan-hint">Scroll to explore</span>}
     {tip && <div className="office-tip" data-below={tip.below || undefined} style={{ left: tip.x, top: tip.y }} aria-hidden="true">
       <i style={{ background: STATE_COLOR[tip.agent.state] }}>{STATE_CUE[tip.agent.state]}</i>
       <span><b>{tip.agent.projectName}</b> · {tip.agent.title} · {tip.agent.stateLabel}</span>

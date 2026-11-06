@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-dashboard"
+description = "Enables the set_dashboard command without any pre-configured scope."
+commands.allow = ["set_dashboard"]
+
+[[permission]]
+identifier = "deny-set-dashboard"
+description = "Denies the set_dashboard command without any pre-configured scope."
+commands.deny = ["set_dashboard"]

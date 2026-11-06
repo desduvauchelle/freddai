@@ -9,6 +9,12 @@ if not serial.startswith('emulator-'):
 def run(*args):
     return subprocess.check_output([adb, '-s', serial, *args], text=True)
 def tree():
+    if os.environ.get('FREDDAI_ANDROID_TREE_PROBE') == '1':
+        result = run('shell', 'am', 'instrument', '-w', 'com.freddai.parityprobe/com.freddai.parityprobe.TreeProbe')
+        prefix = 'INSTRUMENTATION_RESULT: tree='
+        xml = next((line[len(prefix):] for line in result.splitlines() if line.startswith(prefix)), None)
+        if xml is None: raise AssertionError('Accessibility probe failed: ' + result)
+        return ET.fromstring(xml)
     run('shell', 'uiautomator', 'dump', '/sdcard/freddai-ui.xml')
     return ET.fromstring(run('shell', 'cat', '/sdcard/freddai-ui.xml'))
 def find(label, partial=False):

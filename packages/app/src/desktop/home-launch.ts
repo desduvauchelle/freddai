@@ -1,6 +1,6 @@
 import type { AgentSelection } from "./agent-selection";
 import { effectivePermissionMode } from "./PermissionSelect";
-import { providerName, resolveAccount, type Database, type PermissionMode } from "./types";
+import { agentDisplayName, resolveAccount, type Database, type PermissionMode } from "./types";
 
 /** What a Home tile will launch. One resolution shared by the tile's agent chip and `createHomeThread`, so they cannot disagree. */
 export type HomeLaunchPlan =
@@ -21,6 +21,6 @@ export function resolveHomeLaunch(db: Database, projectId: string, permissionMod
   return {
     ok: true, project: project.id, account: account.id, provider: account.provider, accountName: account.name,
     permission_mode: effectivePermissionMode(account.provider, permissionMode), worktree: db.preferences.use_worktree ?? false, model, effort,
-    label: [providerName(account.provider), account.name, model ?? "default model", effort ?? "default effort"].join(" · "),
+    label: [agentDisplayName(account), model ?? "default model", effort ?? "default effort"].join(" · "),
   };
 }

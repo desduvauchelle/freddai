@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Dormouse } from "./Dormouse";
 import { MASCOT_PRIORITY, MASCOT_SIZES, mascotState, moodChip } from "./mascot-state";
 import type { Session } from "./types";
@@ -5,6 +6,17 @@ import type { Session } from "./types";
 /** Live activity at the end of this pane's transcript, including the first launch. */
 export function ConversationActivity({ thread }: { thread: Session }) {
   const { mood, label } = mascotState(thread, []);
+  const active = ["starting", "running", "waiting"].includes(thread.status);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active || thread.turn_started_at == null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, thread.id, thread.turn_started_at]);
+  const seconds = Math.max(0, Math.floor((now - (thread.turn_started_at ?? now)) / 1000));
+  const elapsed = seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+  const tokens = thread.usage?.context_tokens;
   if (mood === 0 || mood === 6) return null;
   const text = thread.pending ? "Waiting for your input…"
     : thread.status === "starting" ? "Starting…"
@@ -13,6 +25,10 @@ export function ConversationActivity({ thread }: { thread: Session }) {
   return <aside className="conversation-activity" data-activity-state={thread.status}>
     <Dormouse size={44} priority={4} mood={mood} label={text} />
     <span role="status" aria-live="polite" aria-atomic="true">{text}</span>
+    {active && <small className="turn-metrics" aria-live="off">
+      {thread.turn_started_at != null && <span title="Elapsed since this turn started, including tools and waiting for input">{elapsed} elapsed</span>}
+      {typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 && <span title="Last provider-reported context usage; may update only after a response">{tokens.toLocaleString()} context tokens</span>}
+    </small>}
   </aside>;
 }
 

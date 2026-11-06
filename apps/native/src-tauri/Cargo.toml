@@ -1,6 +1,6 @@
 [package]
 name = "freddai-native"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 
@@ -34,6 +34,7 @@ portable-pty = "0.9"
 tokio = { version = "1", features = ["time", "rt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+notify-rust = "4.18"
 fs2 = "0.4"
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 subtle = "2"
@@ -54,4 +55,8 @@ tokio = { version = "1", features = ["time"] }
 
 [[test]]
 name = "writing_tools_configuration"
+harness = false
+
+[[test]]
+name = "thread_windows"
 harness = false

@@ -117,6 +117,11 @@ export function createFixtureClient(): CompanionClient {
     fn(th); th.updated = Date.now(); th.last_user_message_at = th.updated;
   };
   return {
+    summaries: {
+      get: async date => ({ date, running: false, error: null, threads: 3,
+        summary: { date, markdown: 'Completed the dashboard layout and reviewed project activity. All summaries stay in the same scrolling page as your projects.', generated_at: now, provider: 'fixture', account: '', model: '', threads: 3 } }),
+      generate: async () => { throw new Error('Summary generation is disabled in the offline layout fixture.'); },
+    },
     snapshot: async () => ({ projects: state.projects, threads: state.threads.map(x => ({ ...x, messages: [...x.messages] })) }),
     models: async target => {
       const a = assistants.find(x => x.id === target.assistant);

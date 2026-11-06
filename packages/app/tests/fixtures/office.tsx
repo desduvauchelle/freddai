@@ -11,8 +11,8 @@ const width = Number(params.get('width') || 720);
 const NOW = new Date(2026, 10, 4, 15, 0).getTime();
 const colors = ['#5b7fd1', '#d15b7f', '#4cae7e', '#e2b34a', '#9b6bd1', '#4fb8c9', '#d1895b', '#7fd15b', '#5bd1c4', '#c45bd1'];
 const allNames = ['Freddai', 'Landing page', 'Billing API', 'Mobile companion', 'Docs', 'Infra', 'Analytics', 'Website', 'Support', 'Research'];
-const names = allNames.slice(0, Math.min(10, Math.max(1, Number(params.get('projects') || 6))));
-const projects: Project[] = names.map((name, i) => ({ id: `p${i}`, name, path: `/p/${i}`, color: colors[i], policy: 'inherit', account: null, last: null }));
+const names = Array.from({ length: Math.min(40, Math.max(0, Number(params.get('projects') ?? 6))) }, (_, i) => allNames[i] ?? `Project ${i + 1}`);
+const projects: Project[] = names.map((name, i) => ({ id: `p${i}`, name, path: `/p/${i}`, color: colors[i % colors.length], policy: 'inherit', account: null, last: null }));
 const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', text: '' }));
 const pending = { id: 1, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: {} } } as never;
 
@@ -48,7 +48,7 @@ function Fixture() {
   const sessions = toSessions(step);
   return <div style={{ padding: variant === 'mini' ? 16 : 0 }}>
     <div style={{ width: variant === 'mini' ? width : undefined, position: 'relative' }}>
-      <Office variant={variant} sessions={sessions} projects={projects} now={NOW} onOpenThread={id => { (window as unknown as { __opened: string }).__opened = id; }} onClose={() => {}} />
+      <Office variant={variant} sessions={sessions} projects={projects} schedules={Array.from({ length: Number(params.get('schedules') || 0) }, (_, i) => ({ id: `s${i}`, name: `Scheduled task ${i + 1}`, project: 'p0', next_due: NOW + (i + 1) * 3600_000, enabled: true }))} now={NOW} onOpenThread={id => { (window as unknown as { __opened: string }).__opened = id; }} onClose={() => {}} />
     </div>
     <button id="advance" style={{ position: 'fixed', right: 8, top: 8, zIndex: 100 }} onClick={() => setStep(s => Math.min(s + 1, steps.length - 1))}>Advance ({step})</button>
   </div>;

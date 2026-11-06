@@ -33,6 +33,12 @@ final class NavTitleView: UIView {
 final class ShellViewController: UIViewController, UITextViewDelegate, UIPopoverPresentationControllerDelegate {
   private let webView: WKWebView
   private let composer = ComposerView()
+  private let dashboard = DashboardView()
+  private var officeExpanded = false
+  private var dashboardVisible: Bool { mode == .dashboard && !officeExpanded }
+  private var webHorizontal: [NSLayoutConstraint] = []
+  private var workspaceConstraints: [NSLayoutConstraint] = []
+  var onDashboardAction: ((DashboardActionPayload) -> Void)?
   private var mode: ShellMode = .other
   private var conversation: Bool { mode == .conversation }
   private var composerVisible: Bool { mode == .conversation || mode == .new }
@@ -83,6 +89,22 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     composer.onVoiceRecorded = { [weak self] path, ms in self?.onVoiceRecorded?(path, ms) }
     composer.onVoiceError = { [weak self] message in self?.onVoiceError?(message) }
     view.addSubview(composer)
+    dashboard.translatesAutoresizingMaskIntoConstraints = false
+    dashboard.isHidden = true
+    dashboard.onAction = { [weak self] action in self?.onDashboardAction?(action) }
+    dashboard.onError = { [weak self] message in self?.onVoiceError?(message) }
+    view.addSubview(dashboard)
+    NSLayoutConstraint.activate([
+      dashboard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      dashboard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      dashboard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      dashboard.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+    ])
+    webHorizontal = [webView.leadingAnchor.constraint(equalTo: view.leadingAnchor), webView.trailingAnchor.constraint(equalTo: view.trailingAnchor)]
+    workspaceConstraints = [webView.leadingAnchor.constraint(equalTo: dashboard.workspace.leadingAnchor),
+      webView.trailingAnchor.constraint(equalTo: dashboard.workspace.trailingAnchor),
+      webView.topAnchor.constraint(equalTo: dashboard.workspace.topAnchor),
+      webView.bottomAnchor.constraint(equalTo: dashboard.workspace.bottomAnchor)]
 
     webTopSafe = webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
     webTopEdge = webView.topAnchor.constraint(equalTo: view.topAnchor)
@@ -90,8 +112,6 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     webBottomEdge = webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
 
     NSLayoutConstraint.activate([
-      webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       composer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       composer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       composer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -240,15 +260,26 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   private func updateLayout() {
     // 'other' mode: the web UI draws under the status bar and handles env(safe-area-inset-*) itself, as before.
     // 'conversation' and 'new': the web content starts below the native navigation bar and above the native composer.
-    webTopEdge.isActive = !barVisible
-    webTopSafe.isActive = barVisible
-    webBottomEdge.isActive = !composerVisible
-    webBottomComposer.isActive = composerVisible
+    NSLayoutConstraint.deactivate([webTopEdge, webTopSafe, webBottomEdge, webBottomComposer] + webHorizontal + workspaceConstraints)
+    if dashboardVisible {
+      if webView.superview !== dashboard.workspace { webView.removeFromSuperview(); dashboard.workspace.addSubview(webView) }
+      NSLayoutConstraint.activate(workspaceConstraints)
+    } else {
+      if webView.superview !== view { webView.removeFromSuperview(); view.insertSubview(webView, at: 0) }
+      NSLayoutConstraint.activate(webHorizontal)
+      webTopEdge.isActive = !barVisible
+      webTopSafe.isActive = barVisible
+      webBottomEdge.isActive = !composerVisible
+      webBottomComposer.isActive = composerVisible
+    }
+    webView.scrollView.isScrollEnabled = !dashboardVisible
+    dashboard.isHidden = !dashboardVisible
     composer.isHidden = !composerVisible
   }
 
   func apply(mode newMode: ShellMode, title: String?, placeholder: String?) {
     let modeChanged = mode != newMode
+    if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
     // The New thread home has no thread actions, and its own compose button would be a no-op.
@@ -264,7 +295,12 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
 
   func setComposerText(_ text: String, files: [AttachedFile]?) { composer.setText(text, files: files) }
   func appendComposerText(_ text: String, submit: Bool = false) { composer.appendText(text, submit: submit) }
-  func setVoice(enabled: Bool, state: String?) { composer.setVoice(enabled: enabled, state: state) }
+  func setVoice(enabled: Bool, state: String?) { composer.setVoice(enabled: enabled, state: state); dashboard.setVoice(enabled) }
+  func setDashboard(_ model: DashboardModel) {
+    if model.expanded == true { dashboard.cancelRecording() }
+    dashboard.apply(model)
+    if officeExpanded != (model.expanded ?? false) { officeExpanded = model.expanded ?? false; updateLayout() }
+  }
 
   /// Native action sheet used by the web pills (project, coding agent, model, effort, permissions).
   func presentPicker(title: String, options: [PickerOption], selected: String?, completion: @escaping (String?) -> Void) {

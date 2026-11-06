@@ -118,3 +118,41 @@ it('follows desktop project order and bucket settings in the native drawer', () 
   expect(model.groups).toHaveLength(1);
   expect(model.groups[0].threads.map(t => t.id)).toEqual(['a1', 'b1']);
 });
+
+it('fades only completed read threads without pending or queued work', () => {
+  const threads = [
+    thread('read', 'a', 'done', 10),
+    thread('unread', 'a', 'done', 11),
+    thread('pending', 'a', 'done', 10, { pending: { id: 1 } as never }),
+    thread('queued', 'a', 'done', 10, { queued: 1 }),
+    ...['running', 'starting', 'waiting', 'failed', 'interrupted'].map(status => thread(status, 'a', status, 10)),
+  ];
+  const read = Object.fromEntries(threads.map(t => [t.id, 10]));
+  const model = buildThreadsModel({ ...base, data: snapshot(threads), read });
+  const rows = model.groups.flatMap(g => g.threads);
+  expect(rows.find(t => t.id === 'read')?.faded).toBe(true);
+  expect(rows.filter(t => t.id !== 'read').every(t => t.faded === false)).toBe(true);
+});
+
+it('follows the Mac unread experiment in filters, grouping and native unread flags, and restores it when disabled', () => {
+  const data = snapshot([
+    thread('done', 'a', 'done', 40),
+    thread('run', 'a', 'running', 50),
+    thread('approval', 'a', 'waiting', 60),
+    thread('failed', 'a', 'failed', 30),
+  ]);
+  data.threadList = { ignoreUnread: true, recentFinished: 0 };
+  const read = { failed: 30 };
+  let model = buildThreadsModel({ ...base, data, read });
+  expect(model.groups[0].threads.map(t => t.id)).toEqual(['approval', 'run', 'failed']);
+  expect(model.groups[0].olderRemaining).toBe(1);
+  model = buildThreadsModel({ ...base, data, read, filter: 'done' });
+  expect(model.groups[0].threads).toEqual([expect.objectContaining({ id: 'done', unread: false, faded: true })]);
+  expect(model.statusOptions.map(o => o.label)).toEqual(['All threads', 'Needs you', 'Working', 'Done']);
+  model = buildThreadsModel({ ...base, data, read, filter: 'attention' });
+  expect(model.groups[0].threads.map(t => t.id)).toEqual(['approval', 'failed']);
+  data.threadList.ignoreUnread = false;
+  model = buildThreadsModel({ ...base, data, read });
+  expect(model.groups[0].threads.find(t => t.id === 'done')?.unread).toBe(true);
+  expect(read).toEqual({ failed: 30 });
+});

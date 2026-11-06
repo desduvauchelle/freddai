@@ -30,7 +30,7 @@ export function AgentControls({ account, native, value, onChange, disabled = fal
   const known = !value.model || choices.some(m => m.value === value.model);
   const [custom, setCustom] = useState(false);
   const efforts = effortChoices(provider || "", value.model, models);
-  return <PopoverDetails className={`agent-controls${iconOnly ? " agent-controls-icon" : ""}`} open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
+  return <PopoverDetails className={`agent-controls${iconOnly ? " agent-controls-icon" : ""}`} open={expanded} onDismiss={() => setExpanded(false)} onToggle={e => setExpanded(e.currentTarget.open)}>
     <summary aria-label="Model and effort" aria-disabled={disabled || !provider} onClick={e => { if (disabled || !provider) e.preventDefault(); }}>
       {iconOnly && <Cpu size={18} aria-hidden="true"/>}<span className="agent-model-label">{choices.find(choice => choice.value === value.model)?.label || value.model || "Model default"}</span>{value.effort !== "default" && <span className="agent-effort-label">{effortLabel(value.effort)}</span>}<ChevronDown size={12} aria-hidden="true"/>
     </summary>

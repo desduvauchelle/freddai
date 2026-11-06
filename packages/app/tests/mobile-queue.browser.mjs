@@ -12,6 +12,10 @@ try {
   assert.equal(await page.locator('.companion-compose-area .companion-queue').count(),0);
   assert.equal(await page.locator('.companion-body .companion-queue').count(),1);
   const box=await queue.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width&&box.height<90,'collapsed queue stays compact');
+  const avatar=await page.locator('.companion-activity').boundingBox();
+  const composer=await page.locator('.companion-compose-area').boundingBox();
+  assert.ok(avatar.y+avatar.height<=box.y,'queue appears below the avatar');
+  assert.ok(box.y+box.height<=composer.y,'collapsed queue appears above the composer');
   assert.equal(await queue.getByRole('list').count(),0);
   await page.screenshot({path:`/tmp/companion-queue-${width}-collapsed.png`});
   await queue.getByRole('button',{name:/Up next/}).click();

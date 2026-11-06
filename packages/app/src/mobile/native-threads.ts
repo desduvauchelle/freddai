@@ -1,9 +1,9 @@
 import { OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
-import { groupCompanionThreads, selectThreads } from './companion';
+import { companionStatusRead, groupCompanionThreads, selectThreads } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
-export type NativeThread = { id: string; title: string; status: string; unread: boolean; updatedAt: number };
+export type NativeThread = { id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
 export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
 export type NativeOption = { id: string; label: string };
 export type NativeThreadsModel = {
@@ -21,6 +21,10 @@ export const STATUS_OPTIONS: NativeOption[] = [
 const FILTER_IDS = new Set<string>(STATUS_OPTIONS.map(o => o.id));
 export const asThreadFilter = (value: unknown): ThreadFilter => (typeof value === 'string' && FILTER_IDS.has(value) ? value as ThreadFilter : 'all');
 
+export function companionThreadFaded(thread: CompanionThread, read: Record<string, number>): boolean {
+  return threadListStatus(thread, read) === 'done' && !thread.pending && thread.queued === 0;
+}
+
 function nativeThread(thread: CompanionThread, read: Record<string, number>): NativeThread {
   const listStatus = threadListStatus(thread, read);
   return {
@@ -29,6 +33,7 @@ function nativeThread(thread: CompanionThread, read: Record<string, number>): Na
     // A pending approval/input request needs the user even when the run reports another status.
     status: thread.pending && !['failed', 'interrupted'].includes(thread.status) ? 'waiting' : thread.status,
     unread: listStatus === 'unread',
+    faded: companionThreadFaded(thread, read),
     updatedAt: thread.last_user_message_at ?? thread.updated,
   };
 }
@@ -37,7 +42,8 @@ function nativeThread(thread: CompanionThread, read: Record<string, number>): Na
 export function buildThreadsModel(input: {
   data: CompanionSnapshot; read: Record<string, number>; selected: string; project: string; query: string; filter: ThreadFilter; olderPages: Record<string, number>;
 }): NativeThreadsModel {
-  const { data, read, selected, project, query, filter, olderPages } = input;
+  const { data, selected, project, query, filter, olderPages } = input;
+  const read = companionStatusRead(data, input.read);
   const threads = selectThreads(data, project, query, filter, 'recent', read);
   const groups = groupCompanionThreads(data, threads, { read, selected, filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
   return {
@@ -53,7 +59,7 @@ export function buildThreadsModel(input: {
     selectedId: selected,
     filters: { project, status: filter, query },
     projectOptions: [{ id: '', label: 'All projects' }, ...data.projects.map(p => ({ id: p.id, label: p.name }))],
-    statusOptions: STATUS_OPTIONS,
+    statusOptions: data.threadList?.ignoreUnread ? STATUS_OPTIONS.map(option => ({ ...option, label: option.id === "running" ? "Working" : option.id === "done" ? "Done" : option.label })) : STATUS_OPTIONS,
   };
 }
 

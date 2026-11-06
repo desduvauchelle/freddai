@@ -1,5 +1,7 @@
+import { UsageRing } from "./UsageRing";
+import { remainingPercent } from "./usage";
+import { agentDisplayName } from "./types";
 import { availableResets, resetExpiry, resetOutcome, type ResetCredits } from "./reset-credits";
-import { providerName } from "./types";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
@@ -51,7 +53,9 @@ export function AccountOverview({ db, native, onManage }: {
       setRefresh(n => n + 1);
       window.dispatchEvent(new Event("freddai:usage-refresh"));
     } catch (e) {
-      setResetMessage(`Could not confirm the reset: ${String(e)}. Refresh usage before retrying. A retry will reuse the same request key.`);
+      if (String(e).includes("Unknown host command")) {
+        setResetMessage("The background host needs an update to use resets. Save your draft, quit Freddai (⌘Q), then reopen it from Applications and try again.");
+      } else setResetMessage(`Could not confirm the reset: ${String(e)}. Refresh usage before retrying. A retry will reuse the same request key.`);
     } finally {
       resetLock.current = false;
       setUsingReset(false);
@@ -89,27 +93,30 @@ export function AccountOverview({ db, native, onManage }: {
       </Button>
     </div>
     {resetMessage && <p role="status" className="setup-note">{resetMessage}</p>}
-    {db.host_update_pending && <p role="status" className="capture-help">Reset actions are unavailable until Freddai restarts. Let active threads finish and save your draft, then choose Freddai → Quit Freddai (⌘Q) and reopen Freddai from Applications.</p>}
     {!db.accounts.length && <p className="setup-note">No accounts yet. Add an account to see its usage here.</p>}
     <div className="account-overview-list">
       {db.accounts.map(account => {
         const result = results[account.id];
         const usage = result?.usage;
         const ProviderIcon = account.provider === "codex" ? Code2 : Terminal;
-        return <section className="account-usage-card" key={account.id} aria-label={`${account.name} usage`}>
+        return <section className="account-usage-card" key={account.id} aria-label={`${agentDisplayName(account)} usage`}>
           <div className="account-usage-heading">
             <span className="account-provider-icon" style={{ color: account.color }}><ProviderIcon size={18}/></span>
-            <div><strong>{account.name}</strong><span>{providerName(account.provider)}{usage?.plan ? ` · ${usage.plan}` : ""}</span></div>
+            <div><strong>{agentDisplayName(account)}</strong><span>{usage?.plan || "Usage"}</span></div>
             {resolveAccount(db) === account.id && <span className="account-default">Default</span>}
           </div>
           {usage ? <>
-            {usage.windows.map((window, index) => <div className="account-usage-window" key={index}>
-              <div><span>{window.label}</span><strong>{Math.round(window.used_percent)}% used</strong></div>
-              <div className="account-usage-track" role="progressbar" aria-label={`${account.name}, ${window.label}, usage`} aria-valuenow={Math.min(100, window.used_percent)} aria-valuemin={0} aria-valuemax={100}>
-                <i style={{ width: `${Math.min(100, window.used_percent)}%`, background: window.used_percent >= 90 ? "#d9ac69" : account.color }}/>
-              </div>
-              <p>{resetLabel(window.resets_at, now)}</p>
-            </div>)}
+            {usage.windows.map((window, index) => {
+              const remaining = remainingPercent(window.used_percent);
+              return <div className="account-usage-window" key={index}>
+                <UsageRing remaining={remaining} color={account.color} size={46}
+                  label={`${agentDisplayName(account)}, ${window.label}, remaining capacity`}/>
+                <div className="account-usage-window-copy">
+                  <div><span>{window.label}</span><strong>{remaining === null ? "Remaining capacity unavailable" : `${Math.round(remaining)}% left`}</strong></div>
+                  <p>{resetLabel(window.resets_at, now)}</p>
+                </div>
+              </div>;
+            })}
             {!usage.windows.length && <p className="capture-help">Usage limits unavailable</p>}
             {account.provider === "codex" && <div className="account-reset-credits">
               <strong>Banked free resets</strong>
@@ -120,13 +127,13 @@ export function AccountOverview({ db, native, onManage }: {
                     <span>{credit.title || "Rate-limit reset"}</span>
                     <span>{resetExpiry(credit, now)}</span>
                     {confirmReset?.account === account.id && confirmReset.credit === credit.id ?
-                      <div className="reset-confirm" role="group" aria-label={`Use reset for ${account.name}`}>
-                        <p>Use this banked reset for {account.name}? This consumes one reset if a usage limit is eligible.</p>
-                        <Button size="sm" disabled={usingReset || loading || !!db.host_update_pending} onClick={() => void useReset(account.id, credit.id)}>{usingReset ? "Using reset…" : "Confirm use reset"}</Button>
+                      <div className="reset-confirm" role="group" aria-label={`Use reset for ${agentDisplayName(account)}`}>
+                        <p>Use this banked reset for {agentDisplayName(account)}? This consumes one reset if a usage limit is eligible.</p>
+                        <Button size="sm" disabled={usingReset || loading} onClick={() => void useReset(account.id, credit.id)}>{usingReset ? "Using reset…" : "Confirm use reset"}</Button>
                         <Button size="sm" variant="ghost" disabled={usingReset} onClick={() => setConfirmReset(null)}>Cancel</Button>
                       </div> :
-                      <Button size="sm" variant="outline" disabled={!native || loading || usingReset || !!db.host_update_pending || usage.reset_credits!.available_count === 0 || (credit.expires_at !== null && credit.expires_at * 1000 <= now)}
-                        aria-label={`Use ${credit.title || "reset"} for ${account.name}`}
+                      <Button size="sm" variant="outline" disabled={!native || loading || usingReset || usage.reset_credits!.available_count === 0 || (credit.expires_at !== null && credit.expires_at * 1000 <= now)}
+                        aria-label={`Use ${credit.title || "reset"} for ${agentDisplayName(account)}`}
                         onClick={() => { setResetMessage(""); setConfirmReset({ account: account.id, credit: credit.id }); }}>Use reset</Button>}
                   </li>)}
                 </ul>}
@@ -134,7 +141,7 @@ export function AccountOverview({ db, native, onManage }: {
                   <p className="capture-help">Expiry details unavailable for {usage.reset_credits.available_count - availableResets(usage.reset_credits).length} reset(s).</p>}
               </> : <p className="capture-help">Reset balance and expiry dates unavailable from this account or CLI.</p>}
             </div>}
-            <small>Updated {new Date(usage.checked_at).toLocaleTimeString()}</small>
+            <small>Times shown in {Intl.DateTimeFormat().resolvedOptions().timeZone} · Updated {new Date(usage.checked_at).toLocaleTimeString([], { timeZoneName: "short" })}</small>
           </> : <div className="account-usage-unavailable" role="status">
             <strong>{result ? "Usage unavailable" : "Loading usage…"}</strong>
             <p>{result?.error || "Retrieving usage and reset times."}</p>

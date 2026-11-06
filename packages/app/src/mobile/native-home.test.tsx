@@ -9,14 +9,16 @@ const shell = vi.hoisted(() => {
   return {
     handlers,
     setMode: vi.fn(async () => {}), setComposerText: vi.fn(async () => {}), discardFiles: vi.fn(async () => {}), pickOption: vi.fn(async () => null as string | null),
+    setDashboard: vi.fn(async (_model: unknown) => {}),
     setVoice: vi.fn(async () => {}), appendComposerText: vi.fn(async () => {}),
     on,
   };
 });
 vi.mock('./native-shell', () => ({
-  isNativeShell: () => true, probeNativeShell: async () => true, useNativeShell: () => true,
+  hasNativeDashboardContent: () => true, isNativeShell: () => true, probeNativeShell: async () => true, useNativeShell: () => true,
   setMode: shell.setMode, setComposerText: shell.setComposerText, discardFiles: shell.discardFiles, pickOption: shell.pickOption,
   setVoice: shell.setVoice, appendComposerText: shell.appendComposerText, onVoiceRecorded: shell.on('voiceRecorded'), onVoiceError: shell.on('voiceError'),
+  setDashboard: shell.setDashboard, onDashboardAction: shell.on('dashboardAction'),
   setConnection: vi.fn(async () => {}), setThreads: vi.fn(async () => {}), setThreadMeta: vi.fn(async () => {}),
   onNavBack: shell.on('navBack'), onComposerSend: shell.on('composerSend'), onConnectionTap: shell.on('connectionTap'), onThreadAction: shell.on('threadAction'), onSelectThread: shell.on('selectThread'),
   onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onShowOlder: shell.on('showOlder'), onDashboard: shell.on('dashboard'),
@@ -55,7 +57,7 @@ it('launches on the New thread home with the drawer closed, even when threads ex
   expect(modeCalls().every(([mode, options]) => mode !== 'conversation' && !options?.openDrawer)).toBe(true);
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(await screen.findByRole('button', { name: 'Project: First' })).toBeTruthy();
-  expect(await screen.findByRole('button', { name: 'Coding agent: Claude Code · Personal' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Coding agent: Claude · Personal' })).toBeTruthy();
 });
 
 it('starts a thread with the chosen project, agent and model, then opens the conversation', async () => {
@@ -95,6 +97,25 @@ it('uploads native attachments by path, sends their ids, and discards the tmp fi
   await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ attachments: ['att-photo.jpg'] }) })));
   expect(client.attachPath).toHaveBeenCalledWith(file);
   await waitFor(() => expect(shell.discardFiles).toHaveBeenCalledWith([file.path]));
+});
+
+it('shows an upload spinner until the attachment finishes, then a sending spinner until acknowledgment', async () => {
+  let finishUpload!: (value: { id: string; name: string; bytes: number; mime: string; sha256: string }) => void;
+  let finishSend!: (id: string) => void;
+  const client = clientWith({
+    attachPath: vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<CompanionClient['attachPath']>>>>(resolve => { finishUpload = resolve; })),
+    start: vi.fn(() => new Promise<string>(resolve => { finishSend = resolve; })),
+  });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await send('See upload', [file]);
+  const status = await screen.findByText('Uploading 1 of 1: photo.jpg…');
+  expect(status.querySelector('svg')).toBeTruthy();
+  await act(async () => finishUpload({ ...file, id: 'att-photo.jpg', sha256: '' }));
+  expect(await screen.findByText('Sending…')).toBeTruthy();
+  expect(screen.queryByText('Uploading 1 of 1: photo.jpg…')).toBeNull();
+  await act(async () => finishSend('thread-upload'));
+  await waitFor(() => expect(screen.queryByText('Sending…')).toBeNull());
 });
 
 it('hands the text and chips back to the native composer and shows the error when the send fails', async () => {
@@ -281,10 +302,11 @@ it('shows a connection scene before projects are available, then replaces it wit
   expect(screen.queryByText('Connecting to your Mac…')).toBeNull();
 });
 
-it('fetches the selected transcript immediately and does not mark an unloaded summary read', async () => {
+it.each([false, true])('records actual viewing only after the transcript loads with ignoreUnread=%s', async ignoreUnread => {
   let finish!: (value: CompanionSnapshot) => void;
   const pending = new Promise<CompanionSnapshot>(resolve => { finish = resolve; });
   const summary = structuredClone(data);
+  summary.threadList = { ignoreUnread };
   summary.threads[0].messagesLoaded = false;
   const snapshot = vi.fn(async (_signal: AbortSignal, thread?: string) => thread ? pending : summary);
   const markRead = vi.fn(async () => {});
@@ -296,6 +318,7 @@ it('fetches the selected transcript immediately and does not mark an unloaded su
   expect(await screen.findByText('Loading conversation…')).toBeTruthy();
   expect(markRead).not.toHaveBeenCalled();
   const full = structuredClone(data);
+  full.threadList = { ignoreUnread };
   full.threads[0].messagesLoaded = true;
   full.threads[0].messages = [{ id: 'm', role: 'assistant', text: 'Full conversation history is here' }];
   await act(async () => finish(full));
@@ -305,35 +328,97 @@ it('fetches the selected transcript immediately and does not mark an unloaded su
 });
 
 
-it('opens Dashboard from the native menu and navigates to project work', async () => {
+const dashboardAction = (event: { action: string; project?: string; assistant?: string; path?: string }) => act(async () => {
+  (shell.handlers.dashboardAction as (p: typeof event) => void)(event);
+});
+it('opens native Dashboard cards without duplicating web controls and opens project threads', async () => {
   render(<MobileApp client={clientWith()} />);
   await screen.findByText('What should we work on today?');
-  await waitFor(() => expect(shell.handlers.dashboard).toBeTypeOf('function'));
   await act(async () => { shell.handlers.dashboard(); });
-  expect(await screen.findByRole('heading', { name: 'Your projects' })).toBeTruthy();
-  expect(screen.getByRole('article', { name: 'Project Second' })).toBeTruthy();
-  await waitFor(() => expect(modeCalls().some(([mode]) => mode === 'dashboard')).toBe(true));
-  fireEvent.click(screen.getByRole('button', { name: 'Open project First' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Old thread' }));
+  expect(screen.queryByRole('article', { name: 'Project Second' })).toBeNull();
+  expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ projects: expect.arrayContaining([expect.objectContaining({ id: 'p2', name: 'Second', canStart: true })]) }));
+  await dashboardAction({ action: 'open', project: 'p1' });
+  expect(modeCalls().at(-1)).toEqual(['dashboard', { title: 'Dashboard', openDrawer: true }]);
+  await act(async () => { (shell.handlers.selectThread as (p: {id: string}) => void)({ id: 't1' }); });
   await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('conversation'));
 });
 
-it('carries dashboard project agent, model and effort through the native composer launch', async () => {
+it('carries native dashboard project agent, model and effort through the composer launch', async () => {
   const client = clientWith();
   render(<MobileApp client={client} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await act(async () => { shell.handlers.dashboard(); });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Coding agent' }), { target: { value: 'b' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Open project Second' }));
-  const card = within(screen.getByRole('dialog'));
-  const details = card.getByText('Model default').closest('details')!;
-  details.open = true;
-  fireEvent(details, new Event('toggle'));
-  fireEvent.change(card.getByRole('combobox', { name: /^Model$/ }), { target: { value: '__custom' } });
-  fireEvent.change(card.getByRole('textbox', { name: 'Custom model ID' }), { target: { value: 'offline-model' } });
-  fireEvent.change(card.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'high' } });
-  fireEvent.click(card.getByRole('button', { name: 'New thread in Second' }));
+  shell.pickOption.mockResolvedValueOnce('b');
+  await dashboardAction({ action: 'agent' });
+  shell.pickOption.mockResolvedValueOnce('offline-model').mockResolvedValueOnce('high');
+  await dashboardAction({ action: 'model', project: 'p2', assistant: 'b' });
+  await dashboardAction({ action: 'new', project: 'p2', assistant: 'b' });
   await screen.findByRole('button', { name: 'Coding agent: Codex · Work' });
   await send('Offline dashboard launch');
   expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p2', assistant: 'b', options: expect.objectContaining({ model: 'offline-model', effort: 'high' }) }));
+});
+
+it('transcribes a native card recording into the captured project draft without sending', async () => {
+  const client = clientWith({ transcribe: vi.fn(async () => ({ text: 'Dictated task', durationMs: 1200, model: 'fixture' })) });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { shell.handlers.dashboard(); });
+  await dashboardAction({ action: 'voice', project: 'p2', assistant: 'b', path: '/tmp/freddai-attachments/task.m4a' });
+  await screen.findByRole('button', { name: 'Project: Second' });
+  expect(client.transcribe).toHaveBeenCalledWith({ path: '/tmp/freddai-attachments/task.m4a' });
+  expect(shell.appendComposerText).toHaveBeenCalledWith('Dictated task', false);
+  expect(client.start).not.toHaveBeenCalled();
+  expect(shell.setComposerText).not.toHaveBeenCalled();
+});
+
+it('recovers native dashboard controls after transcription failure without launching a task', async () => {
+  const client = clientWith({ transcribe: vi.fn(async () => { throw new Error('Mac disconnected'); }) });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { shell.handlers.dashboard(); });
+  await dashboardAction({ action: 'voice', project: 'p2', assistant: 'b', path: '/tmp/freddai-attachments/task.m4a' });
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Dashboard: Mac disconnected' })));
+  expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ busy: false }));
+  expect(client.start).not.toHaveBeenCalled();
+});
+
+it('retains a late dashboard transcript for its project instead of overwriting another composer', async () => {
+  let finish!: (value: { text: string; durationMs: number; model: string }) => void;
+  const client = clientWith({ transcribe: vi.fn(() => new Promise<{ text: string; durationMs: number; model: string }>(resolve => { finish = resolve; })) });
+  render(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { shell.handlers.dashboard(); });
+  await dashboardAction({ action: 'voice', project: 'p2', assistant: 'b', path: '/tmp/freddai-attachments/task.m4a' });
+  await act(async () => { shell.handlers.navBack(); });
+  await act(async () => { finish({ text: 'Late task', durationMs: 900, model: 'fixture' }); });
+  expect(shell.setComposerText).not.toHaveBeenCalled();
+  expect(shell.appendComposerText).not.toHaveBeenCalled();
+  expect(await screen.findByRole('button', { name: 'Project: First' })).toBeTruthy();
+  await act(async () => { shell.handlers.dashboard(); });
+  await dashboardAction({ action: 'new', project: 'p2', assistant: 'b' });
+  expect(shell.appendComposerText).toHaveBeenCalledWith('Late task', false);
+  expect(client.start).not.toHaveBeenCalled();
+});
+it('gives the Office the full native content area when expanded and restores cards on close', async () => {
+  render(<MobileApp client={clientWith()} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { shell.handlers.dashboard(); });
+  fireEvent.click(screen.getByRole('button', { name: 'Expand office' }));
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ expanded: true })));
+  fireEvent.click(screen.getByRole('button', { name: 'Close office' }));
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ expanded: false })));
+});
+
+
+it('keeps global Schedules out of an ordinary native conversation', async () => {
+  render(<MobileApp client={clientWith({ scheduleCommand: vi.fn(async () => undefined) })} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('conversation'));
+  expect(screen.queryByRole('button', { name: 'Schedules' })).toBeNull();
+  await act(async () => { shell.handlers.dashboard(); });
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ schedules: true })));
+  expect(screen.queryByRole('button', { name: 'Schedules' })).toBeNull();
+  await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
+  expect(screen.queryByRole('button', { name: 'Schedules' })).toBeNull();
 });

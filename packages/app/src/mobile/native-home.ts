@@ -1,4 +1,4 @@
-import { providerName, type PermissionMode } from '../desktop/types';
+import { agentDisplayName, type PermissionMode } from '../desktop/types';
 import { effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from '../desktop/agent-selection';
 import type { CompanionProject } from './companion';
 import type { NativeFile, PickerOption } from './native-shell';
@@ -14,7 +14,7 @@ export function pickNewProject(projects: CompanionProject[], ...preferred: strin
   return preferred.find(id => !!id && projects.some(p => p.id === id && p.canStart)) ?? projects.find(p => p.canStart)?.id ?? '';
 }
 
-export const assistantLabel = (assistant: { name: string; provider: string }) => `${providerName(assistant.provider)} · ${assistant.name}`;
+export const assistantLabel = (assistant: { name: string; provider: string }) => agentDisplayName(assistant);
 export const projectOptions = (projects: CompanionProject[]): PickerOption[] =>
   projects.map(p => ({ id: p.id, label: p.name, detail: p.canStart ? undefined : 'Not ready on your Mac', disabled: !p.canStart }));
 export const assistantOptions = (project?: CompanionProject): PickerOption[] =>
