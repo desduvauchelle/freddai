@@ -194,13 +194,28 @@ mod tests {
         let mut out = String::new();
         #[cfg(windows)]
         {
-            // ConPTY asks its terminal emulator for the initial cursor position.
-            // The app's xterm answers this; the headless test must emulate it.
-            while !out.contains("\x1b[6n") {
-                out.push_str(&rx.recv_timeout(Duration::from_secs(10)).expect("ConPTY cursor query"));
-            }
-            s.write("\x1b[1;1R").unwrap();
-            s.write("Write-Output ('freddai-' + (20+22))\r\nexit 3\r\n").unwrap();
+            // ConPTY's initial cursor query precedes PowerShell input readiness.
+            // Act as a minimal terminal until the prompt appears, answering every
+            // cursor query (including queries split across output reads).
+            let mut answered = 0;
+            let mut read_until = |session: &mut PtySession, needle: &str| {
+                let deadline = std::time::Instant::now() + Duration::from_secs(30);
+                while !out.contains(needle) {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    let data = rx.recv_timeout(remaining)
+                        .unwrap_or_else(|e| panic!("waiting for {needle:?}: {e}; output was: {out:?}"));
+                    out.push_str(&data);
+                    while let Some(offset) = out[answered..].find("\x1b[6n") {
+                        answered += offset + "\x1b[6n".len();
+                        session.write("\x1b[1;1R").unwrap();
+                    }
+                }
+            };
+            read_until(&mut s, "> ");
+            // A terminal Enter is CR, not CRLF (which submits an extra line).
+            s.write("Write-Output ('freddai-' + (20+22))\r").unwrap();
+            read_until(&mut s, "freddai-42");
+            s.write("exit 3\r").unwrap();
         }
         while let Ok(d) = rx.recv_timeout(Duration::from_secs(10)) { out.push_str(&d); }
         assert!(out.contains("freddai-42"), "output was: {out:?}");
