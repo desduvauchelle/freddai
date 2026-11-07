@@ -1,57 +1,37 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { MessageQueue } from './MessageQueue';
+vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 afterEach(cleanup);
-const messages = [{ id: 'one', prompt: 'Check the layout on a small phone', attachments: 2 }, { id: 'two', prompt: 'Then check the tablet', attachments: 0 }];
-it('starts compact and reveals ordered messages and removal on expansion', () => {
-  const onAction = vi.fn();
-  render(<MessageQueue messages={messages} disabled={false} onAction={onAction}/>);
-  const toggle = screen.getByRole('button', { name: /Up next/ });
-  expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  expect(screen.queryByRole('list')).toBeNull();
-  fireEvent.click(toggle);
-  expect(screen.getAllByRole('listitem')).toHaveLength(2);
-  expect(screen.getByText('2 files')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Remove queued message 2' }));
-  expect(onAction).toHaveBeenCalledWith('delete', 'two');
-  fireEvent.click(screen.getByRole('button', { name: 'Clear queue' }));
-  expect(onAction).toHaveBeenCalledWith('clear');
-});
-it('distinguishes a paused queue and dispatches resume without expanding', () => {
-  const onAction = vi.fn();
-  render(<MessageQueue messages={messages} paused disabled={false} onAction={onAction}/>);
-  fireEvent.click(screen.getByRole('button', { name: 'Resume queued messages' }));
-  expect(onAction).toHaveBeenCalledWith('resume');
-  expect(screen.queryByRole('list')).toBeNull();
-});
-it('keeps messages inspectable while disconnected but disables mutations', () => {
-  const onAction = vi.fn();
-  render(<MessageQueue messages={messages} disabled onAction={onAction} error="Queue could not resume"/>);
-  fireEvent.click(screen.getByRole('button', { name: /Up next/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Pause queued messages' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Remove queued message 1' }));
-  expect(onAction).not.toHaveBeenCalled();
-  expect(screen.getByRole('alert').textContent).toBe('Queue could not resume');
-});
-it('hides an empty queue', () => {
-  render(<MessageQueue messages={[]} disabled={false} onAction={vi.fn()}/>);
-  expect(screen.queryByRole('region')).toBeNull();
-});
-
-it('lets an active conversation steer a queued message', () => {
+const messages = [{ id: 'one', prompt: 'Check the phone', attachments: 2 }, { id: 'two', prompt: 'Check the tablet', attachments: 0 }];
+it('exposes exactly steer, edit and delete for every visible message', () => {
   const onAction = vi.fn();
   render(<MessageQueue messages={messages} active disabled={false} onAction={onAction}/>);
-  fireEvent.click(screen.getByRole('button', { name: /Up next/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Steer queued message 1' }));
-  expect(onAction).toHaveBeenCalledWith('steer', 'one');
+  expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  expect(screen.getAllByRole('button')).toHaveLength(6);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Steer instead' })[0]);
+  expect(onAction).toHaveBeenCalledWith('steer', 'one', undefined);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete queued message: Check the tablet' }));
+  expect(onAction).toHaveBeenCalledWith('delete', 'two', undefined);
 });
-
-it.each([{ active: false, disabled: false }, { active: true, disabled: true }])('disables steering without an active connection and turn: %j', props => {
-  const onAction = vi.fn();
-  render(<MessageQueue messages={messages} {...props} onAction={onAction}/>);
-  fireEvent.click(screen.getByRole('button', { name: /Up next/ }));
-  const steer = screen.getByRole('button', { name: 'Steer queued message 1' }) as HTMLButtonElement;
-  expect(steer.disabled).toBe(true);
-  fireEvent.click(steer);
-  expect(onAction).not.toHaveBeenCalled();
+it('retains failed edits and closes the editor after successful saving', async () => {
+  const onAction = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(true);
+  render(<MessageQueue messages={messages} disabled={false} onAction={onAction}/>);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Edit queued message' })[0]);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Updated phone check' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save queued message' }));
+  await waitFor(() => expect(onAction).toHaveBeenCalledWith('edit', 'one', 'Updated phone check'));
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Updated phone check');
+  fireEvent.click(screen.getByRole('button', { name: 'Save queued message' }));
+  await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull());
+});
+it('disables mutations offline and announces paused state and errors', () => {
+  render(<MessageQueue messages={messages} paused disabled error="Connection lost" onAction={vi.fn()}/>);
+  expect(screen.getByRole('status').textContent).toContain('Paused');
+  expect(screen.getByRole('alert').textContent).toBe('Connection lost');
+  expect(screen.getAllByRole('button').every(button => (button as HTMLButtonElement).disabled)).toBe(true);
+});
+it('hides an empty queue', () => {
+  const { container } = render(<MessageQueue messages={[]} disabled={false} onAction={vi.fn()}/>);
+  expect(container.innerHTML).toBe('');
 });

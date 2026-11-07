@@ -1,0 +1,21 @@
+.message-queue { position: relative; margin: 0 34px -16px; padding-bottom: 16px; border: 1px solid var(--adaptive-border, #484853); border-bottom: 0; border-radius: 18px 18px 0 0; background: var(--adaptive-surface, #292a32); color: var(--adaptive-text, #dedbe8); font-size: 12px; flex-shrink: 0; }
+.message-queue ol { list-style: none; padding: 0; margin: 0; max-height: 156px; overflow: auto; }
+.message-queue li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; }
+.message-queue li + li { border-top: 1px solid var(--adaptive-border, #3d3d48); }
+.message-queue-icon { width: 14px; color: var(--adaptive-muted, #9690a6); flex-shrink: 0; }
+.message-queue-preview { flex: 1; min-width: 0; }
+.message-queue-preview p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-queue-preview small { color: var(--adaptive-muted, #aaa7b4); font-size: 10px; margin-left: 6px; }
+.message-queue-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-shrink: 0; }
+.message-queue button:disabled { opacity: .4; cursor: default; }
+.message-queue-error { margin: 6px 10px; color: #f3a6a6; overflow-wrap: anywhere; }
+.message-queue [data-slot="scroll-area-viewport"] > div { display: block !important; }
+.message-queue-preview form { display: flex; flex-wrap: wrap; gap: 6px; padding: 5px 0; }
+.message-queue-preview textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--background); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+.message-queue { animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+.message-queue li { animation: motion-fade-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+
+.message-queue button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; min-width: 28px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--adaptive-muted, #aaa7b4); font: inherit; font-size: 11px; cursor: pointer; }
+.message-queue button:hover { background: #ffffff0a; color: var(--adaptive-text, #dedbe8); }
+.message-queue button:focus-visible { outline: 2px solid #b59ae9; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .message-queue, .message-queue li { animation: none; } }

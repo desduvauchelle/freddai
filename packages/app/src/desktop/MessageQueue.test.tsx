@@ -8,6 +8,8 @@ const queue = { session: "t", paused: false, error: null, messages: [{ id: "q1",
 it("offers steer, edit, and delete for a queued message", async () => {
   const onAction = vi.fn();
   render(<MessageQueue queue={queue} active disabled={false} canSteer onAction={onAction}/>);
+  expect(screen.getAllByRole("button")).toHaveLength(3);
+  expect(screen.queryByText("Clear queue")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Steer instead" }));
   expect(onAction).toHaveBeenCalledWith("steer", "q1");
   await userEvent.click(screen.getByRole("button", { name: "Edit queued message" }));
