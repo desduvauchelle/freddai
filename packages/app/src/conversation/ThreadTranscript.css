@@ -171,9 +171,32 @@
 .chat-assistant > strong,
 .chat-assistant > .native-message > :not(.message-table) { max-width: 800px; margin-inline: auto; }
 
-.outgoing-sending { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.thread-transcript .native-message small.outgoing-sending { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .outgoing-sending svg { flex: none; animation: outgoing-send-spin 1s linear infinite; }
 @keyframes outgoing-send-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .outgoing-sending svg { animation: none; } }
 
 .generated-file-link { color: var(--adaptive-text, #bcb2ed); text-decoration: underline; background: none; border: 0; padding: 4px 0; font: inherit; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+
+/* Five visual lines, including wrapping at the current bubble width. */
+.user-message-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+.user-message-preview[hidden] { display: none; }
+.user-message-toggle {
+  display: block;
+  margin-top: 6px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

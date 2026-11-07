@@ -3,6 +3,7 @@ import { LoaderCircle, Paperclip } from 'lucide-react';
 import type { Attachment, BackgroundTask, Message } from '../desktop/types';
 import { GeneratedFileContext, LocalPageContext, type FileReader, type LocalPageResolver } from './GeneratedFile';
 import { MessageMarkdown } from './MessageMarkdown';
+import { UserMessage } from './UserMessage';
 import { BackgroundTasks } from './BackgroundTasks';
 import { ToolActivity } from './ToolActivity';
 import { ToolTextContext, type ToolTextReader } from './ToolText';
@@ -72,7 +73,7 @@ export function ThreadTranscript({ readToolText, readGeneratedFile, resolveLocal
         {m.role === 'notice' && <strong>Freddai</strong>}
         <div className="native-message">
           {chips(m.attachments)}
-          <MessageMarkdown text={m.text} />
+          {m.role === 'user' ? <UserMessage text={m.text} /> : <MessageMarkdown text={m.text} />}
           {m.delivery && <small role="status">{m.delivery}</small>}
         </div>
       </article>;
@@ -81,7 +82,7 @@ export function ThreadTranscript({ readToolText, readGeneratedFile, resolveLocal
     {pending.map(p => <article key={p.id} data-role="user" aria-label="Your message" className={`chat-user${fresh.has(p.id) ? ' transcript-enter' : ''}`}>
       <div className="native-message">
         {chips(p.attachments)}
-        <MessageMarkdown text={p.text} />
+        <UserMessage text={p.text} />
         {p.status && <small role="status" className={p.sending ? "outgoing-sending" : undefined}>{p.sending && <LoaderCircle size={14} aria-hidden="true" />}{p.status}</small>}
       </div>
     </article>)}
