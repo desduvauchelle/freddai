@@ -36,7 +36,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private var voiceEnabled = false
     private var voiceBusy = false
     private var composerRecorder: ComposerRecorder? = null
-    private lateinit var voiceStatus: TextView
+    private lateinit var voiceStatus: RecordingStatusView
     private lateinit var mainPanel: LinearLayout
     private lateinit var drawerSurface: FrameLayout
     private lateinit var sidebarView: LinearLayout
@@ -54,6 +54,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private lateinit var connection: Button
     private lateinit var list: LinearLayout
     private lateinit var search: EditText
+    private lateinit var viewProjects: Button
+    private lateinit var viewRecent: Button
     private lateinit var chips: LinearLayout
     private val collapsedProjects = mutableSetOf<String>()
     private var model = JSONObject()
@@ -211,15 +213,26 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             }
             composer.addView(editor, LinearLayout.LayoutParams(-1, -2))
             row.addView(button("Send") { sendComposer() })
-            voiceStatus = TextView(host).apply { textSize = 13f; visibility = View.GONE }
-            composer.addView(voiceStatus)
-            val microphone = button("Dictate") {}.apply { text = ""; setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_btn_speak_now, 0, 0, 0); contentDescription = "Dictate message. Hold to record, release to transcribe and send. Move away to cancel." }
+            voiceStatus = RecordingStatusView(host).apply { textSize = 13f; gravity = Gravity.BOTTOM or Gravity.RIGHT; setPadding(0, 0, dp(56), dp(14)); visibility = View.GONE }
+            val transcriptionStatus = TextView(host).apply { textSize = 13f; text = "Transcribing…"; visibility = View.GONE }
+            composer.clipChildren = false
+            composer.clipToPadding = false
+            content.clipChildren = false
+            val microphone = button("Dictate") {}.apply { text = ""; setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_btn_speak_now, 0, 0, 0); contentDescription = "Dictate message. Hold and release to send. Tap to record until Send or Cancel." }
             composerRecorder?.dispose()
+            val recordingRow = FrameLayout(host).apply { clipChildren = false; clipToPadding = false }
+            val recordingCancel = button("Cancel recording") { composerRecorder?.cancel() }.apply { text = "×"; visibility = View.GONE }
+            val recordingSend = button("Send recording") { composerRecorder?.send() }.apply { text = "↑"; visibility = View.GONE }
             composerRecorder = ComposerRecorder(host as AppCompatActivity, microphone, { status ->
-                voiceStatus.text = status; voiceStatus.visibility = if (status.isEmpty()) View.GONE else View.VISIBLE
+                voiceStatus.showWaveform = status.isNotEmpty() && status != "Transcribing…"
+                recordingCancel.visibility = if (voiceStatus.showWaveform) View.VISIBLE else View.GONE
+                recordingSend.visibility = recordingCancel.visibility
+                recordingRow.layoutParams = LinearLayout.LayoutParams(-1, dp(if (voiceStatus.showWaveform) 112 else 48))
+                voiceStatus.text = status; voiceStatus.invalidate(); voiceStatus.visibility = if (voiceStatus.showWaveform) View.VISIBLE else View.GONE
+                transcriptionStatus.visibility = if (status == "Transcribing…") View.VISIBLE else View.GONE
             }, { path, duration -> event("voiceRecorded", JSONObject().put("path", path).put("durationMs", duration)) }, { message ->
                 event("voiceError", JSONObject().put("message", message))
-            })
+            }, { level -> voiceStatus.level = level; voiceStatus.invalidate() }, { progress -> voiceStatus.sendProgress = progress; voiceStatus.invalidate() })
             composerRecorder?.update(voiceEnabled, voiceBusy)
             row.addView(microphone, LinearLayout.LayoutParams(dp(48), dp(48)))
             fun setting(label: String, icon: Int, action: String) = ImageButton(host).apply {
@@ -232,7 +245,13 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             accessButton = setting("Permissions", android.R.drawable.ic_lock_lock, "permissions")
             row.addView(modelButton, 1); row.addView(accessButton, 2)
             row.addView(Space(host), 3, LinearLayout.LayoutParams(0, 1, 1f))
-            composer.addView(row); content.addView(composer)
+            recordingRow.addView(row, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            recordingRow.addView(voiceStatus, FrameLayout.LayoutParams(-1, dp(128), Gravity.BOTTOM))
+            recordingRow.addView(recordingCancel, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin = dp(180); bottomMargin = dp(2) })
+            recordingRow.addView(recordingSend, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin = dp(2); bottomMargin = dp(66) })
+            composer.addView(recordingRow, LinearLayout.LayoutParams(-1, dp(48)))
+            composer.addView(transcriptionStatus)
+            content.addView(composer)
             renderSettings()
             mainPanel.addView(content, LinearLayout.LayoutParams(0, -1, 1f))
             drawer.addView(mainPanel, DrawerLayout.LayoutParams(-1, -1))
@@ -248,6 +267,9 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
+            viewProjects = button("Projects") { setView("projects") }
+            viewRecent = button("Recent") { setView("recent") }
+            sidebar.addView(LinearLayout(host).apply { addView(viewProjects, LinearLayout.LayoutParams(0, -2, 1f)); addView(viewRecent, LinearLayout.LayoutParams(0, -2, 1f)) })
             sidebar.addView(button("Dashboard") { event("dashboard"); closeDrawer() })
             sidebar.addView(search)
             val filters = LinearLayout(host)
@@ -324,7 +346,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     @Command fun setMode(invoke: Invoke) = ui(invoke) {
         val args = invoke.getArgs()
         if (mode != args.optString("mode", "other") || title.text.toString() != args.optString("title", "Freddai")) composerRecorder?.cancel()
-        mode = args.optString("mode", "other")
+        // Commander is a conversation with its own web header; Android has no transparent-bar variant, so it uses the plain conversation chrome.
+        mode = args.optString("mode", "other").let { if (it == "commander") "conversation" else it }
         title.text = args.optString("title", "Freddai"); editor.hint = args.optString("placeholder", "Message")
         applyMode()
         if (mode != "other" && args.optBoolean("openDrawer")) {
@@ -357,56 +380,135 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         if (search.text.toString() != query) { updatingSearch = true; search.setText(query); updatingSearch = false }
         renderThreads()
     }
+    private var pendingView: String? = null
+    private fun currentView() = pendingView ?: model.optString("view", "projects")
+    private fun renderViewToggle() {
+        val recent = currentView() == "recent"
+        for ((button, selected) in listOf(viewProjects to !recent, viewRecent to recent)) {
+            button.setTypeface(null, if (selected) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            button.alpha = if (selected) 1f else 0.6f
+            button.isSelected = selected
+            button.contentDescription = button.text.toString() + if (selected) ", selected" else ""
+        }
+    }
+    private fun setView(view: String) {
+        if (currentView() == view) return
+        pendingView = view; renderViewToggle(); renderThreads(); event("setView", JSONObject().put("view", view))
+    }
+    private fun renderRecent(key: String = "recent", bottom: Boolean = false) {
+        val recent = model.optJSONObject(key) ?: JSONObject()
+        val threads = recent.optJSONArray("threads") ?: JSONArray()
+        val page = { action: String -> event("recentPage", JSONObject().put("action", action).apply { if (bottom) put("section", "bottom") }) }
+        if (bottom) {
+            if (threads.length() == 0) return
+            list.addView(TextView(host).apply {
+                text = "Recent"; textSize = 18f; setTypeface(typeface, android.graphics.Typeface.BOLD)
+                alpha = 0.7f; setPadding(dp(12), dp(24), dp(12), dp(4)); isFocusable = true
+                accessibilityDelegate = object : View.AccessibilityDelegate() {
+                    override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) { super.onInitializeAccessibilityNodeInfo(host, info); info.isHeading = true }
+                }
+            })
+        } else if (threads.length() == 0) {
+            list.addView(TextView(host).apply { text = "No recent threads"; gravity = Gravity.CENTER; setPadding(dp(12), dp(24), dp(12), dp(24)) })
+        }
+        for (i in 0 until threads.length()) { val thread = threads.getJSONObject(i); addThreadRow(thread, thread.optString("projectLabel")) }
+        if (recent.optInt("remaining") > 0) list.addView(button("Show more") { page("more") })
+        if (recent.optBoolean("expanded")) list.addView(button("Show less") { page("less") })
+    }
+    private fun addThreadRow(thread: JSONObject, tag: String? = null) {
+        val id = thread.getString("id")
+                val status = thread.optString("status")
+        val spoken = when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (thread.optBoolean("unread")) "Unread reply" else "" }
+        val row = LinearLayout(host).apply {
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); isClickable = true; isFocusable = true
+            contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), tag ?: "", spoken).filter { it.isNotEmpty() }.joinToString(", ")
+            alpha = if (thread.optBoolean("faded")) 0.65f else 1f
+            isSelected = id == model.optString("selectedId")
+            val highlight = android.util.TypedValue(); host.theme.resolveAttribute(if (isSelected) android.R.attr.colorControlHighlight else android.R.attr.selectableItemBackground, highlight, true)
+            if (isSelected) setBackgroundColor(highlight.data) else setBackgroundResource(highlight.resourceId)
+            setOnClickListener { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", id)); closeDrawer() }
+        }
+        val dot = TextView(host).apply {
+            text = if (spoken.isEmpty()) "" else "●"; textSize = 12f; gravity = Gravity.CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setTextColor(when (status) { "running", "starting" -> 0xffafb3bc.toInt(); "waiting", "interrupted" -> 0xffff9500.toInt(); "failed", "error" -> 0xffff3b30.toInt(); else -> 0xff007aff.toInt() })
+        }
+        if (status == "running" || status == "starting") dot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            private var pulse: android.animation.ObjectAnimator? = null
+            override fun onViewAttachedToWindow(view: View) {
+                if (android.provider.Settings.Global.getFloat(host.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return
+                pulse = android.animation.ObjectAnimator.ofFloat(view, "alpha", 1f, 0.4f).apply { duration = 900; repeatCount = android.animation.ValueAnimator.INFINITE; repeatMode = android.animation.ValueAnimator.REVERSE; start() }
+            }
+            override fun onViewDetachedFromWindow(view: View) { pulse?.cancel(); pulse = null }
+        })
+        row.addView(dot, LinearLayout.LayoutParams(dp(20), dp(48)))
+        val titles = column().apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        titles.addView(TextView(host).apply {
+            text = (if (thread.optBoolean("pinned")) "📌 " else "") + thread.getString("title"); textSize = 16f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+            if (thread.optBoolean("unread")) setTypeface(typeface, android.graphics.Typeface.BOLD)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
+        if (!tag.isNullOrEmpty()) titles.addView(TextView(host).apply {
+            text = tag; textSize = 12f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+            runCatching { android.graphics.Color.parseColor(thread.optString("projectColor")) }.getOrNull()?.let { setTextColor(it) }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
+        row.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        list.addView(row)
+    }
     private fun renderThreads() {
         list.removeAllViews()
+        if (pendingView != null && pendingView == model.optString("view", "projects")) pendingView = null
+        renderViewToggle()
+        if (currentView() == "recent") { renderRecent(); return }
+        renderGroups()
+        renderRecent("recentSection", bottom = true)
+    }
+    private fun renderGroups() {
         val groups = model.optJSONArray("groups") ?: JSONArray()
         for (i in 0 until groups.length()) {
             val group = groups.getJSONObject(i); val project = group.getString("project")
             val collapsed = project in collapsedProjects
             val projectRow = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
-            projectRow.addView(button("${if (collapsed) "▸" else "▾"} ${group.getString("label")}") {
+            val commander = group.optString("kind") == "commander"
+            projectRow.addView(button("${if (commander) "★" else if (collapsed) "▸" else "▾"} ${group.getString("label")}") {
+                // Commander-in-Chief is listed first and opens its screen instead of collapsing.
+                if (commander) { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", "commander:open")); closeDrawer(); return@button }
                 if (!collapsedProjects.add(project)) collapsedProjects.remove(project)
                 val scrollY = list.parent.let { it as? android.widget.ScrollView }?.scrollY ?: 0
                 renderThreads()
                 (list.parent as? android.widget.ScrollView)?.post { (list.parent as? android.widget.ScrollView)?.scrollTo(0, scrollY) }
             }.apply { contentDescription = "${group.getString("label")}, ${if (collapsed) "collapsed" else "expanded"}"; runCatching { android.graphics.Color.parseColor(group.optString("color")) }.getOrNull()?.let { setTextColor(it) }; textSize = 18f; gravity = Gravity.START or Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(16), dp(12), dp(4)) }, LinearLayout.LayoutParams(0, -2, 1f))
             if (group.optBoolean("canStart")) projectRow.addView(button("+") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", project)); closeDrawer() }.apply { contentDescription = "New thread in ${group.getString("label")}" }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            if (model.optBoolean("canReorderProjects") && project.isNotEmpty()) {
+                val handle = button("≡") {}.apply {
+                    contentDescription = "Drag to reorder ${group.getString("label")}"
+                    setOnLongClickListener {
+                        startDragAndDrop(android.content.ClipData.newPlainText("Freddai project", project), android.view.View.DragShadowBuilder(this), project, 0)
+                    }
+                }
+                projectRow.addView(handle, 0, LinearLayout.LayoutParams(dp(44), dp(48)))
+                projectRow.setOnDragListener { view, drag ->
+                    val source = drag.localState as? String
+                    val valid = model.optBoolean("canReorderProjects") && source != null && source != project && (0 until groups.length()).any { groups.getJSONObject(it).optString("project") == source }
+                    when (drag.action) {
+                        android.view.DragEvent.ACTION_DRAG_STARTED -> valid
+                        android.view.DragEvent.ACTION_DRAG_ENTERED -> { if (valid) view.alpha = 0.5f; valid }
+                        android.view.DragEvent.ACTION_DRAG_EXITED, android.view.DragEvent.ACTION_DRAG_ENDED -> { view.alpha = 1f; true }
+                        android.view.DragEvent.ACTION_DROP -> {
+                            view.alpha = 1f
+                            if (valid) event("moveProject", JSONObject().put("project", source).put("target", project).put("after", drag.y > view.height / 2f))
+                            valid
+                        }
+                        else -> valid
+                    }
+                }
+            }
             list.addView(projectRow)
             if (collapsed) continue
             val threads = group.getJSONArray("threads")
             for (j in 0 until threads.length()) {
-                val thread = threads.getJSONObject(j); val id = thread.getString("id")
-                val status = thread.optString("status")
-                val spoken = when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (thread.optBoolean("unread")) "Unread reply" else "" }
-                val row = LinearLayout(host).apply {
-                    gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); isClickable = true; isFocusable = true
-                    contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), spoken).filter { it.isNotEmpty() }.joinToString(", ")
-                    alpha = if (thread.optBoolean("faded")) 0.65f else 1f
-                    isSelected = id == model.optString("selectedId")
-                    val highlight = android.util.TypedValue(); host.theme.resolveAttribute(if (isSelected) android.R.attr.colorControlHighlight else android.R.attr.selectableItemBackground, highlight, true)
-                    if (isSelected) setBackgroundColor(highlight.data) else setBackgroundResource(highlight.resourceId)
-                    setOnClickListener { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", id)); closeDrawer() }
-                }
-                val dot = TextView(host).apply {
-                    text = if (spoken.isEmpty()) "" else "●"; textSize = 12f; gravity = Gravity.CENTER
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    setTextColor(when (status) { "running", "starting" -> 0xffafb3bc.toInt(); "waiting", "interrupted" -> 0xffff9500.toInt(); "failed", "error" -> 0xffff3b30.toInt(); else -> 0xff007aff.toInt() })
-                }
-                if (status == "running" || status == "starting") dot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                    private var pulse: android.animation.ObjectAnimator? = null
-                    override fun onViewAttachedToWindow(view: View) {
-                        if (android.provider.Settings.Global.getFloat(host.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return
-                        pulse = android.animation.ObjectAnimator.ofFloat(view, "alpha", 1f, 0.4f).apply { duration = 900; repeatCount = android.animation.ValueAnimator.INFINITE; repeatMode = android.animation.ValueAnimator.REVERSE; start() }
-                    }
-                    override fun onViewDetachedFromWindow(view: View) { pulse?.cancel(); pulse = null }
-                })
-                row.addView(dot, LinearLayout.LayoutParams(dp(20), dp(48)))
-                row.addView(TextView(host).apply {
-                    text = (if (thread.optBoolean("pinned")) "📌 " else "") + thread.getString("title"); textSize = 16f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
-                    if (thread.optBoolean("unread")) setTypeface(typeface, android.graphics.Typeface.BOLD)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                list.addView(row)
+                addThreadRow(threads.getJSONObject(j))
             }
             if (group.optInt("olderRemaining") > 0) list.addView(button(group.getString("olderLabel")) { event("showOlder", JSONObject().put("project", project)) })
         }

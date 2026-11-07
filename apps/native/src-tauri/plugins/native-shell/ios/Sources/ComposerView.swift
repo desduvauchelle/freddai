@@ -20,13 +20,21 @@ final class ComposerView: UIView, UITextViewDelegate {
   private let attachButton = UIButton(type: .system)
   private let picker = AttachmentPicker()
   private let micButton = UIButton(type: .system)
-  private let voiceStatusLabel = UILabel()
+  private let voiceStatusLabel = RecordingStatusLabel()
+  private let recordingSendCue = UIButton(type: .system)
+  private let recordingCancelButton = UIButton(type: .system)
+  private var micDownAt: TimeInterval = 0
+  private var recordingPresented = false
   private let voiceSpinner = UIActivityIndicatorView(style: .medium)
   private let recorder = VoiceRecorder()
   private let recordingFeedback = UIImpactFeedbackGenerator(style: .medium)
   private var voiceEnabled = false
   private var voiceState = "idle"
   private var micPressing = false
+  private var micOrigin = CGPoint.zero
+  private var sendArmed = false
+  private var sendProgress: CGFloat = 0
+  private var permissionGeneration = 0
   private var recording = false
   private var heightConstraint: NSLayoutConstraint!
   private var chipsHeight: NSLayoutConstraint!
@@ -136,22 +144,61 @@ final class ComposerView: UIView, UITextViewDelegate {
     micButton.configuration = mic
     micButton.translatesAutoresizingMaskIntoConstraints = false
     micButton.accessibilityLabel = "Dictate"
-    micButton.accessibilityHint = "Hold to record, release to transcribe on your Mac"
+    micButton.accessibilityHint = "Hold and release to send. Tap to record until Send or Cancel."
     micButton.isHidden = true
     micButton.layer.cornerRadius = 18
     let hold = UILongPressGestureRecognizer(target: self, action: #selector(micHold(_:)))
-    hold.minimumPressDuration = 0.15
+    hold.minimumPressDuration = 0
     hold.allowableMovement = .greatestFiniteMagnitude
     micButton.addGestureRecognizer(hold)
     field.addSubview(micButton)
 
+    NotificationCenter.default.addObserver(self, selector: #selector(cancelRecording), name: UIApplication.willResignActiveNotification, object: nil)
+    micButton.accessibilityCustomActions = [
+      UIAccessibilityCustomAction(name: "Start recording", target: self, selector: #selector(accessibleStartRecording)),
+      UIAccessibilityCustomAction(name: "Send recording", target: self, selector: #selector(accessibleSendRecording)),
+      UIAccessibilityCustomAction(name: "Cancel recording", target: self, selector: #selector(accessibleCancelRecording))
+    ]
+    recordingSendCue.translatesAutoresizingMaskIntoConstraints = false
+    recordingSendCue.setImage(UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold)), for: .normal)
+    recordingSendCue.accessibilityIdentifier = "recording-send-cue"
+    recordingSendCue.accessibilityLabel = "Send recording"
+    recordingSendCue.addTarget(self, action: #selector(sendRecording), for: .touchUpInside)
+    recordingSendCue.layer.cornerRadius = 22
+    recordingSendCue.layer.shadowColor = UIColor.black.cgColor
+    recordingSendCue.layer.shadowOpacity = 0.12
+    recordingSendCue.layer.shadowRadius = 8
+    recordingSendCue.layer.shadowOffset = CGSize(width: 0, height: 3)
+    recordingSendCue.alpha = 0
+    addSubview(recordingSendCue)
+    NSLayoutConstraint.activate([
+      recordingSendCue.centerXAnchor.constraint(equalTo: micButton.centerXAnchor),
+      recordingSendCue.centerYAnchor.constraint(equalTo: micButton.centerYAnchor, constant: -64),
+      recordingSendCue.widthAnchor.constraint(equalToConstant: 44),
+      recordingSendCue.heightAnchor.constraint(equalToConstant: 44)
+    ])
+    recordingCancelButton.translatesAutoresizingMaskIntoConstraints = false
+    recordingCancelButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+    recordingCancelButton.accessibilityLabel = "Cancel recording"
+    recordingCancelButton.accessibilityIdentifier = "recording-cancel"
+    recordingCancelButton.isHidden = true
+    recordingCancelButton.addTarget(self, action: #selector(cancelRecording), for: .touchUpInside)
+    field.addSubview(recordingCancelButton)
+    voiceStatusLabel.textAlignment = .center
+    voiceStatusLabel.numberOfLines = 1
     voiceStatusLabel.translatesAutoresizingMaskIntoConstraints = false
-    voiceStatusLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .monospacedDigitSystemFont(ofSize: 15, weight: .regular))
+    voiceStatusLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .monospacedDigitSystemFont(ofSize: 13, weight: .regular))
     voiceStatusLabel.adjustsFontForContentSizeCategory = true
     voiceStatusLabel.textColor = .secondaryLabel
     voiceStatusLabel.isHidden = true
     voiceStatusLabel.isUserInteractionEnabled = false
-    field.addSubview(voiceStatusLabel)
+    field.insertSubview(voiceStatusLabel, belowSubview: micButton)
+    NSLayoutConstraint.activate([
+      recordingCancelButton.leadingAnchor.constraint(equalTo: voiceStatusLabel.leadingAnchor),
+      recordingCancelButton.centerYAnchor.constraint(equalTo: voiceStatusLabel.centerYAnchor),
+      recordingCancelButton.widthAnchor.constraint(equalToConstant: 44),
+      recordingCancelButton.heightAnchor.constraint(equalToConstant: 44)
+    ])
     voiceSpinner.translatesAutoresizingMaskIntoConstraints = false
     voiceSpinner.hidesWhenStopped = true
     field.addSubview(voiceSpinner)
@@ -209,9 +256,11 @@ final class ComposerView: UIView, UITextViewDelegate {
       micButton.heightAnchor.constraint(equalToConstant: 36),
       voiceSpinner.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 4),
       voiceSpinner.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
-      voiceStatusLabel.leadingAnchor.constraint(equalTo: voiceSpinner.trailingAnchor, constant: 6),
-      voiceStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: micButton.leadingAnchor, constant: -6),
-      voiceStatusLabel.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
+      voiceStatusLabel.trailingAnchor.constraint(equalTo: micButton.trailingAnchor, constant: 4),
+      voiceStatusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: field.leadingAnchor, constant: 8),
+      voiceStatusLabel.widthAnchor.constraint(equalToConstant: 224),
+      voiceStatusLabel.heightAnchor.constraint(equalToConstant: 44),
+      voiceStatusLabel.centerYAnchor.constraint(equalTo: micButton.centerYAnchor),
 
       sendButton.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -12),
       sendButton.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
@@ -392,7 +441,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   func setVoice(enabled: Bool, state: String?) {
     voiceEnabled = enabled
     if let state = state { voiceState = state }
-    if !enabled, recording { recorder.cancel(); recording = false }
+    if !enabled { cancelRecording() }
     updateVoiceUI()
   }
 
@@ -402,10 +451,12 @@ final class ComposerView: UIView, UITextViewDelegate {
     accessButton.isHidden = !hasAccess || recording || transcribing
     micButton.isHidden = !voiceEnabled
     micButton.isEnabled = !transcribing
+    micButton.configuration?.image = UIImage(systemName: "mic.fill")
+    if !recording { micButton.transform = .identity }
     if recording {
-      micButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.2)
+      micButton.backgroundColor = .clear
       micButton.configuration?.baseForegroundColor = .systemRed
-      voiceStatusLabel.textColor = .systemRed
+      voiceStatusLabel.textColor = .label
       voiceStatusLabel.isHidden = false
       voiceSpinner.stopAnimating()
     } else {
@@ -415,28 +466,74 @@ final class ComposerView: UIView, UITextViewDelegate {
       voiceStatusLabel.isHidden = !transcribing
       if transcribing { voiceStatusLabel.text = "Transcribing…"; voiceSpinner.startAnimating() } else { voiceSpinner.stopAnimating() }
     }
-    if !recording {
-      micButton.layer.removeAnimation(forKey: "pulse")
-    } else if micButton.layer.animation(forKey: "pulse") == nil {
-      let pulse = CABasicAnimation(keyPath: "opacity")
-      pulse.fromValue = 1; pulse.toValue = 0.45; pulse.duration = 0.7
-      pulse.autoreverses = true; pulse.repeatCount = .infinity
-      micButton.layer.add(pulse, forKey: "pulse")
+    presentRecording(recording, armed: sendArmed, progress: sendProgress)
+  }
+
+  /// Presentation is independent of capture, so layout/motion can be verified without a microphone.
+  func presentRecording(_ active: Bool, armed: Bool, progress: CGFloat? = nil) {
+    if active { voiceStatusLabel.isHidden = false; micButton.configuration?.baseForegroundColor = .systemRed }
+    recordingCancelButton.isHidden = !active
+    recordingSendCue.isUserInteractionEnabled = active
+    recordingSendCue.isAccessibilityElement = active
+    voiceStatusLabel.showWaveform = active
+    voiceStatusLabel.setNeedsDisplay()
+    attachButton.alpha = active ? 0 : 1
+    sendButton.alpha = active ? 0 : 1
+    attachButton.isUserInteractionEnabled = !active
+    sendButton.isUserInteractionEnabled = !active
+    let amount = max(0, min(1, progress ?? (armed ? 1 : 0)))
+    let base = UIColor.secondarySystemGroupedBackground.resolvedColor(with: traitCollection)
+    let accent = tintColor.resolvedColor(with: traitCollection)
+    recordingSendCue.backgroundColor = base.mixed(with: accent, amount: amount)
+    recordingSendCue.tintColor = UIColor.label.resolvedColor(with: traitCollection).mixed(with: .white, amount: amount)
+    let scale = 1 + 0.18 * amount
+    recordingSendCue.transform = active ? CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -8 * amount).scaledBy(x: scale, y: scale) : CGAffineTransform(translationX: 0, y: 54)
+    if recordingPresented != active {
+      recordingPresented = active
+      layoutIfNeeded()
+      if active {
+        voiceStatusLabel.alpha = 0
+        if !Motion.reduced {
+          voiceStatusLabel.transform = CGAffineTransform(translationX: 94, y: 0).scaledBy(x: 0.16, y: 1)
+          recordingSendCue.transform = CGAffineTransform(translationX: 0, y: 54).scaledBy(x: 0.72, y: 0.72)
+        }
+        Motion.animate {
+          self.voiceStatusLabel.alpha = 1
+          self.voiceStatusLabel.transform = .identity
+          self.recordingSendCue.alpha = 1
+          self.recordingSendCue.transform = .identity
+        }
+      } else {
+        Motion.animate { self.recordingSendCue.alpha = 0 }
+        voiceStatusLabel.transform = .identity
+        voiceStatusLabel.alpha = 1
+      }
     }
   }
 
   private func showElapsed(_ seconds: TimeInterval) {
     let total = Int(seconds)
-    voiceStatusLabel.text = String(format: "Recording %d:%02d — release to send", total / 60, total % 60)
+    voiceStatusLabel.text = String(format: "%d:%02d", total / 60, total % 60)
+    micButton.accessibilityValue = "\(voiceStatusLabel.text ?? "") — " + (micPressing ? "Release to send" : "Tap Send or Cancel")
+    voiceStatusLabel.elapsed = seconds
+    voiceStatusLabel.level = recorder.level
+    voiceStatusLabel.setNeedsDisplay()
   }
 
   @objc private func micHold(_ gesture: UILongPressGestureRecognizer) {
     switch gesture.state {
     case .began:
+      guard !recording, !micPressing else { return }
+      micDownAt = ProcessInfo.processInfo.systemUptime
       recordingFeedback.prepare()
       micPressing = true
+      sendArmed = false
+      sendProgress = 0
+      micOrigin = gesture.location(in: self)
+      permissionGeneration += 1
+      let generation = permissionGeneration
       VoiceRecorder.requestPermission { [weak self] granted in
-        guard let self = self, self.micPressing else { return }
+        guard let self = self, self.permissionGeneration == generation, self.voiceEnabled else { return }
         guard granted else {
           self.micPressing = false
           self.onVoiceError?(VoiceRecorder.deniedMessage)
@@ -444,9 +541,29 @@ final class ComposerView: UIView, UITextViewDelegate {
         }
         self.beginRecording()
       }
-    case .ended, .cancelled, .failed:
+    case .changed:
+      let point = gesture.location(in: self)
+      let armed = RecordingSwipe.shouldSend(origin: micOrigin, end: point)
+      sendProgress = abs(point.x - micOrigin.x) <= 96 ? max(0, min(1, (micOrigin.y - point.y) / 64)) : 0
+      if recording { presentRecording(true, armed: armed, progress: sendProgress) }
+      if armed != sendArmed {
+        sendArmed = armed
+        updateVoiceUI()
+        if armed { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+      }
+      if recording { showElapsed(recorder.elapsed) }
+    case .ended:
+      guard micPressing else { return }
       micPressing = false
-      if recording { finishRecording() }
+      let held = RecordingSwipe.sendsOnRelease(duration: ProcessInfo.processInfo.systemUptime - micDownAt, armed: sendArmed)
+      if held || sendArmed {
+        permissionGeneration += 1
+        finishRecording()
+      } else if recording {
+        showElapsed(recorder.elapsed)
+      }
+    case .cancelled, .failed:
+      cancelRecording()
     default:
       break
     }
@@ -465,10 +582,53 @@ final class ComposerView: UIView, UITextViewDelegate {
     updateVoiceUI()
   }
 
+  @objc private func accessibleStartRecording() -> Bool {
+    guard voiceEnabled, voiceState != "transcribing", !recording else { return false }
+    permissionGeneration += 1
+    let generation = permissionGeneration
+    micPressing = true
+    VoiceRecorder.requestPermission { [weak self] granted in
+      guard let self = self, self.micPressing, self.permissionGeneration == generation else { return }
+      if granted { self.beginRecording() } else { self.cancelRecording(); self.onVoiceError?(VoiceRecorder.deniedMessage) }
+    }
+    return true
+  }
+  @objc private func accessibleSendRecording() -> Bool { finishRecording(); return true }
+  @objc private func accessibleCancelRecording() -> Bool { cancelRecording(); return true }
+
+  @objc func cancelRecording() {
+    micPressing = false
+    permissionGeneration += 1
+    sendArmed = false
+    sendProgress = 0
+    recorder.cancel()
+    recording = false
+    updateVoiceUI()
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { cancelRecording() }
+  }
+
+  @objc private func sendRecording() { finishRecording() }
+
+  // The send cue sits above the composer; include it in hit testing.
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    if recordingSendCue.isUserInteractionEnabled, recordingSendCue.alpha > 0.01,
+       recordingSendCue.point(inside: recordingSendCue.convert(point, from: self), with: event) {
+      return recordingSendCue
+    }
+    return super.hitTest(point, with: event)
+  }
+
   private func finishRecording() {
     guard recording else { return }
     recording = false
     micPressing = false
+    permissionGeneration += 1
+    sendArmed = false
+    sendProgress = 0
     let result = recorder.stop()
     updateVoiceUI()
     guard let result = result else { return } // too short: discarded silently
@@ -508,5 +668,41 @@ final class ComposerView: UIView, UITextViewDelegate {
 private extension UIColor {
   convenience init(rgb: UInt32) {
     self.init(red: CGFloat((rgb >> 16) & 255) / 255, green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
+  }
+}
+
+/// Neutral capsule anchored to the held microphone. Audio history scrolls toward the mic.
+final class RecordingStatusLabel: UILabel {
+  static let recordingGreen = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.34, green: 0.84, blue: 0.55, alpha: 1) : UIColor(red: 0.08, green: 0.48, blue: 0.27, alpha: 1) }
+  var level: CGFloat = 0 {
+    didSet { samples.append(max(0, min(1, level))); if samples.count > 32 { samples.removeFirst() } }
+  }
+  var elapsed: TimeInterval = 0
+  var showWaveform = false
+  private var samples = Array(repeating: CGFloat(0), count: 32)
+  override var intrinsicContentSize: CGSize { CGSize(width: 224, height: 44) }
+  override func draw(_ rect: CGRect) {
+    guard showWaveform else { super.draw(rect); return }
+    UIColor.secondarySystemGroupedBackground.setFill()
+    UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).fill()
+    let timer = text ?? "0:00"
+    let timerFont = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+    timer.draw(at: CGPoint(x: 44, y: (bounds.height - timerFont.lineHeight) / 2), withAttributes: [.font: timerFont, .foregroundColor: Self.recordingGreen])
+    Self.recordingGreen.setFill()
+    let count = max(0, Int((bounds.width - 142) / 5))
+    for (index, sample) in samples.suffix(count).enumerated() {
+      let height = 3 + 23 * sample
+      UIBezierPath(roundedRect: CGRect(x: 100 + CGFloat(index) * 5, y: (bounds.height - height) / 2, width: 2.5, height: height), cornerRadius: 1.25).fill()
+    }
+  }
+}
+
+private extension UIColor {
+  func mixed(with other: UIColor, amount: CGFloat) -> UIColor {
+    var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+    var rr: CGFloat = 0, gg: CGFloat = 0, bb: CGFloat = 0, aa: CGFloat = 0
+    getRed(&r, green: &g, blue: &b, alpha: &a)
+    other.getRed(&rr, green: &gg, blue: &bb, alpha: &aa)
+    return UIColor(red: r + (rr-r)*amount, green: g + (gg-g)*amount, blue: b + (bb-b)*amount, alpha: a + (aa-a)*amount)
   }
 }

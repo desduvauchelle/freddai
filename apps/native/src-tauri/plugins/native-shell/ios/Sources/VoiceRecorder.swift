@@ -1,15 +1,17 @@
 import AVFoundation
 import Foundation
+import UIKit
 
-/// Push-to-talk recorder: mono 16 kHz AAC in `freddai-attachments/<uuid>/dictation.m4a`, capped at two minutes.
+/// Push-to-talk recorder: mono 16 kHz AAC in `freddai-attachments/<uuid>/dictation.m4a`, capped at ten minutes.
 final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
-  static let maxSeconds: TimeInterval = 120
+  static let maxSeconds: TimeInterval = 600
   static let minSeconds: TimeInterval = 0.3
   static let deniedMessage = "Microphone access is off — enable it in Settings › Freddai"
 
   private var recorder: AVAudioRecorder?
   private var timer: Timer?
   private(set) var fileURL: URL?
+  private var previousIdleTimerDisabled: Bool?
   private var startedAt = Date()
   var elapsed: TimeInterval { min(Date().timeIntervalSince(startedAt), Self.maxSeconds) }
 
@@ -17,6 +19,12 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
   var onTick: ((TimeInterval) -> Void)?
   /// Called when the cap is reached; the owner should treat it like a release.
   var onLimit: (() -> Void)?
+
+  var level: CGFloat {
+    guard let recorder = recorder else { return 0 }
+    recorder.updateMeters()
+    return CGFloat(max(0, min(1, pow(10, recorder.averagePower(forChannel: 0) / 40))))
+  }
 
   var isRecording: Bool { recorder?.isRecording == true }
 
@@ -49,14 +57,17 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
     ]
     let recorder = try AVAudioRecorder(url: url, settings: settings)
     recorder.delegate = self
+    recorder.isMeteringEnabled = true
     guard recorder.record(forDuration: Self.maxSeconds) else {
       try? FileManager.default.removeItem(at: dir)
       throw NSError(domain: "Freddai.Voice", code: 1, userInfo: [NSLocalizedDescriptionKey: "Couldn’t start recording."])
     }
     self.recorder = recorder
+    previousIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
+    UIApplication.shared.isIdleTimerDisabled = true
     fileURL = url
     startedAt = Date()
-    timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+    timer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
       guard let self = self, self.recorder != nil else { return }
       self.onTick?(self.elapsed)
     }
@@ -65,6 +76,10 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
   /// Stops and returns the recording, or nil (and deletes the file) if shorter than the minimum.
   func stop() -> (url: URL, durationMs: Int)? {
     timer?.invalidate(); timer = nil
+    if let previous = previousIdleTimerDisabled {
+      UIApplication.shared.isIdleTimerDisabled = previous
+      previousIdleTimerDisabled = nil
+    }
     guard let recorder = recorder, let url = fileURL else { return nil }
     let seconds = elapsed
     recorder.stop()
@@ -84,7 +99,17 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate {
   }
 
   func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-    // Fires on the two-minute cap (not on a manual stop, which clears `self.recorder` first).
+    // Fires on the ten-minute cap (not on a manual stop, which clears `self.recorder` first).
     if recorder === self.recorder { DispatchQueue.main.async { [weak self] in self?.onLimit?() } }
+  }
+}
+
+/// Swipe feedback and the tap-versus-hold release decision.
+enum RecordingSwipe {
+  static func sendsOnRelease(duration: TimeInterval, armed: Bool) -> Bool {
+    duration >= 0.3 || armed
+  }
+  static func shouldSend(origin: CGPoint, end: CGPoint) -> Bool {
+    origin.y - end.y >= 64 && abs(origin.x - end.x) <= 96
   }
 }
