@@ -1,15 +1,16 @@
 import { OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
-import { companionStatusRead, groupCompanionThreads, selectThreads } from './companion';
+import { companionStatusRead, groupCompanionThreads, selectThreads, scopeCompanion } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
-export type NativeThread = { id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
+export type NativeThread = { pinned?: boolean; id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
 export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
 export type NativeOption = { id: string; label: string };
 export type NativeThreadsModel = {
   groups: NativeThreadGroup[];
   selectedId: string;
-  filters: { project: string; status: ThreadFilter; query: string };
+  filters: { workspace?: string; project: string; status: ThreadFilter; query: string };
+  workspaceOptions?: NativeOption[];
   projectOptions: NativeOption[];
   statusOptions: NativeOption[];
 };
@@ -29,6 +30,7 @@ function nativeThread(thread: CompanionThread, read: Record<string, number>): Na
   const listStatus = threadListStatus(thread, read);
   return {
     id: thread.id,
+    pinned: thread.pinned,
     title: thread.title,
     // A pending approval/input request needs the user even when the run reports another status.
     status: thread.pending && !['failed', 'interrupted'].includes(thread.status) ? 'waiting' : thread.status,
@@ -40,9 +42,10 @@ function nativeThread(thread: CompanionThread, read: Record<string, number>): Na
 
 /** Builds the drawer model with the same selection, grouping and paging logic as the web list. */
 export function buildThreadsModel(input: {
-  data: CompanionSnapshot; read: Record<string, number>; selected: string; project: string; query: string; filter: ThreadFilter; olderPages: Record<string, number>;
+  workspace?: string; canManageWorkspaces?: boolean; data: CompanionSnapshot; read: Record<string, number>; selected: string; project: string; query: string; filter: ThreadFilter; olderPages: Record<string, number>;
 }): NativeThreadsModel {
-  const { data, selected, project, query, filter, olderPages } = input;
+  const { selected, project, query, filter, olderPages } = input;
+  const data = scopeCompanion(input.data, input.workspace || "");
   const read = companionStatusRead(data, input.read);
   const threads = selectThreads(data, project, query, filter, 'recent', read);
   const groups = groupCompanionThreads(data, threads, { read, selected, filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
@@ -57,7 +60,8 @@ export function buildThreadsModel(input: {
       olderLabel: group.pageCount ? `Show ${Math.min(OLDER_PAGE_SIZE, group.remaining)} more (${group.remaining})` : `Show older threads (${group.remaining})`,
     })),
     selectedId: selected,
-    filters: { project, status: filter, query },
+    filters: { ...(input.workspace !== undefined ? { workspace: input.workspace } : {}), project, status: filter, query },
+    workspaceOptions: [{ id: "", label: "All workspaces" }, ...(data.workspaces || []).map(w => ({ id: w.id, label: w.name })), ...(input.canManageWorkspaces ? [{ id: "__manage_workspaces", label: "Manage workspaces…" }] : [])],
     projectOptions: [{ id: '', label: 'All projects' }, ...data.projects.map(p => ({ id: p.id, label: p.name }))],
     statusOptions: data.threadList?.ignoreUnread ? STATUS_OPTIONS.map(option => ({ ...option, label: option.id === "running" ? "Working" : option.id === "done" ? "Done" : option.label })) : STATUS_OPTIONS,
   };
@@ -80,6 +84,8 @@ export const bumpOlderPage = (pages: Record<string, number>, project: string): R
 export type ThreadEventActions = {
   selectThread(id: string): void;
   setQuery(query: string): void;
+  setWorkspace?(workspace: string): void;
+  workspace?: string;
   setFilters(project: string, status: ThreadFilter): void;
   newThread(project: string): void;
   showOlder(project: string): void;
@@ -89,7 +95,12 @@ export function createThreadEventHandlers(actions: ThreadEventActions) {
   return {
     selectThread: (payload: { id?: unknown }) => { if (typeof payload?.id === 'string' && payload.id) actions.selectThread(payload.id); },
     search: (payload: { query?: unknown }) => actions.setQuery(typeof payload?.query === 'string' ? payload.query : ''),
-    setFilter: (payload: { project?: unknown; status?: unknown }) => actions.setFilters(typeof payload?.project === 'string' ? payload.project : '', asThreadFilter(payload?.status)),
+    setFilter: (payload: { workspace?: unknown; project?: unknown; status?: unknown }) => {
+      if (typeof payload?.workspace === 'string') {
+        actions.setWorkspace?.(payload.workspace); return;
+      }
+      actions.setFilters(typeof payload?.project === 'string' ? payload.project : '', asThreadFilter(payload?.status));
+    },
     newThread: (payload: { project?: unknown }) => actions.newThread(typeof payload?.project === 'string' ? payload.project : ''),
     showOlder: (payload: { project?: unknown }) => { if (typeof payload?.project === 'string') actions.showOlder(payload.project); },
   };

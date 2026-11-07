@@ -7,7 +7,7 @@ import type { Project, Workspace } from "./types";
 
 const projectDragType = "application/x-freddai-workspace-project";
 export function WorkspaceSettings({ projects, workspaces, disabled, onSave }: {
-  projects: Project[]; workspaces: Workspace[]; disabled: boolean;
+  projects: Pick<Project, "id" | "name" | "color">[]; workspaces: Workspace[]; disabled: boolean;
   onSave: (next: Workspace[]) => Promise<unknown>;
 }) {
   const [name, setName] = useState("");

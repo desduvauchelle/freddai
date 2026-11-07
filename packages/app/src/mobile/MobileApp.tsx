@@ -1,3 +1,5 @@
+import { WorkspaceSettings } from '../desktop/WorkspaceSettings';
+import '../workspace.css';
 import { useNavigationState } from '../hooks/use-navigation-state';
 import { hasNativeDashboardContent } from './native-shell';
 import { useNativeSummaries } from './native-summaries';
@@ -14,7 +16,7 @@ import { Input } from '@freddai/ui/components/input';
 import { Textarea } from '@freddai/ui/components/textarea';
 import { ScrollArea } from '@freddai/ui/components/scroll-area';
 import { ConnectionBanner } from './ConnectionBanner';
-import { companionStatusRead, disconnectedClient, selectThreads, groupCompanionThreads, type CompanionThread, type CompanionClient, type CompanionSnapshot, type ThreadFilter } from './companion';
+import { companionStatusRead, disconnectedClient, scopeCompanion, selectThreads, groupCompanionThreads, type CompanionThread, type CompanionClient, type CompanionSnapshot, type ThreadFilter } from './companion';
 import { ThreadTranscript, type PendingOutgoing } from '../conversation/ThreadTranscript';
 import { TodoPanel } from '../conversation/TodoList';
 import { groupThreadsByDay, OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
@@ -56,6 +58,15 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
   const attemptReason = useRef<'poll' | 'manual' | 'foreground'>('poll'), [recovered, setRecovered] = useState(false), previousState = useRef(connection.state);
   const [bannerDismissed, setBannerDismissed] = useState(false), [detailsOpen, setDetailsOpen] = useState(false);
   const [project, setProject] = useState(''), [query, setQuery] = useState(''), [filter, setFilter] = useState<ThreadFilter>('all');
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem('freddai.companion.workspace') || ''; } catch { return ''; } });
+  const scopedData = scopeCompanion(data, workspace);
+  function chooseWorkspace(id: string) {
+    if (id === '__manage_workspaces') { setWorkspacesOpen(true); return; }
+    setWorkspace(id); setProject(''); setQuery(''); setFilter('all'); setOlderPages({});
+    try { localStorage.setItem('freddai.companion.workspace', id); } catch { /* Optional local preference. */ }
+  }
+  useEffect(() => { if (loaded && workspace && !data.workspaces?.some(w => w.id === workspace)) chooseWorkspace(''); }, [loaded, workspace, data.workspaces]);
   const navigationRevision = useRef(0);
   const [screen, setScreen] = useNavigationState<'threads' | 'conversation' | 'new' | 'dashboard'>('threads', navigationRevision), [selected, setSelected] = useNavigationState('', navigationRevision);
   const snapshotThread = screen === 'conversation' ? selected : undefined;
@@ -150,7 +161,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setStaging(false); if (fileInput.current) fileInput.current.value = ''; }
   }
-  async function queueAction(action: 'pause' | 'resume' | 'delete' | 'clear', message?: string) {
+  async function queueAction(action: 'pause' | 'resume' | 'delete' | 'clear' | 'steer', message?: string) {
     if (!client.queue || !connected || working) return;
     const thread = selected;
     setWorking(true); setError('');
@@ -314,7 +325,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     catch (e) { setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`); return null; }
   }
   async function pickProject() {
-    const id = await choose('Project', projectOptions(data.projects), newProject);
+    const id = await choose('Project', projectOptions(scopedData.projects), newProject);
     if (id && id !== newProject) { setNewProject(id); delete requestIds.current.new; }
   }
   async function pickAssistant() {
@@ -353,11 +364,11 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
   const nativeTitle = task?.title || 'Conversation';
   useEffect(() => {
     if (!nativeShell) return;
-    void (schedulesOpen && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
+    void (workspacesOpen || schedulesOpen && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
       ? setNativeMode('conversation', { title: nativeTitle, placeholder: busyThread ? 'Draft your next message…' : 'Message' })
       : screen === 'new' ? setNativeMode('new', { title: 'New thread', placeholder: 'What should we work on?' })
       : screen === 'dashboard' ? setNativeMode('dashboard', { title: 'Dashboard' }) : setNativeMode('other')).catch(e => setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`));
-  }, [nativeShell, screen, nativeTitle, busyThread, schedulesOpen]);
+  }, [nativeShell, screen, nativeTitle, busyThread, schedulesOpen, workspacesOpen]);
   // Launch: the native app always opens on the New thread home (drawer closed), like the Mac. Threads are one drawer swipe away.
   const launched = useRef(false);
   useEffect(() => {
@@ -367,9 +378,9 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
   }, [nativeShell]);
   // The home needs a project: last used if it still exists, else the first one that can start threads.
   useEffect(() => {
-    if (!nativeShell || screen !== 'new' || !loaded || data.projects.some(p => p.id === newProject && p.canStart)) return;
-    setNewProject(pickNewProject(data.projects, project, savedLastProject()));
-  }, [nativeShell, screen, loaded, data.projects, newProject, project]);
+    if (!nativeShell || screen !== 'new' || !loaded || scopedData.projects.some(p => p.id === newProject && p.canStart)) return;
+    setNewProject(pickNewProject(scopedData.projects, project, savedLastProject()));
+  }, [nativeShell, screen, loaded, data.projects, data.workspaces, workspace, newProject, project]);
   useEffect(() => { if (nativeShell && screen === 'new' && newProject) saveLastProject(newProject); }, [nativeShell, screen, newProject]);
   // Push-to-talk dictation: the mic only shows while the Mac reports voice enabled + ready, rechecked at most every 30 s.
   const voiceReady = useRef(false), voiceCheckedAt = useRef(0);
@@ -427,14 +438,14 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
       return;
     }
     const target = data.projects.find(p => p.id === event.project);
-    if (!target) { if (event.path) { void discardNativeFiles([event.path]); await setNativeDashboard(buildDashboardModel(data, connected, dashboardAssistant, controls, false)); } return; }
+    if (!target) { if (event.path) { void discardNativeFiles([event.path]); await setNativeDashboard(buildDashboardModel(scopedData, connected, dashboardAssistant, controls, false)); } return; }
     if (event.action === 'open') {
       setProject(target.id); setQuery(''); setFilter('all'); setOlderPages({});
       await setNativeMode('dashboard', { title: 'Dashboard', openDrawer: true }); return;
     }
     const chosen = dashboardAssistantFor(target, event.assistant ?? dashboardAssistant);
     if (!connected || !target.canStart || (target.assistants && !chosen)) {
-      if (event.path) { void discardNativeFiles([event.path]); await setNativeDashboard(buildDashboardModel(data, connected, dashboardAssistant, controls, false)); }
+      if (event.path) { void discardNativeFiles([event.path]); await setNativeDashboard(buildDashboardModel(scopedData, connected, dashboardAssistant, controls, false)); }
       setError('Connect to your Mac and make this project ready before starting a task.'); return;
     }
     if (event.action === 'new') { startDashboard(target.id, chosen?.id); return; }
@@ -469,7 +480,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
       }
     } finally { dashboardInFlight.current = false; setDashboardBusy(false); }
   })().catch(e => setError(`Dashboard: ${e instanceof Error ? e.message : String(e)}`)); };
-  const dashboardModel = nativeShell ? buildDashboardModel(data, connected, dashboardAssistant, controls, dashboardBusy, Date.now(), officeExpanded) : null;
+  const dashboardModel = nativeShell ? buildDashboardModel(scopedData, connected, dashboardAssistant, controls, dashboardBusy, Date.now(), officeExpanded) : null;
   if (dashboardModel) { dashboardModel.message = error; dashboardModel.summaries = nativeSummaries.summaries; dashboardModel.schedules = !!client.scheduleCommand; }
   const sendDashboard = useRef(createChangeSender(setNativeDashboard));
   useEffect(() => {
@@ -484,6 +495,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     threadAction: p => {
       if (p.action === 'model') { if (!pickerBusy && provider) void pickModel(); return; }
       if (p.action === 'permissions') { if (!pickerBusy && supportsPermissions(provider)) void pickPermission(); return; }
+      if (p.action === 'pin' || p.action === 'unpin') { void threadAction(p.action); return; }
       createThreadActionHandler({ stop: () => void threadAction('stop'), archive: () => void threadAction('archive'), delete: () => void threadAction('delete'), review: reviewDecision })(p);
     },
   };
@@ -491,6 +503,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
   threadEvents.current = createThreadEventHandlers({
     selectThread: id => { setSelected(id); setScreen('conversation'); },
     setQuery: value => { setQuery(value); setOlderPages({}); },
+    workspace, setWorkspace: chooseWorkspace,
     setFilters: (nextProject, status) => { setProject(nextProject); setFilter(status); setOlderPages({}); },
     newThread: destination => start(destination || undefined),
     showOlder: id => setOlderPages(pages => bumpOlderPage(pages, id)),
@@ -537,13 +550,13 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
   const connectionButton = <Button variant="ghost" size="icon" className="companion-conn-icon" data-state={connection.state} aria-label={connection.state === 'ok' ? 'Connected to your Mac' : connection.state === 'down' ? 'Mac disconnected' : 'Connecting to your Mac'} onClick={connectionTap}><Monitor size={18} /></Button>;
   const actionsDisabled = !connected || working || !task || !client.action;
   function reviewDecision() { document.querySelector('.thread-transcript fieldset')?.scrollIntoView({ block: 'center' }); }
-  async function threadAction(operation: 'stop' | 'archive' | 'delete') {
+  async function threadAction(operation: 'stop' | 'archive' | 'delete' | 'pin' | 'unpin') {
     if (actionsDisabled || !task || !client.action) return;
     setError(''); setWorking(true);
     try {
       await client.action({ thread: task.id, action: operation });
       setConfirmDelete(false);
-      if (operation !== 'stop') leaveThread();
+      if (operation === 'archive' || operation === 'delete') leaveThread();
       setRetry(value => value + 1);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setWorking(false); }
@@ -564,7 +577,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
       void appendNativeComposerText(saved, false); setError('');
     }
   }
-  function start(destination?: string) { setNewProject(pickNewProject(data.projects, destination || '', project, nativeShell ? savedLastProject() : '')); setScreen('new'); }
+  function start(destination?: string) { setNewProject(pickNewProject(scopedData.projects, destination || '', project, nativeShell ? savedLastProject() : '')); setScreen('new'); }
   const nativeProjectName = data.projects.find(p => p.id === (screen === 'new' ? newProject : task?.project))?.name || '';
   const sendMeta = useRef(createChangeSender(setNativeThreadMeta));
   useEffect(() => {
@@ -576,16 +589,18 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
       access: screen !== 'dashboard' && supportsPermissions(provider) ? permissionLabel(permission) : null,
       controlsDisabled: pickerBusy,
       runState: conversation ? nativeRunState(task) : '',
+      canPin: conversation && !actionsDisabled && typeof task?.pinned === "boolean",
+      pinned: !!task?.pinned,
       canStop: conversation && !actionsDisabled && busyThread,
       canReview: conversation && !!task?.pending,
       canArchive: conversation && !actionsDisabled && !busyThread,
       canDelete: conversation && !actionsDisabled,
     }).catch(e => setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`));
   });
-  const threads = selectThreads(data, project, query, filter, 'recent', read);
-  const groups = groupCompanionThreads(data, threads, { read, selected: screen === 'conversation' ? selected : '', filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
+  const threads = selectThreads(scopedData, project, query, filter, 'recent', read);
+  const groups = groupCompanionThreads(scopedData, threads, { read, selected: screen === 'conversation' ? selected : '', filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
   const sendThreads = useRef(createChangeSender(setNativeThreads));
-  const nativeModel = nativeShell ? buildThreadsModel({ data, read, selected: screen === 'conversation' ? selected : '', project, query, filter, olderPages }) : null;
+  const nativeModel = nativeShell ? buildThreadsModel({ data, workspace, canManageWorkspaces: !!client.saveWorkspaces && !!data.workspaces, read, selected: screen === 'conversation' ? selected : '', project, query, filter, olderPages }) : null;
   useEffect(() => {
     if (nativeModel) sendThreads.current(nativeModel).catch(e => setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`));
   });
@@ -593,7 +608,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     const status = threadListStatus(t, read);
     const label = ({unread:'Unread reply',done:'Completed',waiting:'Needs you',running:'Running',starting:'Starting',failed:'Failed',interrupted:'Interrupted'} as Record<string,string>)[status] || status;
     const sent = t.last_user_message_at ?? t.updated;
-    return <button className="companion-row" data-faded={companionThreadFaded(t, read)} key={t.id} onClick={() => { setSelected(t.id); setScreen('conversation'); }}><span className="companion-state" data-status={status}/><span><strong title={t.title}>{t.title}</strong><small>{label}{t.queued > 0 ? ` · ${t.queued} queued` : ''}</small></span><time dateTime={new Date(sent).toISOString()}>{new Date(sent).toLocaleDateString(undefined, {month:'short',day:'numeric'})}</time></button>;
+    return <button className="companion-row" data-faded={companionThreadFaded(t, read)} key={t.id} onClick={() => { setSelected(t.id); setScreen('conversation'); }}><span className="companion-state" data-status={status}/><span><strong title={t.title}>{t.pinned && <span aria-label="Pinned">📌 </span>}{t.title}</strong><small>{label}{t.queued > 0 ? ` · ${t.queued} queued` : ''}</small></span><time dateTime={new Date(sent).toISOString()}>{new Date(sent).toLocaleDateString(undefined, {month:'short',day:'numeric'})}</time></button>;
   }
   function older(group: typeof groups[number]) {
     return <div className="companion-history">
@@ -643,6 +658,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
           {connectionButton}
           <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Thread actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="companion-thread-menu">
+              <DropdownMenuItem disabled={actionsDisabled || typeof task?.pinned !== 'boolean'} onSelect={() => void threadAction(task?.pinned ? 'unpin' : 'pin')}>{task?.pinned ? 'Unpin' : 'Pin'} thread</DropdownMenuItem>
               <DropdownMenuItem disabled={actionsDisabled || !busyThread} onSelect={() => void threadAction('stop')}>Stop</DropdownMenuItem>
               <DropdownMenuItem disabled={!task?.pending} onSelect={reviewDecision}>Review decision…</DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -661,13 +677,25 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     </header>}
     {showBanner && !(nativeDashboardContent && screen === 'dashboard') && <ConnectionBanner status={connection} client={client} onTryAgain={tryAgain} onPairAgain={onPairAgain} onDismiss={() => { setBannerDismissed(true); setDetailsOpen(false); setRecovered(false); }} onAwake={tryAgain}/>}
     {client.scheduleCommand && (screen === 'threads' || (screen === 'dashboard' && !nativeDashboardContent)) && <Button variant="ghost" onClick={()=>setSchedulesOpen(true)}>Schedules</Button>}
+    <Dialog open={workspacesOpen} onOpenChange={setWorkspacesOpen}><DialogContent className="companion-workspaces"><DialogHeader><DialogTitle>Workspaces</DialogTitle><DialogDescription>Organize projects on your Mac and companions.</DialogDescription></DialogHeader>
+      <WorkspaceSettings projects={data.projects} workspaces={data.workspaces || []} disabled={!connected || working || !client.saveWorkspaces || !data.workspaces} onSave={async next => {
+        if (!client.saveWorkspaces || working || !connected) return;
+        setWorking(true); setError('');
+        try { await client.saveWorkspaces(next); setData(await client.snapshot(new AbortController().signal, snapshotThread)); return true; }
+        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        finally { setWorking(false); }
+      }}/>
+      {error && <p role="alert">{error}</p>}
+    </DialogContent></Dialog>
     <Dialog open={schedulesOpen} onOpenChange={setSchedulesOpen}><DialogContent className="companion-schedules"><DialogHeader><DialogTitle>Schedules</DialogTitle><DialogDescription>Recurring work runs on your Mac while it is awake. Connect to manage it.</DialogDescription></DialogHeader><ScheduleManager db={{projects:data.projects,accounts:data.projects[0]?.assistants||[],schedules:data.schedules}} native={connected} command={client.scheduleCommand} onRefresh={async()=>{setData(await client.snapshot(new AbortController().signal,snapshotThread));}} onSelect={id=>{setSelected(id);setScreen('conversation');setSchedulesOpen(false);}}/></DialogContent></Dialog>
     {error && !(nativeDashboardContent && screen === 'dashboard') && <p className="companion-error" role="alert">{error}</p>}
     {!detail && screen !== 'dashboard' && <>
       <Button variant="ghost" onClick={() => setScreen('dashboard')}>Dashboard</Button>
       <div className="companion-search"><Search size={17} /><Input aria-label="Search threads" placeholder="Search projects and threads" value={query} onChange={e => {setQuery(e.target.value);setOlderPages({});}} /></div>
       <div className="companion-filters">
-        <select aria-label="Project filter" value={project} onChange={e => {setProject(e.target.value);setOlderPages({});}}><option value="">All projects</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+        {!!client.saveWorkspaces && !!data.workspaces && <Button variant="ghost" onClick={() => setWorkspacesOpen(true)}>Manage workspaces</Button>}
+        {!!data.workspaces?.length && <select aria-label="Workspace filter" value={workspace} onChange={e => chooseWorkspace(e.target.value)}><option value="">All workspaces</option>{data.workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>}
+        <select aria-label="Project filter" value={project} onChange={e => {setProject(e.target.value);setOlderPages({});}}><option value="">All projects</option>{scopedData.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
         <select aria-label="Status filter" value={filter} onChange={e => {setFilter(e.target.value as ThreadFilter);setOlderPages({});}}><option value="all">All threads</option><option value="attention">Needs you</option><option value="running">{data.threadList?.ignoreUnread ? "Working" : "Running"}</option><option value="done">{data.threadList?.ignoreUnread ? "Done" : "Finished"}</option></select>
       </div>
     </>}
@@ -677,12 +705,12 @@ export function MobileApp({ client = disconnectedClient, onPairAgain }: { client
     } }}>
       {screen === 'dashboard' ? <CompanionDashboard onOfficeExpandedChange={setOfficeExpanded} nativeCards={nativeShell} nativeContent={nativeDashboardContent} read={read} globalAssistant={dashboardAssistant} onGlobalAssistantChange={setDashboardAssistant} client={client} assistantSelections={newAssistants} onAssistantChange={(project, assistant) => setNewAssistants(old => ({ ...old, [project]: assistant }))}
         controls={controls} onSelectionChange={(key, selection) => setControls(old => ({ ...old, [key]: { selection, permission: old[key]?.permission || 'bypass' } }))}
-        onDictation={(project, text, assistant) => { setDrafts(old => ({ ...old, new: [old.new, text].filter(Boolean).join('\n') })); startDashboard(project, assistant); void setNativeComposerText([drafts.new, text].filter(Boolean).join('\n')); }} snapshot={data} connected={connected} onOpen={id => { setSelected(id); setScreen('conversation'); }} onNew={startDashboard} /> : screen === 'threads' ? <>{groups.map(group => <section key={group.id} className="companion-project-group" aria-label={`${group.project?.name || 'Project'} threads`}>
+        onDictation={(project, text, assistant) => { setDrafts(old => ({ ...old, new: [old.new, text].filter(Boolean).join('\n') })); startDashboard(project, assistant); void setNativeComposerText([drafts.new, text].filter(Boolean).join('\n')); }} snapshot={scopedData} connected={connected} onOpen={id => { setSelected(id); setScreen('conversation'); }} onNew={startDashboard} /> : screen === 'threads' ? <>{groups.map(group => <section key={group.id} className="companion-project-group" aria-label={`${group.project?.name || 'Project'} threads`}>
         <div className="companion-project-heading"><button className="companion-project-toggle" aria-expanded={!collapsedProjects[group.id]} onClick={() => setCollapsedProjects(old => ({ ...old, [group.id]: !old[group.id] }))}><ChevronDown size={14} style={{transform: collapsedProjects[group.id] ? "rotate(-90deg)" : undefined}}/><FolderGit2 size={16} style={{color:group.project?.color}}/><h2 title={group.project?.name} style={{color:group.project?.color}}>{group.project?.name || 'Project'}</h2></button><Button variant="ghost" size="icon" aria-label={`New task in ${group.project?.name || 'project'}`} disabled={!connected || !group.project?.canStart} onClick={() => start(group.id)}><Plus size={16}/></Button></div>
         {!collapsedProjects[group.id] && <>{group.active.map(row)}{older(group)}</>}
-      </section>)}{!groups.length && <p className="companion-empty">{connected ? 'No threads match your filters.' : 'Check progress, reply, and start work from your iPhone. Your projects and conversations will appear when your Mac is connected.'}</p>}</> : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{data.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{p.name}</option>)}</select></label>{newProjectData?.assistants && <label>Coding assistant<select aria-label="Coding assistant" value={assistant} disabled={!connected || working} onChange={e => { setNewAssistants(old => ({ ...old, [newProject]: e.target.value })); delete requestIds.current.new; }}><option value="" disabled>Choose a coding assistant</option>{newProjectData.assistants.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}</select></label>}{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadTranscript readGeneratedFile={task && client.generatedFile ? (href, offset) => client.generatedFile!(task.id, href, offset) : undefined} key={task?.id} density="compact" messages={task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript>}
+      </section>)}{!groups.length && <p className="companion-empty">{connected ? 'No threads match your filters.' : 'Check progress, reply, and start work from your iPhone. Your projects and conversations will appear when your Mac is connected.'}</p>}</> : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{scopedData.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{p.name}</option>)}</select></label>{newProjectData?.assistants && <label>Coding assistant<select aria-label="Coding assistant" value={assistant} disabled={!connected || working} onChange={e => { setNewAssistants(old => ({ ...old, [newProject]: e.target.value })); delete requestIds.current.new; }}><option value="" disabled>Choose a coding assistant</option>{newProjectData.assistants.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}</select></label>}{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadTranscript readGeneratedFile={task && client.generatedFile ? (href, offset) => client.generatedFile!(task.id, href, offset) : undefined} key={task?.id} density="compact" messages={task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript>}
       {screen === 'conversation' && <ThreadActivity thread={task} connection={connection.state} />}
-      {screen === 'conversation' && !!task?.queue?.length && <MessageQueue key={task.id} messages={task.queue} paused={task.queuePaused} error={task.queueError} disabled={!connected || working || !client.queue} onAction={(action, message) => void queueAction(action, message)} />}
+      {screen === 'conversation' && !!task?.queue?.length && <MessageQueue key={task.id} messages={task.queue} active={busyThread} paused={task.queuePaused} error={task.queueError} disabled={!connected || working || !client.queue} onAction={(action, message) => void queueAction(action, message)} />}
       {screen === 'new' && <ThreadTranscript density="compact" messages={[]} pending={outgoingPreview(outgoing.filter(m => !m.thread))} />}
     </ScrollArea>}
     {screen === 'conversation' && <button type="button" className="companion-latest" data-visible={showLatest} aria-label="Jump to latest message" tabIndex={showLatest ? 0 : -1} aria-hidden={!showLatest} onClick={() => viewport.current?.scrollTo({ top: viewport.current.scrollHeight, behavior: 'smooth' })}><ArrowDown size={18} /></button>}

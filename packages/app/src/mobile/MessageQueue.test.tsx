@@ -37,3 +37,21 @@ it('hides an empty queue', () => {
   render(<MessageQueue messages={[]} disabled={false} onAction={vi.fn()}/>);
   expect(screen.queryByRole('region')).toBeNull();
 });
+
+it('lets an active conversation steer a queued message', () => {
+  const onAction = vi.fn();
+  render(<MessageQueue messages={messages} active disabled={false} onAction={onAction}/>);
+  fireEvent.click(screen.getByRole('button', { name: /Up next/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Steer queued message 1' }));
+  expect(onAction).toHaveBeenCalledWith('steer', 'one');
+});
+
+it.each([{ active: false, disabled: false }, { active: true, disabled: true }])('disables steering without an active connection and turn: %j', props => {
+  const onAction = vi.fn();
+  render(<MessageQueue messages={messages} {...props} onAction={onAction}/>);
+  fireEvent.click(screen.getByRole('button', { name: /Up next/ }));
+  const steer = screen.getByRole('button', { name: 'Steer queued message 1' }) as HTMLButtonElement;
+  expect(steer.disabled).toBe(true);
+  fireEvent.click(steer);
+  expect(onAction).not.toHaveBeenCalled();
+});

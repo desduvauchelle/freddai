@@ -5,6 +5,7 @@ import UIKit
 struct ThreadRowModel: Decodable, Equatable {
   let id: String
   let title: String
+  var pinned: Bool?
   let status: String
   let faded: Bool?
   let unread: Bool
@@ -27,6 +28,8 @@ struct OptionModel: Decodable, Equatable {
 }
 
 struct ThreadFiltersModel: Decodable, Equatable {
+  var workspace: String?
+
   var project: String = ""
   var status: String = "all"
   var query: String = ""
@@ -36,6 +39,7 @@ struct ThreadsModel: Decodable {
   let groups: [ThreadGroupModel]
   var selectedId: String = ""
   var filters: ThreadFiltersModel = ThreadFiltersModel()
+  var workspaceOptions: [OptionModel]?
   var projectOptions: [OptionModel] = []
   var statusOptions: [OptionModel] = []
 }
@@ -54,7 +58,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   var onDashboard: (() -> Void)?
   var onSelectThread: ((String) -> Void)?
   var onSearch: ((String) -> Void)?
-  var onSetFilter: ((String, String) -> Void)?
+  var onSetFilter: ((String, String, String?) -> Void)?
   var onNewThread: ((String) -> Void)?
   var onShowOlder: ((String) -> Void)?
 
@@ -208,19 +212,26 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private func rebuildFilterMenu(_ model: ThreadsModel) {
     let projects = model.projectOptions.map { option in
       UIAction(title: option.label, state: option.id == model.filters.project ? .on : .off) { [weak self] _ in
-        self?.onSetFilter?(option.id, model.filters.status)
+        self?.onSetFilter?(option.id, model.filters.status, nil)
       }
     }
     let statuses = model.statusOptions.map { option in
       UIAction(title: option.label, state: option.id == model.filters.status ? .on : .off) { [weak self] _ in
-        self?.onSetFilter?(model.filters.project, option.id)
+        self?.onSetFilter?(model.filters.project, option.id, nil)
       }
     }
-    filterButton.menu = UIMenu(children: [
+    let workspaces = (model.workspaceOptions ?? []).map { option in
+      UIAction(title: option.label, state: option.id == (model.filters.workspace ?? "") ? .on : .off) { [weak self] _ in
+        self?.onSetFilter?("", "all", option.id)
+      }
+    }
+    var menus: [UIMenuElement] = []
+    if workspaces.count > 1 { menus.append(UIMenu(title: "Workspace", options: .displayInline, children: workspaces)) }
+    filterButton.menu = UIMenu(children: menus + [
       UIMenu(title: "Project", options: .displayInline, children: projects),
       UIMenu(title: "Status", options: .displayInline, children: statuses),
     ])
-    let active = !model.filters.project.isEmpty || model.filters.status != "all"
+    let active = !(model.filters.workspace ?? "").isEmpty || !model.filters.project.isEmpty || model.filters.status != "all"
     filterButton.setImage(UIImage(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"), for: .normal)
     filterButton.accessibilityValue = active ? "Filters on" : nil
   }
@@ -532,12 +543,12 @@ final class ThreadCell: UICollectionViewListCell {
 
   func configure(_ row: ThreadRowModel) {
     contentView.alpha = row.faded == true ? 0.65 : 1
-    titleLabel.text = row.title
+    titleLabel.text = (row.pinned == true ? "📌 " : "") + row.title
     let body = UIFont.preferredFont(forTextStyle: .body)
     let font = row.unread ? body.bold() : body
     titleLabel.font = font
     let spoken = indicator.configure(status: row.status, unread: row.unread)
-    accessibilityLabel = row.title
+    accessibilityLabel = (row.pinned == true ? "Pinned, " : "") + row.title
     accessibilityValue = spoken.isEmpty ? nil : spoken
     accessibilityTraits = .button
   }

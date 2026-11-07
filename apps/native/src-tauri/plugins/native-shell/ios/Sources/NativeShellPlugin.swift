@@ -23,7 +23,7 @@ struct SetThreadMetaArgs: Decodable {
 struct ThreadActionPayload: Encodable { let action: String }
 
 struct SearchPayload: Encodable { let query: String }
-struct SetFilterPayload: Encodable { let project: String; let status: String }
+struct SetFilterPayload: Encodable { let project: String; let status: String; let workspace: String? }
 struct ProjectPayload: Encodable { let project: String }
 struct ThreadIdPayload: Encodable { let id: String }
 
@@ -148,8 +148,9 @@ class NativeShellPlugin: Plugin {
     drawer.onSearch = { [weak self] query in
       try? self?.trigger("search", data: SearchPayload(query: query))
     }
-    drawer.onSetFilter = { [weak self] project, status in
-      try? self?.trigger("setFilter", data: SetFilterPayload(project: project, status: status))
+    drawer.onSetFilter = { [weak self, weak container] project, status, workspace in
+      if workspace == "__manage_workspaces" { container?.dismissAfterSelection() }
+      try? self?.trigger("setFilter", data: SetFilterPayload(project: project, status: status, workspace: workspace))
     }
 
     root.addChild(container)

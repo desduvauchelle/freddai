@@ -1,7 +1,7 @@
 import { getDictionary } from "@/i18n";
 import { localizedPath } from "@/lib/i18n-utils";
 import { latestDownloads } from "@/lib/download";
-import { ThemePicker } from "@/components/ThemePicker";
+import { SiteFooter } from "@/components/SiteFooter";
 
 export const revalidate = 300;
 
@@ -77,6 +77,6 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
       <section className="shell faq-section"><h2>{d.faqTitle}</h2><div>{[[d.faqOne,d.faqOneBody],[d.faqTwo,d.faqTwoBody],[d.faqThree,d.faqThreeBody],[d.faqFour,d.faqFourBody]].map(([question,answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}</div></section>
       <section className="shell final-cta"><img src="/brand/dormouse.svg" alt="" width="100" height="100" loading="lazy"/><h2>{d.startTitle}</h2><p>{d.startBody}</p><a className="btn btn-primary" href="#download">{d.cta} <span aria-hidden="true">↓</span></a></section>
     </main>
-    <footer className="shell flex flex-wrap items-center justify-between gap-5 py-8"><p className="text-sm opacity-70">Freddai · {d.footer}</p><div className="footer-controls"><a href="https://github.com/desduvauchelle/freddai" className="text-link">{d.source} ↗</a><ThemePicker dict={d} /></div></footer>
+    <SiteFooter locale={locale} dict={d} />
   </>;
 }

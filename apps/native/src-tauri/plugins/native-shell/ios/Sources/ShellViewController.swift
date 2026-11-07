@@ -19,6 +19,8 @@ struct ThreadMeta: Decodable {
   var controlsDisabled: Bool?
   var project: String = ""
   var runState: String = ""   // "running" | "waiting" | "failed" | ""
+  var canPin: Bool?
+  var pinned: Bool?
   var canStop: Bool = false
   var canReview: Bool = false
   var canArchive: Bool = false
@@ -244,6 +246,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     let send: (String) -> UIActionHandler = { action in { [weak self] _ in self?.onThreadAction?(action) } }
     if meta.canStop { items.append(UIAction(title: "Stop", image: UIImage(systemName: "stop.circle"), handler: send("stop"))) }
     if meta.canReview { items.append(UIAction(title: "Review decision…", image: UIImage(systemName: "checkmark.shield"), handler: send("review"))) }
+    if meta.canPin == true {
+      items.append(UIAction(title: meta.pinned == true ? "Unpin thread" : "Pin thread", image: UIImage(systemName: meta.pinned == true ? "pin.slash" : "pin"), handler: send(meta.pinned == true ? "unpin" : "pin")))
+    }
     items.append(UIAction(title: "Archive", image: UIImage(systemName: "archivebox"), attributes: meta.canArchive ? [] : [.disabled], handler: send("archive")))
     let delete = UIAction(title: "Delete…", image: UIImage(systemName: "trash"), attributes: meta.canDelete ? [.destructive] : [.destructive, .disabled]) { [weak self] _ in self?.confirmDelete() }
     items.append(UIMenu(options: .displayInline, children: [delete]))

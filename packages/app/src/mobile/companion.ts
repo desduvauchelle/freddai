@@ -2,15 +2,16 @@ import { statusReadCursors } from "../desktop/status-read-cursors";
 import { bucketThreads, compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, threadListStatus } from '../desktop/types.ts';
 import type { ConversationUsage } from '../desktop/conversation-usage';
 import type { Model } from '../desktop/agent-selection';
-import type { BackgroundTask, Message, Pending, Attachment } from '../desktop/types';
+import type { BackgroundTask, Message, Pending, Attachment, Workspace } from '../desktop/types';
 
 // Intentionally excludes account credentials, filesystem paths and settings.
 export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[] };
-export type CompanionThread = { id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
-export type CompanionSnapshot = { schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
+export type CompanionThread = { pinned?: boolean; id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
+export type CompanionSnapshot = { workspaces?: Workspace[]; schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
 export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
 export type ComposerTarget = { thread?: string; project?: string; assistant?: string };
 export type CompanionClient = {
+  saveWorkspaces?(workspaces: Workspace[]): Promise<void>;
   generatedFile?(thread: string, href: string, offset: number): Promise<import("../conversation/GeneratedFile").FileChunk>;
   scheduleCommand?: import("../desktop/ScheduleManager").ScheduleCommand;
   summaries?: import("../desktop/DaySummaries").DaySummariesClient;
@@ -23,8 +24,8 @@ export type CompanionClient = {
   voice?(): Promise<{ enabled: boolean; ready: boolean }>;
   /** Uploads a dictation recording the native composer saved to the tmp dir; the Mac transcribes it and the file is deleted. */
   transcribe?(file: { path: string }): Promise<{ text: string; durationMs: number; model: string }>;
-  queue?(input: { thread: string; action: 'pause' | 'resume' | 'delete' | 'clear'; message?: string }): Promise<void>;
-  action?(input: { thread: string; action: 'stop' | 'archive' | 'delete' }): Promise<void>;
+  queue?(input: { thread: string; action: 'pause' | 'resume' | 'delete' | 'clear' | 'steer'; message?: string }): Promise<void>;
+  action?(input: { thread: string; action: 'stop' | 'archive' | 'delete' | 'pin' | 'unpin' }): Promise<void>;
   markRead?(input: { thread: string; at: number }): Promise<void>;
   mergeRead?(cursors: Record<string, number>): Promise<void>;
   /** Sends Wake-on-LAN packets for the Mac on the local network; resolves with the datagram count. Rejects with a user-readable reason. */
@@ -36,6 +37,14 @@ export type CompanionClient = {
   respond(input: { thread: string; requestId: string; allow: boolean; answers: Record<string, unknown> }): Promise<void>;
   reply(input: { thread: string; prompt: string; requestId: string; options?: ComposerOptions }): Promise<void>;
 };
+/** Scope navigation only; the original snapshot still owns open conversations. */
+export function scopeCompanion(snapshot: CompanionSnapshot, workspace: string): CompanionSnapshot {
+  const selected = snapshot.workspaces?.find(w => w.id === workspace);
+  if (!selected) return snapshot;
+  const projects = snapshot.projects.filter(p => selected.projects.includes(p.id));
+  const ids = new Set(projects.map(p => p.id));
+  return { ...snapshot, projects, threads: snapshot.threads.filter(t => ids.has(t.project)) };
+}
 export type ThreadFilter = 'all' | 'attention' | 'running' | 'done';
 export type ThreadSort = 'recent' | 'oldest' | 'title';
 /** Apply the Mac's presentation preference without changing shared read history. */
@@ -66,7 +75,7 @@ export function groupCompanionThreads(snapshot: CompanionSnapshot, threads: Comp
   });
   const defaults = [...new Set([
     ...threads.map(t => t.project),
-    ...(options.includeEmpty ? snapshot.projects.filter(p => (!options.project || p.id === options.project) && !snapshot.threads.some(t => t.project === p.id)).map(p => p.id) : []),
+    ...(options.includeEmpty ? snapshot.projects.filter(p => (!options.project || p.id === options.project) ).map(p => p.id) : []),
   ])];
   const order = grouped ? [...new Set([...(settings?.projectOrder ?? []), ...defaults])].filter(id => defaults.includes(id)) : [''];
   return order.map(id => {

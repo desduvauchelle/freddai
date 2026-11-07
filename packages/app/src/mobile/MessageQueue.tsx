@@ -3,10 +3,10 @@ import { ChevronDown, ListOrdered, Paperclip, Pause, Play, X } from 'lucide-reac
 import { Button } from '@freddai/ui/components/button';
 import type { CompanionThread } from './companion';
 
-type QueueAction = 'pause' | 'resume' | 'delete' | 'clear';
-export function MessageQueue({ messages, paused, error, disabled, onAction }: {
+type QueueAction = 'pause' | 'resume' | 'delete' | 'clear' | 'steer';
+export function MessageQueue({ messages, paused, error, active = false, disabled, onAction }: {
   messages: NonNullable<CompanionThread['queue']>; paused?: boolean; error?: string | null;
-  disabled: boolean; onAction: (action: QueueAction, message?: string) => void;
+  active?: boolean; disabled: boolean; onAction: (action: QueueAction, message?: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
@@ -28,6 +28,7 @@ export function MessageQueue({ messages, paused, error, disabled, onAction }: {
       <ol className="companion-queue-list">{messages.map((message, index) => <li key={message.id}>
         <span className="companion-queue-number" aria-hidden="true">{index + 1}</span>
         <div><p>{message.prompt || 'Attachment'}</p>{message.attachments > 0 && <small><Paperclip size={12} aria-hidden="true"/>{message.attachments} {message.attachments === 1 ? 'file' : 'files'}</small>}</div>
+        <Button type="button" variant="ghost" className="companion-queue-steer" aria-label={`Steer queued message ${index + 1}`} title={active ? "Send now to the active turn" : "Steering requires an active turn"} disabled={disabled || !active} onClick={() => onAction('steer', message.id)}>Steer</Button>
         <Button type="button" variant="ghost" size="icon" aria-label={`Remove queued message ${index + 1}`} disabled={disabled} onClick={() => onAction('delete', message.id)}><X size={16}/></Button>
       </li>)}</ol>
       <Button type="button" variant="ghost" className="companion-queue-clear" disabled={disabled} onClick={() => onAction('clear')}>Clear queue</Button>

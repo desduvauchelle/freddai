@@ -251,6 +251,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             sidebar.addView(button("Dashboard") { event("dashboard"); closeDrawer() })
             sidebar.addView(search)
             val filters = LinearLayout(host)
+            filters.addView(button("Workspace") { filter("workspaceOptions", "workspace") })
             filters.addView(button("Project") { filter("projectOptions", "project") })
             filters.addView(button("Status") { filter("statusOptions", "status") })
             sidebar.addView(filters)
@@ -379,7 +380,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 val spoken = when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (thread.optBoolean("unread")) "Unread reply" else "" }
                 val row = LinearLayout(host).apply {
                     gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); isClickable = true; isFocusable = true
-                    contentDescription = listOf(thread.getString("title"), spoken).filter { it.isNotEmpty() }.joinToString(", ")
+                    contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), spoken).filter { it.isNotEmpty() }.joinToString(", ")
                     alpha = if (thread.optBoolean("faded")) 0.65f else 1f
                     isSelected = id == model.optString("selectedId")
                     val highlight = android.util.TypedValue(); host.theme.resolveAttribute(if (isSelected) android.R.attr.colorControlHighlight else android.R.attr.selectableItemBackground, highlight, true)
@@ -401,7 +402,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 })
                 row.addView(dot, LinearLayout.LayoutParams(dp(20), dp(48)))
                 row.addView(TextView(host).apply {
-                    text = thread.getString("title"); textSize = 16f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                    text = (if (thread.optBoolean("pinned")) "📌 " else "") + thread.getString("title"); textSize = 16f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
                     if (thread.optBoolean("unread")) setTypeface(typeface, android.graphics.Typeface.BOLD)
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -412,14 +413,17 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     }
     private fun filter(optionsKey: String, field: String) {
         val options = model.optJSONArray(optionsKey) ?: return
-        AlertDialog.Builder(host).setTitle(if (field == "project") "Project" else "Status")
+        AlertDialog.Builder(host).setTitle(if (field == "workspace") "Workspace" else if (field == "project") "Project" else "Status")
             .setItems(Array(options.length()) { options.getJSONObject(it).getString("label") }) { _, index ->
                 val current = JSONObject((model.optJSONObject("filters") ?: JSONObject()).toString())
+                if (field != "workspace") current.remove("workspace")
                 current.put(field, options.getJSONObject(index).getString("id")); event("setFilter", current)
+                if (current.optString("workspace") == "__manage_workspaces") closeDrawer()
             }.show()
     }
     private fun showActions() {
         val options = mutableListOf("New thread" to "new")
+        if (meta.optBoolean("canPin")) options.add(if (meta.optBoolean("pinned")) "Unpin thread" to "unpin" else "Pin thread" to "pin")
         listOf("canStop" to ("Stop" to "stop"), "canReview" to ("Review" to "review"), "canArchive" to ("Archive" to "archive"), "canDelete" to ("Delete" to "delete")).forEach { (flag, option) -> if (meta.optBoolean(flag)) options.add(option) }
         AlertDialog.Builder(host).setTitle(meta.optString("project", "Thread"))
             .setItems(options.map { it.first }.toTypedArray()) { _, index ->

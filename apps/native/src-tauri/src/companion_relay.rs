@@ -4,6 +4,18 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::{collections::HashMap,fs,io::Write,os::unix::fs::OpenOptionsExt,path::{Path,PathBuf},sync::{Arc,Mutex},time::Duration};
 fn mailbox(secret:&str)->String {hex::encode(Sha256::digest(secret.as_bytes()))}
+fn response_envelope(key:&str,context:&str,value:&Value,compressed:bool)->Result<Envelope,String> {
+    crypto::seal_response(key,context,value,compressed).or_else(|_| {
+        // Deliver a small authenticated error instead of retrying an impossible upload
+        // until the phone times out. A mutation may already have executed.
+        crypto::seal(key,context,&json!({"error":"This response is too large for remote access. Update Freddai on both devices, or open this conversation on your Mac. Check the conversation before retrying any action."}))
+    })
+}
+fn accepts_compression(device:&pairing::Device,id:&str,request:&Value)->bool {
+    serde_json::from_value::<Envelope>(request["envelope"].clone()).ok()
+        .and_then(|e|crypto::open(&device.key,&format!("request:{}:{id}",device.id),&e).ok())
+        .is_some_and(|v|v["acceptEncoding"]==crypto::RESPONSE_ENCODING)
+}
 pub fn start(root:PathBuf,gate:Arc<Mutex<()>>) {
     std::thread::spawn(move || {
         let client=match reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build(){Ok(c)=>c,Err(_)=>return};
@@ -22,7 +34,7 @@ pub fn start(root:PathBuf,gate:Arc<Mutex<()>>) {
                         let response=if let Some((_,value))=cache.get(&cache_key) {value.clone()} else {
                             let result=process(&root,&gate,&device,id,&request);
                             let plain=match result {Ok(v)=>json!({"result":v,"relay":url}),Err(e)=>json!({"error":e})};
-                            let Ok(envelope)=crypto::seal(&device.key,&format!("response:{}:{id}",device.id),&plain) else {continue};
+                            let Ok(envelope)=response_envelope(&device.key,&format!("response:{}:{id}",device.id),&plain,accepts_compression(&device,id,&request)) else {continue};
                             let value=json!({"id":id,"envelope":envelope});
                             cache.insert(cache_key,(crypto::now()+120,value.clone()));value
                         };
@@ -69,6 +81,54 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
     fn request(device:&pairing::Device,id:&str,route:&str,expires:u64)->Value {
         json!({"envelope":crypto::seal(&device.key,&format!("request:{}:{id}",device.id),&json!({"id":id,"route":route,"expires":expires,"body":{}})).unwrap()})
     }
+    #[test] fn large_open_conversation_crosses_relay_without_losing_history() {
+        let (root,d)=fixture();
+        let socket=UnixListener::bind(root.join("host.sock")).unwrap();
+        let mut db=freddai_core::runtime::Database::default();
+        let messages=json!([{"id":"m","role":"assistant","text":"Synthetic tool output and conversation history. ".repeat(650_000)}]);
+        db.sessions.push(serde_json::from_value(json!({"id":"large","project":"p","account":"none","title":"Large thread","status":"done","updated":1,"provider_id":null,"messages":messages})).unwrap());
+        let messages=json!(db.sessions[0].messages);
+        let host=std::thread::spawn(move || {
+            let (mut connection,_)=socket.accept().unwrap();let mut line=String::new();
+            BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot");
+            writeln!(connection,"{}",json!({"result":db})).unwrap();
+        });
+        let id=crypto::random();let context=format!("response:{}:{id}",d.id);
+        let plain=json!({"id":id,"route":"/v1/snapshot","expires":crypto::now()+90,"acceptEncoding":"deflate-v1","body":{"scoped":true,"thread":"large"}});
+        let request=json!({"envelope":crypto::seal(&d.key,&format!("request:{}:{id}",d.id),&plain).unwrap()});
+        let response=json!({"result":process(&root,&Mutex::new(()),&d,&id,&request).unwrap()});
+        assert!(accepts_compression(&d,&id,&request));
+        let envelope=response_envelope(&d.key,&context,&response,accepts_compression(&d,&id,&request)).unwrap();
+        let wire=serde_json::to_vec(&json!({"id":id,"envelope":envelope})).unwrap();
+        host.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert!(wire.len()<16*1024*1024,"Relay rejects the {} byte response with HTTP 413",wire.len());
+        assert!(crypto::open(&d.key,&context,&envelope).unwrap()["result"]["threads"][0]["messages"]==messages,"Complete normalized conversation must survive transport");
+        // Explicit opt-in: all identifiers/keys and payloads above are synthetic.
+        // Exercise the deployed mailbox, including its real HTTP body-size limits.
+        if let Ok(origin)=std::env::var("FREDDAI_SYNTHETIC_RELAY_URL") {
+            let origin=crypto::relay_url(&origin).unwrap();
+            let client=reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().unwrap();
+            let base=format!("{origin}/v1/mailboxes/{}",mailbox(&d.mailbox));
+            client.post(format!("{base}/requests/{id}")).bearer_auth(&d.mailbox).json(&json!({"id":id,"envelope":request["envelope"]})).send().unwrap().error_for_status().unwrap();
+            client.post(format!("{base}/responses/{id}")).bearer_auth(&d.mailbox).json(&json!({"id":id,"envelope":envelope})).send().unwrap().error_for_status().unwrap();
+            let received:Value=client.get(format!("{base}/responses/{id}")).bearer_auth(&d.mailbox).send().unwrap().error_for_status().unwrap().json().unwrap();
+            assert_eq!(received["id"],id);
+            assert!(crypto::open(&d.key,&context,&serde_json::from_value(received["envelope"].clone()).unwrap()).unwrap()==response,"Public relay must preserve the entire response");
+            eprintln!("Public encrypted relay round trip: {} plaintext bytes, {} wire bytes; complete history preserved",response.to_string().len(),wire.len());
+        }
+    }
+    #[test] fn oversized_legacy_result_delivers_an_error_and_capability_cannot_be_forged() {
+        let (root,d)=fixture();let id=crypto::random();let context=format!("response:{}:{id}",d.id);
+        let mut request=request(&d,&id,"/v1/snapshot",crypto::now()+90);
+        request["acceptEncoding"]=json!(crypto::RESPONSE_ENCODING);
+        assert!(!accepts_compression(&d,&id,&request),"capability must be inside the authenticated request");
+        let value=json!({"result":"x".repeat(9*1024*1024)});
+        let envelope=response_envelope(&d.key,&context,&value,false).unwrap();
+        assert!(envelope.ciphertext.len()<2048);
+        assert!(crypto::open(&d.key,&context,&envelope).unwrap()["error"].as_str().unwrap().contains("Check the conversation"));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn native_transport_projects_a_synthetic_host_snapshot() {
         let (root,d)=fixture();let socket=UnixListener::bind(root.join("host.sock")).unwrap();
         let host=std::thread::spawn(move || {
@@ -78,7 +138,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             writeln!(connection,"{}",json!({"result":freddai_core::runtime::Database::default()})).unwrap();
         });
         let id=crypto::random();let v=process(&root,&Mutex::new(()),&d,&id,&request(&d,&id,"/v1/snapshot",crypto::now()+90)).unwrap();
-        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
     }
     #[test] fn scoped_refresh_crosses_host_dispatch_and_encrypted_relay_without_all_histories() {
         let (root,d)=fixture();

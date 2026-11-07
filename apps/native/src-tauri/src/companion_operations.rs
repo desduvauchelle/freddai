@@ -1,6 +1,6 @@
 /// Mobile composer commands exposed through the paired Mac transport.
 pub(crate) fn validate(operation: &str) -> Result<(), String> {
-    if !["generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action"].contains(&operation) {
+    if !["save_workspaces", "generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action"].contains(&operation) {
         return Err("Unknown composer operation".into());
     }
     Ok(())

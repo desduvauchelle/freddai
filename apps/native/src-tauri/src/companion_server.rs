@@ -30,13 +30,13 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         if !include_history {
             // Keep the searchable title index and attention/read badges, not conversation payloads.
             // An empty pending object is a presence marker; messagesLoaded=false prevents acting on it.
-            return json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,
+            return json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,"pinned":s.pinned,
                 "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,
                 "messages":[],"messagesLoaded":false,"canReply":false,"error":null,
                 "pending":s.pending.as_ref().map(|_|json!({})),
                 "queued":queue.map(|q|q.messages.len()).unwrap_or(0)});
         }
-        json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,
+        json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,"pinned":s.pinned,
             "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
@@ -47,10 +47,13 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
             "queuePaused":queue.is_some_and(|q|q.paused),
             "queueError":queue.and_then(|q|q.error.clone())})
     }).collect();
-    json!({"projects":projects,"threads":threads,"schedules":db.schedules})
+    json!({"projects":projects,"threads":threads,"schedules":db.schedules,"workspaces":db.preferences.workspaces})
 }
-fn snapshot(root: &Path) -> Result<Database, String> {
-    serde_json::from_value(host::call(root,"snapshot",json!({}))?).map_err(|e|e.to_string())
+fn snapshot(root: &Path) -> Result<(Database, bool, bool), String> {
+    let value = host::call(root,"snapshot",json!({}))?;
+    let workspaces = value["preferences"]["workspaces"].is_array();
+    let pins = value["sessions"].as_array().is_some_and(|sessions| sessions.iter().all(|s| s["pinned"].is_boolean()));
+    Ok((serde_json::from_value(value).map_err(|e|e.to_string())?, workspaces, pins))
 }
 fn text<'a>(p: &'a Value, key: &str) -> Result<&'a str, String> {
     p[key].as_str().filter(|s| !s.trim().is_empty()).ok_or_else(||format!("Missing {key}"))
@@ -88,6 +91,15 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     let input = &p["input"];
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
+        "save_workspaces" => {
+            let workspaces: Vec<freddai_core::runtime::Workspace> = serde_json::from_value(input["workspaces"].clone()).map_err(|_|"Invalid workspaces")?;
+            if workspaces.len() > 200 || workspaces.iter().any(|w| w.id.trim().is_empty() || w.id.len() > 200 || w.name.trim().is_empty() || w.name.len() > 200 || w.color.len() != 7 || !w.color.starts_with('#') || !w.color[1..].bytes().all(|b| b.is_ascii_hexdigit()) || w.projects.len() > db.projects.len() || w.projects.iter().any(|id| !db.projects.iter().any(|p| &p.id == id))) {
+                return Err("Invalid workspace name, color or projects".into());
+            }
+            let mut ids = std::collections::HashSet::new();
+            if workspaces.iter().any(|w| !ids.insert(&w.id)) { return Err("Duplicate workspace id".into()); }
+            host::call(root,"save_preferences",json!({"patch":{"workspaces":workspaces}}))
+        }
         "generated_file" => freddai_core::generated_files::chunk(db, text(input,"thread")?, text(input,"href")?, input["offset"].as_u64().unwrap_or(0)),
         "models" => {
             let account = if let Some(s)=session {s.account.clone()} else {
@@ -99,7 +111,7 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
         "queue" => {
             let session=session.ok_or("Thread unavailable")?;
             let action=text(input,"action")?;
-            if !["pause","resume","delete","clear"].contains(&action) {return Err("Unknown queue action".into());}
+            if !["pause","resume","delete","clear","steer"].contains(&action) {return Err("Unknown queue action".into());}
             host::call(root,"queue_action",json!({"session":session.id,"action":action,"message":input["message"]}))
         },
         _ => Err("Unknown composer operation".into())
@@ -208,10 +220,17 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
     // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
     if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
-    let db = snapshot(root)?;
-    if route == "/v1/composer" { return composer(root, &db, &p); }
+    let (db, supports_workspaces, supports_pins) = snapshot(root)?;
+    if route == "/v1/composer" {
+        if p["operation"] == "save_workspaces" && !supports_workspaces { return Err("The background host needs an update before editing workspaces. Let active work finish and reopen Freddai on your Mac.".into()); }
+        return composer(root, &db, &p);
+    }
     if route == "/v1/snapshot" {
         let mut result = project_snapshot_selection(&db,p["thread"].as_str(),p["scoped"].as_bool().unwrap_or(false));
+        if !supports_workspaces { result.as_object_mut().unwrap().remove("workspaces"); }
+        if !supports_pins {
+            for thread in result["threads"].as_array_mut().unwrap() { thread.as_object_mut().unwrap().remove("pinned"); }
+        }
         if let Ok(bytes) = fs::read(root.join("companion/thread-list.json")) {
             if let Ok(settings) = serde_json::from_slice::<ThreadListSettings>(&bytes) {
                 result["threadList"] = json!(settings);
@@ -223,7 +242,8 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
         let thread=text(&p,"thread")?;
         let session=db.sessions.iter().find(|s|s.id==thread && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")?;
         let action=text(&p,"action")?;
-        if !["stop","archive","delete"].contains(&action) {return Err("Unknown thread action".into());}
+        if !["stop","archive","delete","pin","unpin"].contains(&action) {return Err("Unknown thread action".into());}
+        if matches!(action, "pin" | "unpin") && !supports_pins { return Err("The background host needs an update before pinning threads. Let active work finish and reopen Freddai on your Mac.".into()); }
         let busy=matches!(session.status.as_str(),"starting"|"running"|"waiting");
         if action=="stop" && !busy {return Err("Thread is not running".into());}
         if action=="archive" && busy {return Err("Stop this thread before archiving it".into());}
@@ -481,7 +501,7 @@ mod tests {
     #[test] fn projection_excludes_configuration_and_archived_work() {
         let db=Database::default();
         let v=project_snapshot(&db);
-        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[]}));
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[]}));
         assert!(v.get("accounts").is_none()); assert!(v.get("preferences").is_none());
         let session=json!({"id":"s1","project":"p1","account":"missing","title":"Synthetic thread","status":"waiting","updated":1,"last_user_message_at":7,"provider_id":null,"messages":[],"pending":{"id":7,"method":"item/tool/requestUserInput"},"error":null});
         let mut archived=session.clone(); archived["id"]=json!("archived"); archived["archived"]=json!(true);
@@ -632,5 +652,99 @@ mod thread_list_settings_tests {
         let settings: ThreadListSettings = serde_json::from_value(enabled).unwrap();
         assert!(settings.ignore_unread);
         assert_eq!(serde_json::to_value(settings).unwrap()["ignoreUnread"], true);
+    }
+}
+
+#[cfg(test)]
+mod workspace_pin_transport_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+
+    fn database() -> Database {
+        serde_json::from_value(json!({"accounts":[],"projects":[{"id":"p","name":"Project","path":"/not-a-real-folder","color":"#112233","policy":"inherit"}],
+            "preferences":{"prefer_last":false,"fallback":null,"last":null,"workspaces":[{"id":"w","name":"Work","color":"#112233","projects":["p"]}]},
+            "sessions":[{"id":"t","project":"p","account":"","title":"Pinned task","status":"running","updated":1,"pinned":true,"messages":[]}]})).unwrap()
+    }
+    #[test]
+    fn full_and_scoped_projection_share_workspaces_and_pins_without_preferences() {
+        let db = database();
+        for scoped in [false, true] {
+            let value = project_snapshot_selection(&db, None, scoped);
+            assert_eq!(value["workspaces"], json!(db.preferences.workspaces));
+            assert_eq!(value["threads"][0]["pinned"], true);
+            assert!(value.get("preferences").is_none());
+            assert!(value.get("accounts").is_none());
+        }
+    }
+    #[test]
+    fn rejects_invalid_remote_membership_and_duplicate_workspace_ids() {
+        let db = database();
+        let root = Path::new("/not-used-invalid-workspace");
+        for workspaces in [json!([{"id":"w","name":"Work","color":"#112233","projects":["missing"]}]),
+            json!([{"id":"w","name":"Work","color":"#112233","projects":[]},{"id":"w","name":"Duplicate","color":"#112233","projects":[]}]),
+            json!([{"id":"w","name":" ","color":"#112233","projects":[]}]),
+            json!([{"id":"w","name":"Work","color":"invalid","projects":[]}])] {
+            assert!(composer(root, &db, &json!({"operation":"save_workspaces","input":{"workspaces":workspaces}})).is_err());
+        }
+    }
+    #[test]
+    fn remote_pins_leave_running_threads_alone_and_workspace_saves_patch_only_workspaces() {
+        let root = std::env::temp_dir().join(format!("fr-ws-pin-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let db = serde_json::to_value(database()).unwrap();
+        let host = std::thread::spawn(move || {
+            for action in ["pin", "unpin", "save_workspaces"] {
+                for step in 0..2 {
+                    let (mut connection, _) = socket.accept().unwrap();
+                    let mut line = String::new();
+                    BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                    let request: Value = serde_json::from_str(&line).unwrap();
+                    let result = if step == 0 {
+                        assert_eq!(request["method"], "snapshot"); db.clone()
+                    } else if action == "save_workspaces" {
+                        assert_eq!(request["method"], "save_preferences");
+                        assert_eq!(request["params"], json!({"patch":{"workspaces":[]}})); Value::Null
+                    } else {
+                        assert_eq!(request["method"], "thread_action");
+                        assert_eq!(request["params"]["action"], action);
+                        assert_eq!(request["params"]["session"], "t"); Value::Null
+                    };
+                    writeln!(connection, "{}", json!({"result":result})).unwrap();
+                }
+            }
+        });
+        for action in ["pin", "unpin"] { dispatch(&root,"/v1/action",json!({"thread":"t","action":action})).unwrap(); }
+        crate::companion_operations::validate("save_workspaces").unwrap();
+        dispatch(&root,"/v1/composer",json!({"operation":"save_workspaces","input":{"workspaces":[],"patch":{"fallback":"must-not-forward"}}})).unwrap();
+        host.join().unwrap(); fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod old_workspace_host_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+    #[test]
+    fn older_host_cannot_silently_accept_workspace_edits() {
+        let root = std::env::temp_dir().join(format!("fr-old-ws-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let mut db = serde_json::to_value(Database::default()).unwrap();
+        db["preferences"].as_object_mut().unwrap().remove("workspaces");
+        let host = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "snapshot");
+                writeln!(connection, "{}", json!({"result":db})).unwrap();
+            }
+        });
+        let snapshot = dispatch(&root,"/v1/snapshot",json!({})).unwrap();
+        assert!(snapshot.get("workspaces").is_none());
+        assert!(dispatch(&root,"/v1/composer",json!({"operation":"save_workspaces","input":{"workspaces":[]}})).unwrap_err().contains("background host needs an update"));
+        host.join().unwrap(); fs::remove_dir_all(root).unwrap();
     }
 }

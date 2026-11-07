@@ -66,7 +66,7 @@ export function setConnection(state: 'ok' | 'down' | 'connecting', message?: str
 }
 
 /** Header metadata for the native bar's second line and thread actions menu. All keys are always sent. */
-export type NativeThreadMeta = { model?: string | null; access?: string | null; controlsDisabled?: boolean; project: string; runState: 'running' | 'waiting' | 'failed' | ''; canStop: boolean; canReview: boolean; canArchive: boolean; canDelete: boolean };
+export type NativeThreadMeta = { model?: string | null; access?: string | null; controlsDisabled?: boolean; project: string; runState: 'running' | 'waiting' | 'failed' | ''; canPin?: boolean; pinned?: boolean; canStop: boolean; canReview: boolean; canArchive: boolean; canDelete: boolean };
 export function setThreadMeta(meta: NativeThreadMeta): Promise<void> {
   if (!available) return Promise.resolve();
   return invoke<void>(`plugin:${PLUGIN}|set_thread_meta`, { meta });
@@ -130,7 +130,7 @@ export const onThreadAction = (handler: (payload: { action?: unknown }) => void)
 /** Drawer events. Each resolves to an unsubscribe function. */
 export const onSelectThread = (handler: (payload: { id?: unknown }) => void) => listen<{ id?: unknown }>('selectThread', handler);
 export const onSearch = (handler: (payload: { query?: unknown }) => void) => listen<{ query?: unknown }>('search', handler);
-export const onSetFilter = (handler: (payload: { project?: unknown; status?: unknown }) => void) => listen<{ project?: unknown; status?: unknown }>('setFilter', handler);
+export const onSetFilter = (handler: (payload: { workspace?: unknown; project?: unknown; status?: unknown }) => void) => listen<{ project?: unknown; status?: unknown }>('setFilter', handler);
 export const onNewThread = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('newThread', handler);
 export const onShowOlder = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('showOlder', handler);
 

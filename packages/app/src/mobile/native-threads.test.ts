@@ -156,3 +156,38 @@ it('follows the Mac unread experiment in filters, grouping and native unread fla
   expect(model.groups[0].threads.find(t => t.id === 'done')?.unread).toBe(true);
   expect(read).toEqual({ failed: 30 });
 });
+
+it('scopes native navigation to workspace membership and retains projects without visible history', () => {
+  const data = { ...snapshot([thread('a1', 'a', 'running', 3), thread('b1', 'b', 'done', 2)]),
+    projects: [...snapshot([]).projects, { id: 'empty', name: 'Empty', color: '#fff', canStart: false }],
+    workspaces: [{ id: 'w', name: 'Work', color: '#112233', projects: ['a', 'empty'] }] };
+  const scoped = buildThreadsModel({ ...base, data, workspace: 'w', canManageWorkspaces: true });
+  expect(scoped.groups.map(g => g.project)).toEqual(['a', 'empty']);
+  expect(scoped.projectOptions.map(p => p.id)).toEqual(['', 'a', 'empty']);
+  expect(scoped.workspaceOptions?.map(w => w.id)).toEqual(['', 'w', '__manage_workspaces']);
+  expect(buildThreadsModel({ ...base, data, workspace: '' }).groups.map(g => g.project)).toContain('b');
+  expect(buildThreadsModel({ ...base, data, workspace: 'deleted' }).groups.map(g => g.project)).toContain('b');
+  expect(buildThreadsModel({ ...base, data: { ...data, threads: [] }, workspace: 'w' }).groups.map(g => g.project)).toEqual(['a', 'empty']);
+});
+
+it('keeps old pinned threads above live and recent threads without older expansion', () => {
+  const read: Record<string, number> = { pinned: 1 };
+  const data = snapshot([thread('run', 'a', 'running', 60), thread('pinned', 'a', 'done', 1, { pinned: true }), ...recent(read)]);
+  const model = buildThreadsModel({ ...base, data, read });
+  expect(model.groups[0].threads[0]).toMatchObject({ id: 'pinned', pinned: true });
+  expect(model.groups[0].threads[1].id).toBe('run');
+  const filtered = buildThreadsModel({ ...base, data, read, filter: 'running' });
+  expect(filtered.groups[0].threads.map(t => t.id)).toEqual(['run']);
+});
+
+it('routes workspace changes separately so stale native project/status values cannot narrow the workspace', () => {
+  const actions = { selectThread: vi.fn(), setQuery: vi.fn(), setFilters: vi.fn(), setWorkspace: vi.fn(), workspace: 'w', newThread: vi.fn(), showOlder: vi.fn() };
+  const events = createThreadEventHandlers(actions);
+  events.setFilter({ workspace: '', project: 'stale', status: 'running' });
+  expect(actions.setWorkspace).toHaveBeenCalledWith('');
+  expect(actions.setFilters).not.toHaveBeenCalled();
+  events.setFilter({ project: 'a', status: 'done' });
+  expect(actions.setFilters).toHaveBeenCalledWith('a', 'done');
+  events.setFilter({ workspace: '__manage_workspaces' });
+  expect(actions.setWorkspace).toHaveBeenCalledWith('__manage_workspaces');
+});

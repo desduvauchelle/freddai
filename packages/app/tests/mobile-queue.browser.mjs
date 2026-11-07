@@ -28,9 +28,13 @@ try {
   await queue.getByRole('button',{name:'Resume queued messages'}).waitFor();
   await queue.getByRole('button',{name:'Remove queued message 2'}).click();
   await page.waitForFunction(()=>document.querySelectorAll('.companion-queue-list li').length===2);
+  await queue.getByRole('button',{name:'Steer queued message 1'}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.companion-queue-list li').length===1);
+  const row=await queue.getByRole('listitem').boundingBox();
+  assert.ok(row.x>=0&&row.x+row.width<=width,'steering row fits the viewport');
   await queue.getByRole('button',{name:'Clear queue'}).click();
   await queue.waitFor({state:'hidden'});
   await page.close();
  }
- console.log('PASS phone/tablet queue: compact transcript placement, expansion, pause, remove, clear. Offline fixture only.');
+ console.log('PASS phone/tablet queue: compact transcript placement, expansion, pause, remove, steer, clear. Offline fixture only.');
 }finally{await browser.close()}

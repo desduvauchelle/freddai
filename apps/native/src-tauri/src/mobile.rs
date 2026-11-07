@@ -98,7 +98,7 @@ async fn remote_inner(h:&Companion,c:&Credential,route:&str,body:Value,polls:u32
     let url=crypto::relay_url(c.relay.as_deref().ok_or("Mac unreachable. Configure a relay in Mac settings for access outside your local network.")?)?;
     let id=crypto::random();let mailbox=hex::encode(Sha256::digest(c.device.mailbox.as_bytes()));
     let base=format!("{url}/v1/mailboxes/{mailbox}");
-    let request=json!({"id":id,"route":route,"body":body,"expires":crypto::now()+90});
+    let request=json!({"id":id,"route":route,"body":body,"expires":crypto::now()+90,"acceptEncoding":crypto::RESPONSE_ENCODING});
     let envelope=crypto::seal(&c.device.key,&format!("request:{}:{id}",c.device.id),&request)?;
     h.internet.post(format!("{base}/requests/{id}")).bearer_auth(&c.device.mailbox).json(&json!({"id":id,"envelope":envelope})).send().await
         .and_then(|r|r.error_for_status()).map_err(|_|"Relay unavailable. Check your internet connection.")?;
