@@ -5,6 +5,8 @@ import { DaySummaries } from '../desktop/DaySummaries';
 import { AgentControls } from '../desktop/AgentControls';
 import { defaultSelection, type AgentSelection } from '../desktop/agent-selection';
 import { DashboardMic } from './DashboardMic';
+import { CommanderCluster } from './commander/CommanderCluster';
+import { useCommanderData } from './commander/useCommanderData';
 import type { CompanionClient, CompanionProject, CompanionSnapshot } from './companion';
 import { Button } from '@freddai/ui/components/button';
 import { compareThreadRecency } from '../desktop/types';
@@ -25,6 +27,8 @@ type Props = {
   onAssistantChange?: (project: string, assistant: string) => void;
   controls?: Record<string, { selection: AgentSelection }>;
   onSelectionChange?: (key: string, selection: AgentSelection) => void;
+  /** Commander-in-Chief: opens its screen, and sends a quick message to it. Both required for the cluster to show. */
+  onOpenCommander?: () => void; onSendCommander?: (text: string) => Promise<void>;
 };
 
 function ProjectCard({ project, snapshot, now, onProject, ...props }: Props & { project: CompanionProject; now: number; onProject: () => void }) {
@@ -85,11 +89,16 @@ export function CompanionDashboard(props: Props) {
     p.assistants?.find(a => a.id === globalAssistant)?.id ?? p.defaultAssistant ?? '']));
   const activeProject = snapshot.projects.find(p => p.id === openProject);
   const attention = snapshot.threads.filter(t => !!t.pending).sort(compareThreadRecency);
+  const commanderProject = snapshot.projects.find(p => p.kind === 'commander');
+  const showCommander = !props.nativeCards && !!commanderProject && !!client?.commander && !!props.onOpenCommander && !!props.onSendCommander;
+  const commander = useCommanderData(client, showCommander && connected);
   return <div className="companion-dashboard" data-native-content={props.nativeContent || undefined}>
     <Office variant="mini" onExpand={() => props.onOfficeExpandedChange?.(true)} onClose={() => props.onOfficeExpandedChange?.(false)} now={now} onOpenThread={onOpen}
       projects={snapshot.projects.map(p => ({ ...p, path: '', policy: 'inherit', account: null, last: null }))}
       sessions={snapshot.threads.map(t => ({ ...t, account: '', provider_id: null, pending: t.pending ?? null }))}
       queuedThreadIds={new Set(snapshot.threads.filter(t => t.queued > 0).map(t => t.id))} />
+    {showCommander && <CommanderCluster client={client!} name={commanderProject!.name} status={commander.state?.status ?? null} error={commander.error} connected={connected}
+      onOpen={props.onOpenCommander!} onSend={props.onSendCommander!} />}
     {!props.nativeCards && <>
     <div className="companion-dashboard-heading"><h2>Your projects</h2>
       {!!assistants.length && <label className="companion-project-agent">Coding agent
@@ -106,7 +115,7 @@ export function CompanionDashboard(props: Props) {
     {!!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
       {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{snapshot.projects.find(p => p.id === t.project)?.name} · Review decision</small></span></button>)}
     </section>}
-    <div className="companion-project-grid">{snapshot.projects.map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => setOpenProject(project.id)} />)}</div>
+    <div className="companion-project-grid">{snapshot.projects.filter(p => p.kind !== 'commander').map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => setOpenProject(project.id)} />)}</div>
     <Sheet open={!!activeProject} onOpenChange={open => { if (!open) setOpenProject(null); }}>
       <SheetContent className="companion-project-panel">
         <SheetHeader><SheetTitle>{activeProject?.name}</SheetTitle><SheetDescription>Project threads and new tasks</SheetDescription></SheetHeader>

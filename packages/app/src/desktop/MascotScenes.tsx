@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { ActivityControls } from "../conversation/ActivityControls";
 import { Dormouse } from "./Dormouse";
 import { MASCOT_PRIORITY, MASCOT_SIZES, mascotState, moodChip } from "./mascot-state";
 import type { Session } from "./types";
 
 /** Live activity at the end of this pane's transcript, including the first launch. */
-export function ConversationActivity({ thread }: { thread: Session }) {
+export function ConversationActivity({ thread, onStop, onResume, disabled }: { thread: Session; onStop?: () => void; onResume?: () => void; disabled?: boolean }) {
   const { mood, label } = mascotState(thread, []);
   const active = ["starting", "running", "waiting"].includes(thread.status);
   const [now, setNow] = useState(Date.now);
@@ -22,13 +23,16 @@ export function ConversationActivity({ thread }: { thread: Session }) {
     : thread.status === "starting" ? "Starting…"
     : thread.status === "waiting" ? "Waiting for your input…"
     : mood === 2 ? "Working…" : label;
+  const controls = <ActivityControls active={active} interrupted={thread.status === "interrupted"} onStop={onStop} onResume={onResume} disabled={disabled} />;
   return <aside className="conversation-activity" data-activity-state={thread.status}>
     <Dormouse size={44} priority={4} mood={mood} label={text} />
+    {thread.status === "interrupted" && controls}
     <span role="status" aria-live="polite" aria-atomic="true">{text}</span>
     {active && <small className="turn-metrics" aria-live="off">
       {thread.turn_started_at != null && <span title="Elapsed since this turn started, including tools and waiting for input">{elapsed} elapsed</span>}
       {typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 && <span title="Last provider-reported context usage; may update only after a response">{tokens.toLocaleString()} context tokens</span>}
     </small>}
+    {thread.status !== "interrupted" && controls}
   </aside>;
 }
 

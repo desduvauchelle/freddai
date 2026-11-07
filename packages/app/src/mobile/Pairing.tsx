@@ -10,7 +10,7 @@ export function Pairing({ children }: { children: (pairAgain: () => void) => Rea
     if (!waiting) return;
     let active = true; let timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const ready = await invoke<boolean>('companion_pair_claim'); if (!active) return; if (ready) { setWaiting(false); setPaired(true); return; } }
+      try { const ready = await invoke<boolean>('companion_pair_claim'); if (!active) return; if (ready) { localStorage.setItem('freddai.companion.outboxScope', crypto.randomUUID()); setWaiting(false); setPaired(true); return; } }
       catch (e) { if (active) { setWaiting(false); setError(String(e)); } return; }
       if (active) timer = setTimeout(poll, 1500);
     }

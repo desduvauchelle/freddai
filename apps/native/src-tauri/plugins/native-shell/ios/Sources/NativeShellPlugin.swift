@@ -24,6 +24,9 @@ struct ThreadActionPayload: Encodable { let action: String }
 
 struct SearchPayload: Encodable { let query: String }
 struct SetFilterPayload: Encodable { let project: String; let status: String; let workspace: String? }
+struct ViewPayload: Encodable { let view: String }
+struct RecentPagePayload: Encodable { let action: String; var section: String? }
+struct MoveProjectPayload: Encodable { let project: String; let target: String; let after: Bool }
 struct ProjectPayload: Encodable { let project: String }
 struct ThreadIdPayload: Encodable { let id: String }
 
@@ -111,7 +114,8 @@ class NativeShellPlugin: Plugin {
       self?.drawer?.dismissKeyboard()
       self?.container?.dismissAfterSelection()
     }
-    let nav = UINavigationController(rootViewController: shell)
+    let nav = UINavigationController(navigationBarClass: PassthroughNavigationBar.self, toolbarClass: nil)
+    nav.setViewControllers([shell], animated: false)
     nav.setNavigationBarHidden(true, animated: false)
 
     let drawer = ThreadDrawerViewController()
@@ -142,8 +146,17 @@ class NativeShellPlugin: Plugin {
       try? self?.trigger("newThread", data: ProjectPayload(project: project))
       container?.dismissAfterSelection()
     }
+    drawer.onMoveProject = { [weak self] project, target, after in
+      try? self?.trigger("moveProject", data: MoveProjectPayload(project: project, target: target, after: after))
+    }
     drawer.onShowOlder = { [weak self] project in
       try? self?.trigger("showOlder", data: ProjectPayload(project: project))
+    }
+    drawer.onSetView = { [weak self] view in
+      try? self?.trigger("setView", data: ViewPayload(view: view))
+    }
+    drawer.onRecentPage = { [weak self] action, bottom in
+      try? self?.trigger("recentPage", data: RecentPagePayload(action: action, section: bottom ? "bottom" : nil))
     }
     drawer.onSearch = { [weak self] query in
       try? self?.trigger("search", data: SearchPayload(query: query))
@@ -179,7 +192,7 @@ class NativeShellPlugin: Plugin {
   @objc func setMode(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SetModeArgs.self)
     DispatchQueue.main.async { [weak self] in
-      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "new" ? .new : args.mode == "dashboard" ? .dashboard : .other
+      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "dashboard" ? .dashboard : .other
       self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder)
       self?.container?.drawerEnabled = mode != .other
       if mode != .other, args.openDrawer == true {

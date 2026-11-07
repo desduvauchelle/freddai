@@ -27,7 +27,7 @@ it('keeps the web header and composer in a conversation when the native shell is
     },
   };
   render(<MobileApp client={client} />);
-  fireEvent.click(await screen.findByRole('button', { name: /Hello thread/ }));
+  fireEvent.click((await screen.findAllByRole('button', { name: /Hello thread/ }))[0]);
   expect(await screen.findByRole('textbox', { name: 'Reply' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Thread actions' })).toBeTruthy();
 });

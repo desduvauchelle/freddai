@@ -1,0 +1,63 @@
+/* Companion Commander. Builds on ../../desktop/commander/commander.css (cards, chips, todos, pill) using the same theme tokens. */
+.companion-commander { margin: 4px 0 14px; }
+.companion-commander .commander-circles { width: 188px; }
+/* DashboardMic is a labelled button; inside the circle only its icon shows. */
+.companion-commander-mic { overflow: visible; }
+.companion-commander-mic > div > button { width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; font-size: 0; gap: 0; background: var(--card); border: 1px solid var(--border); box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
+.companion-commander-mic > div > button svg { width: 18px; height: 18px; }
+.companion-commander-mic > div > p { position: absolute; top: 48px; left: 0; width: 180px; font-size: 11px; color: var(--destructive, #e5484d); }
+.companion-commander-composer { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 420px; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); }
+.companion-commander-composer textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit; font-size: 16px; }
+
+/* Floating header shared by every conversation screen (Commander + native regular threads).
+   The native bar (menu left, actions right) is transparent and draws on the same row. env(safe-area-inset-top) already includes that bar
+   (status bar + ~44px), so the 64px avatar is centred on the bar row and the header is only safe-area + 16px tall. */
+.companion[data-floating-header] { --companion-fh-top: max(env(safe-area-inset-top, 0px), 56px); --companion-fh-h: calc(var(--companion-fh-top) + 28px); padding-top: 0; }
+.companion[data-floating-header] .companion-body-wrap { position: relative; }
+.companion-fh { position: fixed; z-index: 10; inset: 0 0 auto 0; height: var(--companion-fh-h); padding-top: calc(var(--companion-fh-top) - 55px);
+  display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
+/* Fixed to the web view's top edge (not to the flex column): queued-message strips or banners above the body must never push the header down; the native bar buttons live on the same top edge. */
+/* The blur lives on a masked layer so it fades out softly instead of ending in a hard edge. */
+.companion-fh::before { content: ""; position: absolute; inset: 0; z-index: -1; background: color-mix(in oklab, var(--background) 58%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 70%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0, #000 70%, transparent 100%); }
+@media (prefers-reduced-transparency: reduce) { .companion-fh::before { background: var(--background); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+.companion-fh-center { display: flex; flex-direction: column; align-items: center; max-width: calc(100% - 140px); }
+.companion-fh-avatar-wrap { position: relative; width: 56px; height: 56px; flex: none; }
+/* Visible overflow: the mascot art is deliberately larger than its circle (see dormouse.css), so tail and feet break out like the transcript activity avatar. The Dormouse draws the circle itself. */
+.companion-fh-avatar { display: block; width: 56px; height: 56px; border-radius: 50%; overflow: visible; }
+/* The mascot is itself a button, so the real tap target is a transparent sibling button on top of it. */
+.companion-fh-art { display: contents; pointer-events: none; }
+.companion-fh-art * { pointer-events: none; }
+.companion-fh-open { position: absolute; inset: 0; z-index: 2; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: auto; cursor: pointer; }
+.companion-fh-avatar[data-needs="true"] { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 55%, transparent), 0 4px 14px color-mix(in oklab, var(--foreground) 14%, transparent); }
+.companion-fh-badge { position: absolute; top: -2px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1;
+  background: var(--primary); color: var(--primary-foreground); border: 2px solid var(--background); pointer-events: none; }
+.companion-fh-pill { position: relative; z-index: 1; display: block; max-width: 100%; margin-top: 8px; padding: 1px 12px; border-radius: 14px; line-height: 1.25; pointer-events: auto;
+  background: color-mix(in oklab, var(--card) 88%, transparent); border: 1px solid color-mix(in oklab, var(--border) 70%, transparent); box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 10%, transparent); }
+.companion-fh-pill strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font: -apple-system-footnote; font-weight: 600; }
+.companion-fh-back { position: absolute; left: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px); pointer-events: auto; }
+.companion-fh-error { position: absolute; bottom: 2px; left: 12px; right: 12px; justify-content: center; pointer-events: auto; }
+.companion-fh-spacer { height: var(--companion-fh-h); flex: none; }
+/* Strips rendered above the body (queued messages) start below the header, and then the transcript needs no extra spacer. */
+.companion[data-floating-header] > .companion-outbox { margin-top: calc(var(--companion-fh-h) + 8px); }
+.companion[data-floating-header] > .companion-outbox ~ .companion-body-wrap .companion-fh-spacer { height: 0; }
+
+/* Bottom sheet: medium and large detents. Dragging or tapping the grabber toggles them. */
+.companion-sheet-root { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
+.companion-sheet-backdrop { position: absolute; inset: 0; border: 0; padding: 0; background: rgb(0 0 0 / .32); animation: companion-sheet-fade .2s ease-out; }
+.companion-sheet { position: relative; display: flex; flex-direction: column; height: 52dvh; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 8px); border-radius: 20px 20px 0 0; background: var(--background); color: var(--foreground);
+  box-shadow: 0 -8px 30px rgb(0 0 0 / .25); transition: height .28s cubic-bezier(.2, .8, .2, 1); animation: companion-sheet-in .28s cubic-bezier(.2, .8, .2, 1); }
+.companion-sheet[data-detent="large"] { height: calc(100dvh - env(safe-area-inset-top, 0px) - 8px); }
+.companion-sheet-grabber { flex: none; display: grid; place-items: center; width: 100%; height: 28px; border: 0; background: transparent; padding: 0; touch-action: none; }
+.companion-sheet-grabber span { width: 36px; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--muted-foreground) 55%, transparent); }
+.companion-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; }
+@keyframes companion-sheet-in { from { transform: translateY(100%); } }
+@keyframes companion-sheet-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .companion-sheet, .companion-sheet-backdrop { animation: none; transition: none; } }
+.companion-commander-panel { padding: 0; }
+.companion-commander-tabs { flex: none; display: flex; gap: 2px; margin: 0 16px 6px; padding: 2px; border-radius: 10px; background: var(--muted, rgb(127 127 127 / .16)); }
+.companion-commander-tabs button { flex: 1; min-height: 36px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); font-size: 13px; display: inline-flex; gap: 5px; align-items: center; justify-content: center; }
+.companion-commander-tabs button[aria-selected="true"] { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+.companion-commander-tabs b { font-size: 10px; min-width: 16px; text-align: center; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); }
+.companion-commander-panel .commander-inline-form input, .companion-commander-panel .commander-editor input, .companion-commander-panel textarea { font-size: 16px; }

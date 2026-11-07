@@ -3,7 +3,9 @@ import WebKit
 
 /// Hosts the Tauri WKWebView, an optional native navigation bar (via the enclosing
 /// UINavigationController) and an optional native composer that tracks the keyboard.
-enum ShellMode { case conversation, new, dashboard, other }
+/// Every conversation (`conversation` and `commander`) uses the web layer's translucent floating header (avatar + name pill) under a transparent bar;
+/// the native menu and action buttons sit on the same row.
+enum ShellMode { case conversation, commander, new, dashboard, other }
 
 struct PickerOption: Decodable {
   let id: String
@@ -42,9 +44,10 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   private var workspaceConstraints: [NSLayoutConstraint] = []
   var onDashboardAction: ((DashboardActionPayload) -> Void)?
   private var mode: ShellMode = .other
-  private var conversation: Bool { mode == .conversation }
-  private var composerVisible: Bool { mode == .conversation || mode == .new }
+  private var conversation: Bool { mode == .conversation || mode == .commander }
+  private var composerVisible: Bool { mode == .conversation || mode == .commander || mode == .new }
   private var barVisible: Bool { mode != .other }
+  private var floatingHeader: Bool { mode == .conversation || mode == .commander }
 
   private var webTopSafe: NSLayoutConstraint!
   private var webTopEdge: NSLayoutConstraint!
@@ -74,6 +77,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+  }
   override func viewDidLoad() {
     super.viewDidLoad()
     view.backgroundColor = ComposerView.threadBackground
@@ -272,8 +278,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     } else {
       if webView.superview !== view { webView.removeFromSuperview(); view.insertSubview(webView, at: 0) }
       NSLayoutConstraint.activate(webHorizontal)
-      webTopEdge.isActive = !barVisible
-      webTopSafe.isActive = barVisible
+      // Conversations: the web header is its own translucent blur, so the page starts at the very top, under the status bar and transparent bar.
+      webTopEdge.isActive = !barVisible || floatingHeader
+      webTopSafe.isActive = barVisible && !floatingHeader
       webBottomEdge.isActive = !composerVisible
       webBottomComposer.isActive = composerVisible
     }
@@ -282,18 +289,28 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     composer.isHidden = !composerVisible
   }
 
+  /// Conversations use a fully transparent bar (buttons float over the web header's blur) and hide the native title (the web pill shows it).
+  private func applyBarStyle() {
+    let bar = UINavigationBarAppearance()
+    if floatingHeader { bar.configureWithTransparentBackground() } else { bar.configureWithDefaultBackground() }
+    navigationItem.standardAppearance = bar
+    navigationItem.scrollEdgeAppearance = bar
+    navigationItem.titleView?.isHidden = floatingHeader
+  }
+
   func apply(mode newMode: ShellMode, title: String?, placeholder: String?) {
     let modeChanged = mode != newMode
     if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
     // The New thread home has no thread actions, and its own compose button would be a no-op.
-    navigationItem.rightBarButtonItems = newMode == .conversation ? [actionsItem, newItem] : []
+    navigationItem.rightBarButtonItems = newMode == .conversation || newMode == .commander ? [actionsItem, newItem] : []
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {
+      applyBarStyle()
       updateLayout()
       navigationController?.setNavigationBarHidden(!barVisible, animated: false)
-      if !composerVisible { _ = composer.resignFirstResponder() }
+      if !composerVisible { composer.cancelRecording(); _ = composer.resignFirstResponder() }
       view.layoutIfNeeded()
     }
   }
@@ -339,4 +356,20 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   // iPad popovers hide the Cancel action and dismiss when tapped outside. Resolve the JS request too.
   func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { finishPicker(nil) }
   func popoverPresentationControllerDidDismissPopover(_ popoverPresentationController: UIPopoverPresentationController) { finishPicker(nil) }
+}
+
+
+/// Transparent navigation bar that only captures touches on its buttons, so the web header's avatar (which overlaps the bar row) stays tappable.
+final class PassthroughNavigationBar: UINavigationBar {
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard let hit = super.hitTest(point, with: event) else { return nil }
+    var view: UIView? = hit
+    while let current = view, current !== self {
+      // The (hidden) title control spans the bar centre and would swallow taps meant for the web header's avatar.
+      if String(describing: type(of: current)).contains("Title") { return nil }
+      if current is UIControl || current.interactions.contains(where: { $0 is UIContextMenuInteraction }) { return hit }
+      view = current.superview
+    }
+    return nil
+  }
 }

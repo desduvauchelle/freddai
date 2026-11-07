@@ -7,6 +7,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Newest model ID in a provider catalog: highest creation stamp when rows carry one, otherwise the
+/// first row (catalogs list the current flagship first).
+pub fn newest(rows: &[Value]) -> Option<String> {
+    let id = |m: &Value| m["model"].as_str().or_else(|| m["id"].as_str()).map(String::from);
+    let stamp = |m: &Value| ["createdAt", "created", "releaseDate", "created_at"].iter().find_map(|k| {
+        m[*k].as_u64().or_else(|| m[*k].as_str().map(|s| s.chars().filter(char::is_ascii_digit).collect::<String>()).and_then(|d| d.parse().ok()))
+    });
+    rows.iter()
+        .filter(|m| id(m).is_some())
+        .max_by_key(|m| stamp(m).unwrap_or(0))
+        .and_then(|best| {
+            if rows.iter().any(|m| stamp(m).is_some()) { id(best) } else { rows.iter().find_map(id) }
+        })
+}
+
 pub fn read(mut cmd: Command) -> Result<Value, String> {
     cmd.args(["app-server", "--stdio"]);
     query(cmd, Duration::from_secs(15))
@@ -123,5 +138,13 @@ out({'id':2,'result':{'data':[{'model':'hidden','hidden':True}],'nextCursor':Non
         let start = Instant::now();
         assert!(query(cmd, Duration::from_millis(50)).is_err());
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn newest_prefers_creation_stamp_then_catalog_order() {
+        let rows = vec![json!({"model":"old","createdAt":1}), json!({"model":"new","createdAt":9}), json!({"model":"mid","createdAt":5})];
+        assert_eq!(newest(&rows).as_deref(), Some("new"));
+        let ordered = vec![json!({"model":"first"}), json!({"id":"second"})];
+        assert_eq!(newest(&ordered).as_deref(), Some("first"));
+        assert_eq!(newest(&[]), None);
     }
 }

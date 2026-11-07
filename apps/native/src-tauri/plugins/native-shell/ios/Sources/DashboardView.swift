@@ -9,6 +9,12 @@ struct DashboardModel: Decodable {
   struct Summary: Decodable {
     let date: String; let label: String; let text: String; let action: String?; let busy: Bool
   }
+  /// Commander-in-Chief cluster shown above the project cards.
+  struct Commander: Decodable {
+    let id: String; let name: String
+    let needsYou: Int; let running: Int; let doneToday: Int
+  }
+  var commander: Commander?
   var summaries: [Summary]?
   var schedules: Bool?
   var message: String?
@@ -111,6 +117,7 @@ final class DashboardView: UIScrollView {
     guard let model = model else { return }
     let heading = UILabel(); heading.text = "Your projects"; heading.font = .preferredFont(forTextStyle: .title2); heading.adjustsFontForContentSizeCategory = true
     stack.addArrangedSubview(workspace)
+    if let commander = model.commander { stack.addArrangedSubview(commanderCluster(commander, model: model)) }
     if let message = model.message, !message.isEmpty {
       let status = UILabel(); status.text = message; status.numberOfLines = 0
       status.font = .preferredFont(forTextStyle: .subheadline); status.textColor = .systemRed
@@ -231,11 +238,105 @@ final class DashboardView: UIScrollView {
       stack.addArrangedSubview(note)
     }
   }
+  /// The Commander avatar (idle breathing; still under Reduce Motion), a mic circle at its bottom-left, a plus circle at its bottom-right and the status pill.
+  private func commanderCluster(_ commander: DashboardModel.Commander, model: DashboardModel) -> UIView {
+    let enabled = model.connected && !model.busy && !awaitingTranscript
+    let size: CGFloat = 96, circle: CGFloat = 44
+    let host = UIView(); host.accessibilityIdentifier = "dashboard-commander"
+    let open: () -> Void = { [weak self] in self?.onAction?(DashboardActionPayload(action: "commander", project: commander.id)) }
+
+    let avatar = UIButton(type: .custom)
+    avatar.translatesAutoresizingMaskIntoConstraints = false
+    avatar.backgroundColor = .secondarySystemBackground
+    avatar.layer.cornerRadius = size / 2; avatar.layer.borderWidth = 1; avatar.layer.borderColor = UIColor.separator.cgColor
+    avatar.layer.shadowColor = UIColor.black.cgColor; avatar.layer.shadowOpacity = 0.12; avatar.layer.shadowRadius = 10; avatar.layer.shadowOffset = CGSize(width: 0, height: 4)
+    avatar.accessibilityLabel = "Open \(commander.name)"; avatar.accessibilityIdentifier = "dashboard-commander-avatar"
+    avatar.accessibilityValue = "\(commander.needsYou) needs you, \(commander.running) running, \(commander.doneToday) done"
+    avatar.addAction(UIAction { _ in open() }, for: .touchUpInside)
+    let art = UIImageView(image: MascotImage.largeImage)
+    art.translatesAutoresizingMaskIntoConstraints = false; art.contentMode = .scaleAspectFit; art.isUserInteractionEnabled = false
+    avatar.addSubview(art)
+    if !UIAccessibility.isReduceMotionEnabled {
+      let breathe = CABasicAnimation(keyPath: "transform.scale")
+      breathe.fromValue = 1.0; breathe.toValue = 1.04; breathe.autoreverses = true; breathe.repeatCount = .infinity
+      breathe.duration = commander.running > 0 ? 0.7 : 2.1; breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      art.layer.add(breathe, forKey: "commander-breathe")
+    }
+    if commander.running > 0 { avatar.layer.borderColor = UIColor.systemBlue.cgColor; avatar.layer.borderWidth = 2 }
+
+    func round(_ symbol: String, id: String, label: String) -> UIButton {
+      var config = UIButton.Configuration.plain(); config.image = UIImage(systemName: symbol); config.baseForegroundColor = .label
+      let b = UIButton(configuration: config)
+      b.translatesAutoresizingMaskIntoConstraints = false
+      b.backgroundColor = .systemBackground; b.layer.cornerRadius = circle / 2; b.layer.borderWidth = 1; b.layer.borderColor = UIColor.separator.cgColor
+      b.layer.shadowColor = UIColor.black.cgColor; b.layer.shadowOpacity = 0.14; b.layer.shadowRadius = 5; b.layer.shadowOffset = CGSize(width: 0, height: 2)
+      b.accessibilityIdentifier = id; b.accessibilityLabel = label
+      return b
+    }
+    let mic = round("mic", id: "dashboard-commander-mic", label: "Dictate to \(commander.name)")
+    mic.accessibilityHint = "Hold to record, release to transcribe into a draft. Move away to cancel."
+    mic.isEnabled = enabled && voiceReady
+    let hold = UILongPressGestureRecognizer(target: self, action: #selector(holdMic(_:)))
+    hold.minimumPressDuration = 0.08; hold.allowableMovement = 40
+    mic.addGestureRecognizer(hold)
+    mic.addAction(UIAction { [weak self, weak mic] _ in
+      guard UIAccessibility.isVoiceOverRunning, let self = self, let mic = mic else { return }
+      if self.active != nil { self.finish(cancel: false) } else { self.begin(self.commanderProject(commander), mic: mic) }
+    }, for: .touchUpInside)
+    mic.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Cancel recording", actionHandler: { [weak self] _ in self?.cancelRecording(); return true })]
+    mic.tag = Self.commanderMicTag
+    let plus = round("plus", id: "dashboard-commander-plus", label: "Message \(commander.name)")
+    plus.isEnabled = model.connected && !model.busy
+    plus.addAction(UIAction { _ in open() }, for: .touchUpInside)
+
+    let name = UILabel(); name.text = commander.name; name.font = UIFont.preferredFont(forTextStyle: .subheadline); name.adjustsFontForContentSizeCategory = true
+    name.textAlignment = .center
+    var pillConfig = UIButton.Configuration.tinted(); pillConfig.cornerStyle = .capsule
+    pillConfig.title = "\(commander.needsYou) needs you · \(commander.running) running · \(commander.doneToday) done"
+    pillConfig.baseForegroundColor = commander.needsYou > 0 ? .systemOrange : .secondaryLabel
+    pillConfig.baseBackgroundColor = commander.needsYou > 0 ? .systemOrange : .systemGray
+    pillConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { var a = $0; a.font = UIFont.preferredFont(forTextStyle: .caption1); return a }
+    let pill = UIButton(configuration: pillConfig)
+    pill.accessibilityIdentifier = "dashboard-commander-pill"
+    pill.accessibilityLabel = "\(commander.name) status: \(commander.needsYou) needs you, \(commander.running) running, \(commander.doneToday) done"
+    pill.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    pill.addAction(UIAction { _ in open() }, for: .touchUpInside)
+
+    for view in [avatar, mic, plus, name, pill] as [UIView] { view.translatesAutoresizingMaskIntoConstraints = false; host.addSubview(view) }
+    NSLayoutConstraint.activate([
+      avatar.topAnchor.constraint(equalTo: host.topAnchor, constant: 4),
+      avatar.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+      avatar.widthAnchor.constraint(equalToConstant: size), avatar.heightAnchor.constraint(equalToConstant: size),
+      art.centerXAnchor.constraint(equalTo: avatar.centerXAnchor), art.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
+      art.widthAnchor.constraint(equalToConstant: size - 18), art.heightAnchor.constraint(equalToConstant: size - 18),
+      // Overlap the avatar's bottom-left and bottom-right edges.
+      mic.widthAnchor.constraint(equalToConstant: circle), mic.heightAnchor.constraint(equalToConstant: circle),
+      mic.centerXAnchor.constraint(equalTo: avatar.leadingAnchor, constant: size * 0.16),
+      mic.centerYAnchor.constraint(equalTo: avatar.bottomAnchor, constant: -size * 0.1),
+      plus.widthAnchor.constraint(equalToConstant: circle), plus.heightAnchor.constraint(equalToConstant: circle),
+      plus.centerXAnchor.constraint(equalTo: avatar.trailingAnchor, constant: -size * 0.16),
+      plus.centerYAnchor.constraint(equalTo: avatar.bottomAnchor, constant: -size * 0.1),
+      name.topAnchor.constraint(equalTo: avatar.bottomAnchor, constant: 14),
+      name.leadingAnchor.constraint(equalTo: host.leadingAnchor), name.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+      pill.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 4),
+      pill.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+      pill.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -4),
+    ])
+    avatar.isEnabled = true
+    return host
+  }
+  private static let commanderMicTag = -1
+  private func commanderProject(_ commander: DashboardModel.Commander) -> DashboardModel.Project {
+    DashboardModel.Project(id: commander.id, name: commander.name, color: "", assistant: "", activity: "", model: "", canStart: true)
+  }
+
   @objc private func holdMic(_ gesture: UILongPressGestureRecognizer) {
     guard let button = gesture.view as? UIButton else { return }
     switch gesture.state {
     case .began:
-      guard let model = model, model.projects.indices.contains(button.tag) else { return }
+      guard let model = model else { return }
+      if button.tag == Self.commanderMicTag, let commander = model.commander { begin(commanderProject(commander), mic: button); return }
+      guard model.projects.indices.contains(button.tag) else { return }
       begin(model.projects[button.tag], mic: button)
     case .changed:
       if !button.bounds.insetBy(dx: -32, dy: -32).contains(gesture.location(in: button)) { finish(cancel: true) }

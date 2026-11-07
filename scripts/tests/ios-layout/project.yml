@@ -9,9 +9,12 @@ targets:
     sources:
       - path: ${FREDDAI_REPO_ROOT}/scripts/tests/ios-layout/CompanionLayoutTests.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/DashboardView.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/ComposerView.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/VoiceRecorder.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/ComposerAttachments.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/CompanionLayout.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/MascotImage.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/ThreadDrawerViewController.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/DrawerContainerViewController.swift
     settings:
       base:

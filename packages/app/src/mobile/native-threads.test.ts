@@ -191,3 +191,51 @@ it('routes workspace changes separately so stale native project/status values ca
   events.setFilter({ workspace: '__manage_workspaces' });
   expect(actions.setWorkspace).toHaveBeenCalledWith('__manage_workspaces');
 });
+
+it('sends the Recent view payload: mode, 25/+25 cross-project rows with project tag; section pages 5/+10 separately', () => {
+  const many = Array.from({ length: 70 }, (_, i) => thread(`t${i}`, i % 2 ? 'a' : 'b', i === 3 ? 'archived' : 'done', 100 + i));
+  const read = Object.fromEntries(many.map(t => [t.id, t.updated]));
+  const first = buildThreadsModel({ ...base, data: snapshot(many), read, view: 'recent' });
+  expect(first.view).toBe('recent');
+  expect(first.recent.threads).toHaveLength(25);
+  expect(first.recent.threads.slice(0, 3).map(t => t.id)).toEqual(['t69', 't68', 't67']);
+  expect(first.recent.threads[0]).toMatchObject({ projectLabel: 'Alpha', projectColor: '#fff', status: 'done', updatedAt: 169 });
+  expect(first.recent).toMatchObject({ remaining: 44, expanded: false });
+  const more = buildThreadsModel({ ...base, data: snapshot(many), read, view: 'recent', recentPages: 1 });
+  expect(more.recent.threads).toHaveLength(50);
+  expect(more.recent.threads.map(t => t.id)).not.toContain('t3');
+  expect(more.recent.expanded).toBe(true);
+  // Bottom section of the Projects view: 5 first, +10, independent of the Recent view paging.
+  expect(first.recentSection.threads.map(t => t.id)).toEqual(['t69', 't68', 't67', 't66', 't65']);
+  expect(first.recentSection.threads[0].projectLabel).toBe('Alpha');
+  expect(first.recentSection).toMatchObject({ remaining: 64, expanded: false });
+  expect(more.recentSection.threads).toHaveLength(5);
+  const sectionMore = buildThreadsModel({ ...base, data: snapshot(many), read, sectionPages: 1 });
+  expect(sectionMore.recentSection.threads).toHaveLength(15);
+  expect(sectionMore.recentSection.expanded).toBe(true);
+  expect(sectionMore.recent.threads).toHaveLength(25);
+  expect(buildThreadsModel({ ...base, data: snapshot([]), read: {} }).recentSection.threads).toEqual([]);
+  expect(buildThreadsModel({ ...base, data: snapshot(many), read }).view).toBe('projects');
+});
+
+it('maps native setView / recentPage events (view or bottom section) and ignores malformed payloads', () => {
+  const actions = { selectThread: vi.fn(), setQuery: vi.fn(), setFilters: vi.fn(), newThread: vi.fn(), showOlder: vi.fn(), setView: vi.fn(), recentPage: vi.fn() };
+  const h = createThreadEventHandlers(actions);
+  h.setView({ view: 'recent' }); h.setView({ view: 'nope' }); h.setView({});
+  expect(actions.setView.mock.calls).toEqual([['recent'], ['projects'], ['projects']]);
+  h.recentPage({ action: 'more' }); h.recentPage({ action: 'less', section: 'bottom' }); h.recentPage({ action: 'x' }); h.recentPage({});
+  expect(actions.recentPage.mock.calls).toEqual([['more', false], ['less', true]]);
+});
+
+it('keeps Commander and its delegated work out of grouped, recent and flat navigation even when selected', () => {
+  const data = snapshot([thread('ordinary', 'a', 'running', 1), thread('main', 'cmd', 'done', 2), thread('internal', 'cmd', 'running', 3), thread('delegated', 'a', 'running', 4, { origin: { kind: 'commander' } })]);
+  data.projects.unshift({ id: 'cmd', name: 'Commander', color: '#fff', canStart: true, kind: 'commander' });
+  for (const grouped of [true, false]) {
+    data.threadList = { grouped };
+    const model = buildThreadsModel({ ...base, data, selected: 'delegated' });
+    expect(model.groups.flatMap(g => g.threads.map(t => t.id))).toEqual(['ordinary']);
+    expect(model.recent.threads.map(t => t.id)).toEqual(['ordinary']);
+    expect(model.recentSection.threads.map(t => t.id)).toEqual(['ordinary']);
+    if (grouped) expect(model.groups.find(g => g.kind === 'commander')?.threads).toEqual([]);
+  }
+});

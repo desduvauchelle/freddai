@@ -114,7 +114,7 @@ async fn remote_inner(h:&Companion,c:&Credential,route:&str,body:Value,polls:u32
         if response.status()!=reqwest::StatusCode::ACCEPTED {return Err("Relay unavailable".into());}
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    Err("Your Mac is offline or the device was revoked. Keep the Mac awake with Freddai running. Check the conversation before retrying a message.".into())
+    Err("Your Mac did not respond through the relay in time. The connection may be interrupted. Keep Freddai running on your Mac; reconnection is automatic.".into())
 }
 async fn call(h:&Companion,route:&str,body:Value)->Result<Value,String> {call_slow(h,route,body,None,40).await}
 /// Like `call`, with a longer local-network timeout and more relay polls for operations the Mac takes seconds to answer (dictation).

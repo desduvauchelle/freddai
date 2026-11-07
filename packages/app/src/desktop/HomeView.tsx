@@ -17,6 +17,7 @@ import { compareThreadRecency, type Account, type Project, type Session } from "
 import type { HomeLaunchPlan } from "./home-launch";
 import { homeRunState } from "./home-state";
 import { Office, type OfficeSchedule } from "../office/index";
+import { CommanderCluster } from "./commander/CommanderCluster";
 import "./home.css";
 
 export { homeRunState } from "./home-state";
@@ -67,6 +68,8 @@ export type HomeViewProps = {
   onRespond: (thread: Session, allow: boolean, answers: Record<string, unknown>) => Promise<unknown>;
   /** Optional scheduled work, shown at the Office clock shrine. */
   schedules?: OfficeSchedule[];
+  /** Commander-in-Chief presence above the project list; omitted when unavailable. */
+  commander?: { onOpen: () => void; onSend: (text: string) => Promise<void> };
 };
 
 function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
@@ -132,7 +135,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   </article>;
 }
 
-export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection }: HomeViewProps) {
+export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander }: HomeViewProps) {
   const clock = now ?? Date.now();
   const tiles = useMemo(() => homeProjects(sessions, projects, clock), [sessions, projects, clock]);
   const launchAccounts = accounts.filter(account => projects.some(project => { const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
@@ -154,6 +157,8 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
     </div>
 
     <Office variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
+
+    {commander && <CommanderCluster onOpen={commander.onOpen} onSend={commander.onSend} />}
 
     <section className="home-section" aria-label="Projects">
       <div className="home-section-title"><span>Projects</span>

@@ -19,6 +19,9 @@ export type Project = {
   policy: "inherit" | "fixed" | "last";
   account: string | null;
   last: string | null;
+  /** "commander" marks the built-in Commander-in-Chief project (sorts first, cannot be deleted). */
+  kind?: "commander" | null;
+  objective?: string | null;
 };
 export type Workspace = { id: string; name: string; color: string; projects: string[] };
 export type Preferences = {
@@ -47,6 +50,7 @@ export type Pending = {
   };
 };
 export type Session = {
+  origin?: { kind: string; thread?: string | null; project?: string | null } | null;
   archived?: boolean;
   pinned?: boolean;
   deleted_at?: number | null;

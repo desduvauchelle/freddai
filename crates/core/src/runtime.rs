@@ -17,6 +17,44 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, String>;
+/// Claude CLI flags for a turn. Commander threads cannot edit files or run shell commands.
+pub(crate) fn claude_args(s: &Session, commander: bool) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-p",
+        "--verbose",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--permission-prompt-tool",
+        "stdio",
+        "--permission-mode",
+    ]
+    .iter()
+    .map(|a| a.to_string())
+    .collect();
+    args.push(s.options.permission_mode.unwrap_or_default().claude_mode().into());
+    if let Some(model) = &s.options.model {
+        args.extend(["--model".into(), model.clone()]);
+    }
+    if let Some(effort) = &s.options.effort {
+        args.extend(["--effort".into(), effort.clone()]);
+    }
+    if let Some(resume) = &s.provider_id {
+        args.extend(["--resume".into(), resume.clone()]);
+    }
+    if commander {
+        args.extend([
+            "--disallowedTools".into(),
+            crate::commander::CLAUDE_DISALLOWED_TOOLS.into(),
+            // Freddai's own MCP tools run without a prompt; outward ones are held by the action gate.
+            "--allowedTools".into(),
+            "mcp__freddai".into(),
+        ]);
+    }
+    args
+}
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -46,6 +84,27 @@ pub struct Project {
     pub policy: String,
     pub account: Option<String>,
     pub last: Option<String>,
+    /// `Some("commander")` for the built-in Commander-in-Chief project.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Short paragraph: what the project is, who it is for, its current goal.
+    #[serde(default)]
+    pub objective: Option<String>,
+    /// Project-level model: a concrete model ID or `"latest"` (resolved at launch).
+    #[serde(default)]
+    pub model: Option<String>,
+}
+impl Project {
+    pub fn is_commander(&self) -> bool {
+        self.kind.as_deref() == Some(crate::commander::KIND)
+    }
+}
+/// Who started a thread: the user, the Commander project, or a schedule.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct Origin {
+    pub kind: String,
+    #[serde(default)]
+    pub thread: Option<String>,
 }
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +168,9 @@ pub struct LaunchOptions {
     pub scheduled: bool,
     #[serde(default)]
     pub update_agent_controls: bool,
+    /// Host-internal; never accepted from a client or persisted with the options.
+    #[serde(skip)]
+    pub origin: Option<Origin>,
 }
 impl LaunchOptions {
     fn update_controls(&mut self, next: &Self) {
@@ -128,6 +190,18 @@ pub struct Message {
     pub text: crate::message_text::MessageText,
     #[serde(default)]
     pub attachments: Vec<crate::attachments::Attachment>,
+}
+/// Light, owned view of a thread for modules that must not hold the database lock.
+#[derive(Clone, Debug)]
+pub struct SessionBrief {
+    pub id: String,
+    pub project: String,
+    pub title: String,
+    pub status: String,
+    pub origin: Option<Origin>,
+    pub updated: u64,
+    /// Not archived or deleted.
+    pub live: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -153,6 +227,9 @@ pub struct Session {
     /// Origin remains after manual replies or deletion of the routine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_id: Option<String>,
+    /// Who started this thread (`user`, `commander`, `schedule`). Null for threads that predate origins.
+    #[serde(default)]
+    pub origin: Option<Origin>,
     pub status: String,
     pub updated: u64,
     #[serde(default)]
@@ -1133,6 +1210,9 @@ impl Runtime {
             policy: "inherit".into(),
             account: None,
             last: None,
+            kind: None,
+            objective: None,
+            model: None,
         })
     }
     pub fn project(&self, mut p: Project) -> Result<Project> {
@@ -1161,10 +1241,101 @@ impl Runtime {
                 return Err("Changing a project's folder is not supported.".into());
             }
             p.last = current.last.clone();
+            // Host-owned: a stale client must never clear the Commander marker. Objective and model
+            // are cleared only through their dedicated commands.
+            p.kind = current.kind.clone();
+            if p.objective.is_none() {
+                p.objective = current.objective.clone();
+            }
+            if p.model.is_none() {
+                p.model = current.model.clone();
+            }
             *current = p.clone();
         }
         write_db(&i)?;
         Ok(p)
+    }
+    /// Register (or adopt) the single Commander project at `path`, sorted first. Idempotent.
+    pub fn ensure_commander_project(&self, path: &Path, name: &str, color: &str) -> Result<Project> {
+        let canonical = fs::canonicalize(path).map_err(|e| format!("Cannot open Commander folder: {e}"))?;
+        let canonical = canonical.to_string_lossy().into_owned();
+        let mut i = self.0.lock().unwrap();
+        let existing = i.db.projects.iter().position(|p| p.is_commander())
+            .or_else(|| i.db.projects.iter().position(|p| p.path == canonical));
+        let mut project = match existing {
+            Some(index) => i.db.projects.remove(index),
+            None => Project {
+                id: id(),
+                name: name.into(),
+                path: canonical,
+                color: color.into(),
+                policy: "inherit".into(),
+                account: None,
+                last: None,
+                kind: None,
+                objective: None,
+                model: None,
+            },
+        };
+        project.kind = Some(crate::commander::KIND.into());
+        let result = project.clone();
+        i.db.projects.insert(0, project);
+        // Never two Commander projects, even if workspace.json was edited by hand.
+        let mut seen = false;
+        i.db.projects.retain(|p| !p.is_commander() || !std::mem::replace(&mut seen, true));
+        write_db(&i)?;
+        Ok(result)
+    }
+    /// Mutate one project under the lock. The Commander marker and folder cannot be changed.
+    pub fn update_project(&self, project: &str, f: impl FnOnce(&mut Project)) -> Result<Project> {
+        let mut i = self.0.lock().unwrap();
+        let p = i.db.projects.iter_mut().find(|p| p.id == project).ok_or("Project not found")?;
+        let (kind, path, id) = (p.kind.clone(), p.path.clone(), p.id.clone());
+        f(p);
+        p.kind = kind;
+        p.path = path;
+        p.id = id;
+        let result = p.clone();
+        write_db(&i)?;
+        Ok(result)
+    }
+    /// The Commander project can be reset but never deleted.
+    pub fn assert_project_deletable(&self, project: &str) -> Result<()> {
+        let i = self.0.lock().unwrap();
+        match i.db.projects.iter().find(|p| p.id == project) {
+            Some(p) if p.is_commander() => Err("Commander-in-Chief is a built-in project and cannot be deleted.".into()),
+            Some(_) => Ok(()),
+            None => Err("Project not found".into()),
+        }
+    }
+    pub fn commander_project(&self) -> Option<Project> {
+        self.0.lock().unwrap().db.projects.iter().find(|p| p.is_commander()).cloned()
+    }
+    /// Small read of one thread without cloning the database.
+    pub fn session_brief(&self, sid: &str) -> Option<SessionBrief> {
+        let i = self.0.lock().unwrap();
+        i.db.sessions.iter().find(|s| s.id == sid).map(|s| SessionBrief {
+            id: s.id.clone(),
+            project: s.project.clone(),
+            title: s.title.clone(),
+            status: s.status.clone(),
+            origin: s.origin.clone(),
+            updated: s.updated,
+            live: !s.archived && s.deleted_at.is_none() && s.status != "archived",
+        })
+    }
+    /// Briefs for every non-deleted thread, optionally limited to one project.
+    pub fn session_briefs(&self, project: Option<&str>) -> Vec<SessionBrief> {
+        let i = self.0.lock().unwrap();
+        i.db.sessions.iter().filter(|s| s.deleted_at.is_none() && project.is_none_or(|p| s.project == p)).map(|s| SessionBrief {
+            id: s.id.clone(),
+            project: s.project.clone(),
+            title: s.title.clone(),
+            status: s.status.clone(),
+            origin: s.origin.clone(),
+            updated: s.updated,
+            live: !s.archived && s.status != "archived",
+        }).collect()
     }
     pub fn preferences(&self, p: Preferences) -> Result<()> {
         let mut i = self.0.lock().unwrap();
@@ -1904,6 +2075,7 @@ impl Runtime {
         if prompt.trim().is_empty() {
             return Err("Enter a message".into());
         }
+        let project_model = self.resolve_project_model(&project_id, explicit.as_deref(), existing.as_deref(), &options);
         let (session, a, p, root, rx, agent_prompt) = {
             let mut i = self.0.lock().unwrap();
             if i.shutting_down {
@@ -1949,6 +2121,12 @@ impl Runtime {
                     title: routine.map(|s| s.name.trim().to_owned()).unwrap_or_else(|| crate::thread_title::from_prompt(&prompt)),
                     title_manual: Some(routine.is_some()),
                     schedule_id: routine.map(|s| s.id.clone()),
+                    origin: options.origin.clone().or_else(|| {
+                        Some(Origin {
+                            kind: if options.scheduled { "schedule" } else { "user" }.into(),
+                            thread: None,
+                        })
+                    }),
                     status: "starting".into(),
                     updated: now(),
                     last_user_message_at: None,
@@ -1976,6 +2154,13 @@ impl Runtime {
             if existing.is_some() {
                 s.options.update_controls(&options);
                 s.options.scheduled=options.scheduled;
+            }
+            if s.options.model.is_none() {
+                s.options.model = project_model.clone();
+            }
+            if p.is_commander() {
+                // Commander only delegates, reads and tracks: it never runs with bypass permissions.
+                s.options.permission_mode = Some(PermissionMode::Ask);
             }
             if s.options.permission_mode == Some(PermissionMode::Bypass)
                 && !["codex", "claude"].contains(&a.provider.as_str())
@@ -2129,6 +2314,52 @@ impl Runtime {
         });
         Ok(sid)
     }
+    /// Model the project asks for when the caller chose none. `"latest"` is resolved now from the
+    /// account's provider catalog; failures are logged and noted for the UI, then the provider default is used.
+    fn resolve_project_model(&self, project_id: &str, explicit: Option<&str>, existing: Option<&str>, options: &LaunchOptions) -> Option<String> {
+        if options.model.is_some() {
+            return None;
+        }
+        let (project, account, root) = {
+            let i = self.0.lock().unwrap();
+            let project = i.db.projects.iter().find(|p| p.id == project_id)?.clone();
+            project.model.as_ref()?;
+            let account_id = match existing {
+                Some(sid) => i.db.sessions.iter().find(|s| s.id == sid)?.account.clone(),
+                None => resolve(&i.db, &project, explicit.map(str::to_owned)).ok()?,
+            };
+            let account = i.db.accounts.iter().find(|a| a.id == account_id)?.clone();
+            (project, account, i.root.clone())
+        };
+        let model = project.model.clone()?;
+        if model != "latest" {
+            return Some(model);
+        }
+        let discovered = if account.provider == "codex" {
+            command(&account, &root).and_then(crate::models::read).and_then(|rows| {
+                crate::models::newest(rows.as_array().map(Vec::as_slice).unwrap_or_default())
+                    .ok_or_else(|| "The provider returned no models.".to_string())
+            })
+        } else {
+            Err(format!("{} does not expose a model catalog in Freddai yet.", account.provider))
+        };
+        match discovered {
+            Ok(id) => {
+                if project.is_commander() {
+                    crate::commander::set_model_notice(&project.path, None);
+                }
+                Some(id)
+            }
+            Err(reason) => {
+                let notice = format!("Could not resolve the latest model ({reason}). Using the provider default.");
+                preferences_log(&root, &format!("ev=commander.model_latest_fallback project={project_id} provider={} reason={reason:?}", account.provider));
+                if project.is_commander() {
+                    crate::commander::set_model_notice(&project.path, Some(&notice));
+                }
+                None
+            }
+        }
+    }
     fn finish_turn(&self, sid: &str) {
         {
             let mut i = self.0.lock().unwrap();
@@ -2140,6 +2371,8 @@ impl Runtime {
             }
             let _ = write_db(&i);
         }
+        // A delegated Commander thread ended: flag its to-do and queue the review for Commander.
+        crate::commander::on_turn_finished(self, sid);
         // Handoff follows confirmed process cleanup, independent of the schedule timer or UI.
         self.queue_tick();
     }
@@ -2607,6 +2840,8 @@ impl Runtime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if is_acp(&a.provider) {
+            // TODO(commander): no per-tool restriction mechanism exists for ACP harnesses yet; Commander
+            // threads on these providers rely on CLAUDE.md/AGENTS.md ("never edit code") and Ask mode.
             if matches!(a.provider.as_str(), "antigravity" | "opencode" | "cursor") {
                 cmd.arg("acp");
             } else if a.provider == "gemini" {
@@ -2625,28 +2860,7 @@ impl Runtime {
         } else if a.provider == "codex" {
             cmd.args(["app-server", "--stdio"]);
         } else {
-            cmd.args([
-                "-p",
-                "--verbose",
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-                "--include-partial-messages",
-                "--permission-prompt-tool",
-                "stdio",
-                "--permission-mode",
-                s.options.permission_mode.unwrap_or_default().claude_mode(),
-            ]);
-            if let Some(model) = &s.options.model {
-                cmd.args(["--model", model]);
-            }
-            if let Some(effort) = &s.options.effort {
-                cmd.args(["--effort", effort]);
-            }
-            if let Some(resume) = &s.provider_id {
-                cmd.args(["--resume", resume]);
-            }
+            cmd.args(claude_args(s, p.is_commander()));
         }
         crate::agent_mcp::configure(&mut cmd, &a.provider, root, &p.id, &s.id);
         self.run_protocol(s, a, p, prompt, control, cmd)
@@ -3191,6 +3405,10 @@ impl Runtime {
                                     );
                                     if let Some(model) = &s.options.model {
                                         v["params"]["model"] = json!(model);
+                                    }
+                                    if p.is_commander() {
+                                        v["params"]["sandbox"] = json!("read-only");
+                                        v["params"]["approvalPolicy"] = json!("on-request");
                                     }
                                     v
                                 })?;
@@ -3888,6 +4106,9 @@ impl Runtime {
                     policy: "inherit".into(),
                     account: None,
                     last: None,
+                    kind: None,
+                    objective: None,
+                    model: None,
                 };
                 let pid = project.id.clone();
                 i.db.projects.push(project);
@@ -4415,6 +4636,9 @@ mod tests {
             policy: "fixed".into(),
             account: Some("a".into()),
             last: Some("b".into()),
+            kind: None,
+            objective: None,
+            model: None,
         }
     }
     #[test]
@@ -5035,6 +5259,7 @@ mod tests {
                 title: "t".into(),
                 title_manual: Some(false),
                 schedule_id: None,
+                origin: None,
                 status: "waiting".into(),
                 updated: 0,
                 last_user_message_at: None,
@@ -5328,6 +5553,7 @@ mod tests {
             title: "Test".into(),
             title_manual: Some(false),
             schedule_id: None,
+            origin: None,
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
@@ -5536,6 +5762,7 @@ mod tests {
             title: "Test".into(),
             title_manual: Some(false),
             schedule_id: None,
+            origin: None,
             status: "starting".into(),
             updated: 0,
             last_user_message_at: None,
@@ -6115,6 +6342,139 @@ mod tests {
         rt.flush().unwrap();
         assert_eq!(on_disk(&root).sessions[2].title, "renamed");
         fs::remove_dir_all(root).unwrap();
+    }
+    fn commander_fixture() -> (PathBuf, Runtime, Project, Project) {
+        let root = std::env::temp_dir().join(id());
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let rt = Runtime::open(root.join("state")).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db = db();
+            // Unsupported provider: turns fail offline, so no real CLI or account is touched.
+            for account in &mut i.db.accounts {
+                account.provider = "offline-commander-fixture".into();
+            }
+        }
+        let target = rt.import_project(work.to_str().unwrap(), "#fff".into()).unwrap();
+        let commander = rt.ensure_commander_at(&root.join("Commander")).unwrap();
+        (root, rt, target, commander)
+    }
+    fn wait_for(what: &str, mut ok: impl FnMut() -> bool) {
+        for _ in 0..100 {
+            if ok() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("timed out waiting for {what}");
+    }
+    #[test]
+    fn ensure_commander_is_idempotent_sorted_first_and_undeletable() {
+        let (root, rt, target, commander) = commander_fixture();
+        let again = rt.ensure_commander_at(&root.join("Commander")).unwrap();
+        assert_eq!(again.id, commander.id);
+        let projects = rt.snapshot().projects;
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].id, commander.id);
+        assert_eq!(projects[0].kind.as_deref(), Some("commander"));
+        assert_eq!(projects[0].name, "Commander-in-Chief");
+        assert!(rt.assert_project_deletable(&commander.id).unwrap_err().contains("cannot be deleted"));
+        assert!(rt.assert_project_deletable(&target.id).is_ok());
+        // A stale client save cannot drop the marker or the objective.
+        rt.update_project(&target.id, |p| p.objective = Some("Ship it".into())).unwrap();
+        let mut stale = commander.clone();
+        stale.kind = None;
+        stale.name = "Chief".into();
+        rt.project(stale).unwrap();
+        assert!(rt.commander_project().is_some());
+        rt.project(Project { objective: None, ..target.clone() }).unwrap();
+        assert_eq!(rt.snapshot().projects.iter().find(|p| p.id == target.id).unwrap().objective.as_deref(), Some("Ship it"));
+        // Old workspace.json files without the new fields still load.
+        let old: Project = serde_json::from_value(json!({"id":"x","name":"X","path":"/x","color":"c","policy":"inherit","account":null,"last":null})).unwrap();
+        assert!(old.kind.is_none() && old.objective.is_none() && old.model.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn commander_tools_gate_hold_approve_link_and_wake_offline() {
+        use crate::mcp::{dispatch, tools_for, Context};
+        let (root, rt, target, commander) = commander_fixture();
+        rt.0.lock().unwrap().db.sessions.push(serde_json::from_value(json!({"id":"chief","project":commander.id,"account":"a","title":"Chief","status":"done","updated":1,"provider_id":"saved","messages":[],"pending":null,"error":null})).unwrap());
+        let chief = Context { project: Some(commander.id.clone()), thread: Some("chief".into()) };
+        let other = Context { project: Some(target.id.clone()), thread: None };
+        // Tool visibility: only the Commander project sees the extra tools.
+        assert_eq!(tools_for(false).len(), 9);
+        assert_eq!(tools_for(true).len(), 19);
+        assert!(!crate::mcp::is_commander_context(&rt, &other) && crate::mcp::is_commander_context(&rt, &chief));
+        assert!(dispatch(&rt, "freddai_todo_list", json!({}), &other).unwrap_err().contains("Unknown"));
+        // Internal tools run directly and the objective is visible to everyone.
+        let todo = dispatch(&rt, "freddai_todo_add", json!({"title":"Pricing page","project":target.id}), &chief).unwrap();
+        assert_eq!(todo["ok"], true);
+        rt.update_project(&target.id, |p| p.objective = Some("Marketing site".into())).unwrap();
+        assert_eq!(dispatch(&rt, "freddai_list_projects", json!({}), &other).unwrap()["projects"][1]["objective"], "Marketing site");
+        // The outward tool is held, not executed.
+        let held = dispatch(&rt, "freddai_start_task", json!({"project":target.id,"prompt":"Build the page","request_id":"r1"}), &chief).unwrap();
+        assert_eq!(held["held"], true);
+        assert!(rt.snapshot().sessions.iter().all(|s| s.id == "chief"), "nothing started yet");
+        let pid = held["proposal_id"].as_str().unwrap().to_string();
+        // A retry returns the same card; delegating to itself is refused with ok:false.
+        assert_eq!(dispatch(&rt, "freddai_start_task", json!({"project":target.id,"prompt":"Build the page","request_id":"r1"}), &chief).unwrap()["proposal_id"], pid.as_str());
+        let selfie = dispatch(&rt, "freddai_start_task", json!({"project":commander.id,"prompt":"x","request_id":"r2"}), &chief).unwrap();
+        assert_eq!(selfie["ok"], false);
+        // Enabling a schedule is held; saving it paused is not.
+        let propose = dispatch(&rt, "freddai_propose", json!({"tool":"freddai_start_task","arguments":{"project":target.id,"prompt":"Second","request_id":"r3","todo_id":todo["todo"]["id"]},"summary":"Start the second task"}), &chief).unwrap();
+        assert_eq!(propose["held"], true);
+        let pending = crate::commander::store(&rt).unwrap().proposals().unwrap();
+        assert_eq!(pending.iter().filter(|p| p.status == "pending").count(), 2);
+        // Approve the first with an edited prompt: replays the exact call, sets origin, links an auto to-do.
+        let approved = crate::commander::respond(&rt, &pid, true, Some("Build the pricing page")).unwrap();
+        assert_eq!(approved.status, "approved", "{:?}", approved.error);
+        let thread = approved.thread.clone().unwrap();
+        let session = rt.snapshot().sessions.into_iter().find(|s| s.id == thread).unwrap();
+        assert_eq!(session.origin, Some(Origin { kind: "commander".into(), thread: Some("chief".into()) }));
+        assert_eq!(session.messages[0].text.as_str(), "Build the pricing page");
+        assert!(crate::commander::respond(&rt, &pid, true, None).unwrap_err().contains("already approved"));
+        let store = crate::commander::store(&rt).unwrap();
+        let linked = store.todo_for_thread(&thread).unwrap().unwrap();
+        assert_eq!(linked.owner, "thread");
+        // The offline turn fails, which wakes Commander: to-do needs review, review message queued/sent.
+        wait_for("wake-up", || {
+            store.todo_for_thread(&thread).unwrap().is_some_and(|t| t.status == "needs_review")
+                && rt.snapshot().sessions.iter().find(|s| s.id == "chief").is_some_and(|c| c.messages.iter().any(|m| m.text.as_str().contains("finished with status failed")))
+        });
+        let wake = rt.snapshot().sessions.iter().find(|s| s.id == "chief").unwrap().messages[0].text.to_string();
+        assert!(wake.contains(&thread) && wake.contains("freddai_todo_update"), "{wake}");
+        // Decline is recorded and never runs.
+        let declined = crate::commander::respond(&rt, pending.iter().find(|p| p.status == "pending" && p.id != pid).unwrap().id.as_str(), false, None).unwrap();
+        assert_eq!(declined.status, "declined");
+        assert!(rt.snapshot().sessions.iter().filter(|s| s.origin.as_ref().is_some_and(|o| o.kind == "commander")).count() == 1);
+        // Every call is in actions.log.
+        let log = fs::read_to_string(Path::new(&commander.path).join("actions.log")).unwrap();
+        assert!(log.contains("\"decision\":\"held\"") && log.contains("\"decision\":\"denied\"") && log.contains("\"tool\":\"wake\""), "{log}");
+        // Loop guard: a Commander-origin thread inside the Commander project never wakes it.
+        rt.0.lock().unwrap().db.sessions.push(serde_json::from_value(json!({"id":"loop","project":commander.id,"account":"a","title":"Loop","status":"done","updated":2,"provider_id":"x","messages":[],"pending":null,"error":null,"origin":{"kind":"commander","thread":"chief"}})).unwrap());
+        crate::commander::on_turn_finished(&rt, "loop");
+        assert!(store.todo_for_thread("loop").unwrap().is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn commander_threads_cannot_edit_or_run_shell_on_claude() {
+        let mut s: Session = serde_json::from_value(json!({"id":"t","project":"p","account":"a","title":"T","status":"starting","updated":1,"provider_id":"resume-1","messages":[],"pending":null,"error":null,"options":{"model":"m1","effort":"high"}})).unwrap();
+        let normal = claude_args(&s, false);
+        assert!(!normal.iter().any(|a| a == "--disallowedTools"));
+        assert!(normal.windows(2).any(|w| w == ["--model", "m1"]) && normal.windows(2).any(|w| w == ["--resume", "resume-1"]));
+        s.options.permission_mode = Some(PermissionMode::Ask);
+        let restricted = claude_args(&s, true);
+        let at = restricted.iter().position(|a| a == "--disallowedTools").unwrap();
+        let denied: Vec<_> = restricted[at + 1].split(',').collect();
+        for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"] {
+            assert!(denied.contains(&tool), "{tool}");
+        }
+        for tool in ["Read", "Grep", "Glob"] {
+            assert!(!denied.contains(&tool), "{tool}");
+        }
+        assert!(restricted.windows(2).any(|w| w == ["--allowedTools", "mcp__freddai"]));
+        assert!(restricted.windows(2).any(|w| w == ["--permission-mode", "default"]));
     }
 }
 

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Attachment } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
-import type { CompanionClient, CompanionSnapshot } from './companion';
+import type { CommanderClient, CompanionClient, CompanionSnapshot } from './companion';
 const composer = <T,>(operation: string, input: unknown) => invoke<T>('companion_composer', { operation, input });
 // The Mac reports its hardware MAC/broadcast address so the phone can wake it later. Refreshed at most hourly.
 let wakeRefreshedAt = 0;
@@ -10,7 +10,19 @@ function refreshWakeInfo() {
   wakeRefreshedAt = Date.now();
   invoke('companion_wake_refresh').catch(e => { wakeRefreshedAt = 0; console.warn('Wake details unavailable:', e); });
 }
+export const nativeCommanderClient: CommanderClient = {
+  state: () => composer('commander_state', {}),
+  proposals: () => composer('commander_proposals', {}),
+  respond: input => composer('commander_proposal_respond', input.prompt === undefined ? { id: input.id, approve: input.approve } : input),
+  todos: () => composer('commander_todos', {}),
+  saveTodo: todo => composer('commander_todo_save', { todo }),
+  notes: () => composer('commander_notes', {}),
+  readNote: name => composer('commander_note_read', { name }),
+  writeNote: (name, body) => composer('commander_note_write', { name, body }),
+};
 export const nativeCompanionClient: CompanionClient = {
+  commander: nativeCommanderClient,
+  moveProject: (project, target, after) => composer("move_project", { project, target, after }),
   saveWorkspaces: workspaces => composer("save_workspaces", { workspaces }),
   generatedFile: (thread, href, offset) => composer("generated_file", { thread, href, offset }),
   async snapshot(signal, thread) {
@@ -38,6 +50,7 @@ export const nativeCompanionClient: CompanionClient = {
   },
   voice: () => composer<{ enabled: boolean; ready: boolean }>('voice', {}),
   transcribe: file => invoke<{ text: string; durationMs: number; model: string }>('companion_transcribe_path', { path: file.path }),
+  resume: input => composer<void>('resume_thread', input),
   queue: input => composer<void>('queue', input),
   async attach(file) {
     if (file.size > 25 * 1024 * 1024) throw new Error('Each attachment must be 25 MB or smaller');

@@ -10,6 +10,15 @@ struct ThreadRowModel: Decodable, Equatable {
   let faded: Bool?
   let unread: Bool
   let updatedAt: Double
+  /// Only present on "Recent" rows: the owning project's name and colour for the small tag.
+  var projectLabel: String?
+  var projectColor: String?
+}
+
+struct RecentModel: Decodable, Equatable {
+  var threads: [ThreadRowModel] = []
+  var remaining: Int = 0
+  var expanded: Bool = false
 }
 
 struct ThreadGroupModel: Decodable, Equatable {
@@ -20,6 +29,8 @@ struct ThreadGroupModel: Decodable, Equatable {
   let threads: [ThreadRowModel]
   var olderRemaining: Int = 0
   var olderLabel: String = ""
+  /// "commander" marks the Commander-in-Chief project: listed first, with the mascot, opening its screen on tap.
+  var kind: String? = nil
 }
 
 struct OptionModel: Decodable, Equatable {
@@ -37,7 +48,13 @@ struct ThreadFiltersModel: Decodable, Equatable {
 
 struct ThreadsModel: Decodable {
   let groups: [ThreadGroupModel]
+  var canReorderProjects: Bool = false
   var selectedId: String = ""
+  /// "projects" or "recent"; JS owns this preference and the Recent list (computed by `selectRecentThreads`).
+  var view: String = "projects"
+  var recent: RecentModel = RecentModel()
+  /// Always-visible "Recent" section at the bottom of the Projects view (5, +10).
+  var recentSection: RecentModel = RecentModel()
   var filters: ThreadFiltersModel = ThreadFiltersModel()
   var workspaceOptions: [OptionModel]?
   var projectOptions: [OptionModel] = []
@@ -49,23 +66,36 @@ private enum DrawerItem: Hashable {
   case thread(String)
   case older(String)
   case empty
+  case recent(String)
+  case recentMore
+  case recentLess
+  case recentEmpty
+  case sectionHeader
 }
 
 // MARK: Drawer
 
 /// Native thread list: header (title, connection, dashboard), search + filter menu, per-project sections.
-final class ThreadDrawerViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
+final class ThreadDrawerViewController: UIViewController, UICollectionViewDelegate, UICollectionViewDragDelegate, UICollectionViewDropDelegate, UITextFieldDelegate {
   var onDashboard: (() -> Void)?
   var onSelectThread: ((String) -> Void)?
   var onSearch: ((String) -> Void)?
   var onSetFilter: ((String, String, String?) -> Void)?
   var onNewThread: ((String) -> Void)?
+  var onMoveProject: ((String, String, Bool) -> Void)?
   var onShowOlder: ((String) -> Void)?
+  var onSetView: ((String) -> Void)?
+  var onRecentPage: ((String, Bool) -> Void)?
 
   private var collapsedProjects = Set<String>()
   private var model: ThreadsModel?
   private var rows: [String: ThreadRowModel] = [:]
   private var groups: [String: ThreadGroupModel] = [:]
+  private var recentRows: [String: ThreadRowModel] = [:]
+  private let viewControl = UISegmentedControl(items: ["Projects", "Recent"])
+  /// Set when the user flips the control, until JS echoes the same view back, so a stale model cannot flip it again.
+  private var pendingView: String?
+  private var currentView: String { pendingView ?? model?.view ?? "projects" }
 
   private var collectionView: UICollectionView!
   private var dataSource: UICollectionViewDiffableDataSource<String, DrawerItem>!
@@ -74,6 +104,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private let connectionIcon = UIImageView(image: UIImage(systemName: "desktopcomputer"))
   private var searchDebounce: DispatchWorkItem?
   private let emptySection = "__empty__"
+  private let recentSection = "__recent__"
 
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -89,6 +120,9 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     collectionView.translatesAutoresizingMaskIntoConstraints = false
     collectionView.backgroundColor = .clear
     collectionView.delegate = self
+    collectionView.dragDelegate = self
+    collectionView.dropDelegate = self
+    collectionView.dragInteractionEnabled = true
     collectionView.keyboardDismissMode = .onDrag
     collectionView.allowsSelection = true
     collectionView.accessibilityIdentifier = "thread-drawer-list"
@@ -183,10 +217,21 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     dashboard.contentHorizontalAlignment = .leading
     dashboard.accessibilityIdentifier = "companion-dashboard"
     dashboard.addAction(UIAction { [weak self] _ in self?.onDashboard?() }, for: .touchUpInside)
-    let column = UIStackView(arrangedSubviews: [titleRow, dashboard, searchRow])
+    viewControl.selectedSegmentIndex = 0
+    viewControl.accessibilityLabel = "Thread view"
+    viewControl.accessibilityIdentifier = "thread-view-toggle"
+    viewControl.addTarget(self, action: #selector(viewChanged), for: .valueChanged)
+    let column = UIStackView(arrangedSubviews: [titleRow, viewControl, dashboard, searchRow])
     column.axis = .vertical
     column.spacing = 10
     return column
+  }
+
+  @objc private func viewChanged() {
+    let view = viewControl.selectedSegmentIndex == 1 ? "recent" : "projects"
+    pendingView = view
+    onSetView?(view)
+    if let model = model { apply(model) }
   }
 
   @objc private func searchChanged() {
@@ -236,11 +281,43 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     filterButton.accessibilityValue = active ? "Filters on" : nil
   }
 
+  // Only project headers initiate a local drag. Dropping moves the entire group through JS.
+  func collectionView(_ collectionView: UICollectionView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem] {
+    guard model?.canReorderProjects == true, currentView == "projects",
+          case .header(let project) = dataSource.itemIdentifier(for: indexPath), !project.isEmpty else { return [] }
+    let item = UIDragItem(itemProvider: NSItemProvider(object: (groups[project]?.label ?? project) as NSString))
+    item.localObject = project
+    return [item]
+  }
+
+  func collectionView(_ collectionView: UICollectionView, dropSessionDidUpdate session: UIDropSession, withDestinationIndexPath destinationIndexPath: IndexPath?) -> UICollectionViewDropProposal {
+    guard model?.canReorderProjects == true, currentView == "projects", session.localDragSession != nil,
+          session.items.count == 1, let project = session.items.first?.localObject as? String,
+          let destination = destinationIndexPath, destination.section < dataSource.snapshot().sectionIdentifiers.count,
+          groups[project] != nil else { return UICollectionViewDropProposal(operation: .forbidden) }
+    let target = dataSource.snapshot().sectionIdentifiers[destination.section]
+    return UICollectionViewDropProposal(operation: target != project && groups[target] != nil ? .move : .forbidden, intent: .unspecified)
+  }
+
+  func collectionView(_ collectionView: UICollectionView, performDropWith coordinator: UICollectionViewDropCoordinator) {
+    guard model?.canReorderProjects == true, currentView == "projects",
+          let project = coordinator.items.first?.dragItem.localObject as? String,
+          let destination = coordinator.destinationIndexPath,
+          destination.section < dataSource.snapshot().sectionIdentifiers.count else { return }
+    let target = dataSource.snapshot().sectionIdentifiers[destination.section]
+    guard target != project, groups[target] != nil, groups[project] != nil else { return }
+    let frame = collectionView.layoutAttributesForItem(at: destination)?.frame ?? .zero
+    let after = destination.item > 0 || coordinator.session.location(in: collectionView).y > frame.midY
+    onMoveProject?(project, target, after)
+  }
+
   // MARK: Data source
 
   private func configureDataSource() {
     let headerReg = UICollectionView.CellRegistration<ProjectHeaderCell, String> { [weak self] cell, _, project in
       guard let self = self, let group = self.groups[project] else { return }
+      cell.accessibilityIdentifier = "project-header-\(project)"
+      cell.accessibilityHint = self.model?.canReorderProjects == true ? "Double tap to toggle threads. Touch and hold to drag this project." : "Double tap to toggle threads"
       cell.configure(group: group, collapsed: self.collapsedProjects.contains(project)) { [weak self] in self?.onNewThread?(project) }
     }
     let threadReg = UICollectionView.CellRegistration<ThreadCell, String> { [weak self] cell, _, id in
@@ -250,6 +327,19 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       let label = self?.groups[project]?.olderLabel ?? "Show older threads"
       cell.configure(text: label, color: .tintColor, centered: false, button: true)
     }
+    let recentReg = UICollectionView.CellRegistration<ThreadCell, String> { [weak self] cell, _, id in
+      if let row = self?.recentRows[id] { cell.configure(row, showProject: true) }
+    }
+    let moreReg = UICollectionView.CellRegistration<TextRowCell, String> { cell, _, _ in
+      cell.configure(text: "Show more", color: .tintColor, centered: false, button: true)
+    }
+    let lessReg = UICollectionView.CellRegistration<TextRowCell, String> { cell, _, _ in
+      cell.configure(text: "Show less", color: .tintColor, centered: false, button: true)
+    }
+    let recentEmptyReg = UICollectionView.CellRegistration<TextRowCell, String> { cell, _, _ in
+      cell.configure(text: "No recent threads", color: .secondaryLabel, centered: true, button: false)
+    }
+    let sectionHeaderReg = UICollectionView.CellRegistration<SectionTitleCell, String> { cell, _, _ in cell.configure(text: "Recent") }
     let emptyReg = UICollectionView.CellRegistration<TextRowCell, String> { [weak self] cell, _, _ in
       let filtered = (self?.model?.filters).map { !$0.query.isEmpty || !$0.project.isEmpty || $0.status != "all" } ?? false
       cell.configure(text: filtered ? "No threads match your filters." : "No threads yet. Start one with the compose button.", color: .secondaryLabel, centered: true, button: false)
@@ -260,22 +350,33 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       case .thread(let id): return cv.dequeueConfiguredReusableCell(using: threadReg, for: indexPath, item: id)
       case .older(let p): return cv.dequeueConfiguredReusableCell(using: olderReg, for: indexPath, item: p)
       case .empty: return cv.dequeueConfiguredReusableCell(using: emptyReg, for: indexPath, item: "")
+      case .recent(let id): return cv.dequeueConfiguredReusableCell(using: recentReg, for: indexPath, item: id)
+      case .recentMore: return cv.dequeueConfiguredReusableCell(using: moreReg, for: indexPath, item: "")
+      case .recentLess: return cv.dequeueConfiguredReusableCell(using: lessReg, for: indexPath, item: "")
+      case .sectionHeader: return cv.dequeueConfiguredReusableCell(using: sectionHeaderReg, for: indexPath, item: "")
+      case .recentEmpty: return cv.dequeueConfiguredReusableCell(using: recentEmptyReg, for: indexPath, item: "")
       }
     }
   }
 
   /// Applies a new model with a diff keyed by thread id, so updates do not reload the list or reset its scroll offset.
   func apply(_ new: ThreadsModel) {
-    let previousRows = rows, previousGroups = groups
+    let previousRows = rows, previousGroups = groups, previousRecent = recentRows
     model = new
     rows = Dictionary(new.groups.flatMap { $0.threads }.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     groups = Dictionary(new.groups.map { ($0.project, $0) }, uniquingKeysWith: { a, _ in a })
+    if pendingView == new.view { pendingView = nil }
+    let recentMode = currentView == "recent"
+    // Recent rows come from the Recent view, or from the bottom section of the Projects view; never both at once.
+    let recentSource = recentMode ? new.recent : new.recentSection
+    recentRows = Dictionary(recentSource.threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    viewControl.selectedSegmentIndex = recentMode ? 1 : 0
     guard isViewLoaded, dataSource != nil else { return }
 
     var snapshot = NSDiffableDataSourceSnapshot<String, DrawerItem>()
     var seen = Set<DrawerItem>()
     var sections = Set<String>()
-    for group in new.groups where sections.insert(group.project).inserted {
+    for group in new.groups where !recentMode && sections.insert(group.project).inserted {
       snapshot.appendSections([group.project])
       var items: [DrawerItem] = [.header(group.project)]
       if !collapsedProjects.contains(group.project) {
@@ -284,7 +385,21 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       }
       snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: group.project)
     }
-    if new.groups.allSatisfy({ $0.threads.isEmpty }) {
+    if recentMode {
+      snapshot.appendSections([recentSection])
+      var items: [DrawerItem] = new.recent.threads.map { .recent($0.id) }
+      if items.isEmpty { items = [.recentEmpty] }
+      if new.recent.remaining > 0 { items.append(.recentMore) }
+      if new.recent.expanded { items.append(.recentLess) }
+      snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: recentSection)
+    } else if !new.recentSection.threads.isEmpty {
+      if new.groups.allSatisfy({ $0.threads.isEmpty }) { snapshot.appendSections([emptySection]); snapshot.appendItems([.empty], toSection: emptySection) }
+      snapshot.appendSections([recentSection])
+      var items: [DrawerItem] = [.sectionHeader] + new.recentSection.threads.map { .recent($0.id) }
+      if new.recentSection.remaining > 0 { items.append(.recentMore) }
+      if new.recentSection.expanded { items.append(.recentLess) }
+      snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: recentSection)
+    } else if new.groups.allSatisfy({ $0.threads.isEmpty }) {
       snapshot.appendSections([emptySection])
       snapshot.appendItems([.empty], toSection: emptySection)
     }
@@ -296,6 +411,8 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
         changed.append(item)
       case .older(let p): if previousGroups[p]?.olderLabel != groups[p]?.olderLabel { changed.append(item) }
       case .empty: changed.append(item)
+      case .recent(let id): if previousRecent[id] != recentRows[id] { changed.append(item) }
+      case .recentMore, .recentLess, .recentEmpty, .sectionHeader: break
       }
     }
     let existing = Set(dataSource.snapshot().itemIdentifiers)
@@ -311,14 +428,15 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   func refreshTimes() {
     guard isViewLoaded, dataSource != nil else { return }
     var snapshot = dataSource.snapshot()
-    let threads = snapshot.itemIdentifiers.filter { if case .thread = $0 { return true } else { return false } }
+    let threads = snapshot.itemIdentifiers.filter { if case .thread = $0 { return true } else if case .recent = $0 { return true } else { return false } }
     guard !threads.isEmpty else { return }
     snapshot.reconfigureItems(threads)
     dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in self?.syncSelection() }
   }
 
   private func syncSelection() {
-    guard let selected = model?.selectedId, !selected.isEmpty, let path = dataSource.indexPath(for: .thread(selected)) else {
+    let item: DrawerItem = currentView == "recent" ? .recent(model?.selectedId ?? "") : .thread(model?.selectedId ?? "")
+    guard let selected = model?.selectedId, !selected.isEmpty, let path = dataSource.indexPath(for: item) else {
       collectionView.indexPathsForSelectedItems?.forEach { collectionView.deselectItem(at: $0, animated: false) }
       return
     }
@@ -329,7 +447,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
 
   func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
     switch dataSource.itemIdentifier(for: indexPath) {
-    case .header, .thread, .older: return true
+    case .header, .thread, .older, .recent, .recentMore, .recentLess: return true
     default: return false
     }
   }
@@ -338,9 +456,18 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     switch dataSource.itemIdentifier(for: indexPath) {
     case .header(let project):
       collectionView.deselectItem(at: indexPath, animated: false)
+      if groups[project]?.kind == "commander" { onSelectThread?("commander:open"); return }
       if !collapsedProjects.insert(project).inserted { collapsedProjects.remove(project) }
       if let model = model { apply(model) }
-    case .thread(let id): onSelectThread?(id)
+    case .thread(let id), .recent(let id): onSelectThread?(id)
+    case .recentMore:
+      collectionView.deselectItem(at: indexPath, animated: true)
+      syncSelection()
+      onRecentPage?("more", currentView != "recent")
+    case .recentLess:
+      collectionView.deselectItem(at: indexPath, animated: true)
+      syncSelection()
+      onRecentPage?("less", currentView != "recent")
     case .older(let project):
       collectionView.deselectItem(at: indexPath, animated: true)
       syncSelection()
@@ -410,14 +537,39 @@ final class ProjectHeaderCell: UICollectionViewListCell {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    icon.layer.cornerRadius = icon.clipsToBounds ? min(icon.bounds.width, icon.bounds.height) / 2 : 0
+  }
+
   func configure(group: ThreadGroupModel, collapsed: Bool, onAdd: @escaping () -> Void) {
     self.onAdd = onAdd
+    let commander = group.kind == "commander"
+    icon.clipsToBounds = commander
+    icon.layer.cornerRadius = commander ? min(icon.bounds.width, icon.bounds.height) / 2 : 0
+    chevron.isHidden = commander
+    addButton.isHidden = commander
+    if commander {
+      icon.image = MascotImage.smallImage
+      icon.preferredSymbolConfiguration = nil
+      icon.tintColor = nil
+      icon.accessibilityIdentifier = "drawer-commander-icon"
+      accessibilityLabel = group.label
+      accessibilityHint = "Opens Commander"
+      accessibilityTraits = [.button, .header]
+      label.text = group.label
+      label.font = UIFont.preferredFont(forTextStyle: .headline)
+      label.textColor = .label
+      return
+    }
+    icon.image = UIImage(systemName: "folder.fill")
+    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+    label.font = UIFont.preferredFont(forTextStyle: .subheadline).bold()
     chevron.image = UIImage(systemName: collapsed ? "chevron.right" : "chevron.down")
     chevron.tintColor = .secondaryLabel
     chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
     accessibilityLabel = group.label
     accessibilityValue = collapsed ? "Collapsed" : "Expanded"
-    accessibilityHint = "Double tap to toggle threads"
     accessibilityTraits = [.button, .header]
     label.text = group.label
     let projectColor = color(fromHex: group.color) ?? .secondaryLabel
@@ -503,9 +655,19 @@ final class StatusIndicatorView: UIView {
 final class ThreadCell: UICollectionViewListCell {
   private let indicator = StatusIndicatorView()
   private let titleLabel = UILabel()
+  private let projectLabel = UILabel()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
+    projectLabel.font = .preferredFont(forTextStyle: .caption1)
+    projectLabel.adjustsFontForContentSizeCategory = true
+    projectLabel.numberOfLines = 1
+    projectLabel.lineBreakMode = .byTruncatingTail
+    projectLabel.isHidden = true
+    let textStack = UIStackView(arrangedSubviews: [titleLabel, projectLabel])
+    textStack.axis = .vertical
+    textStack.spacing = 1
+    textStack.translatesAutoresizingMaskIntoConstraints = false
     titleLabel.numberOfLines = 1
     titleLabel.lineBreakMode = .byTruncatingTail
     titleLabel.font = .preferredFont(forTextStyle: .body)
@@ -513,17 +675,17 @@ final class ThreadCell: UICollectionViewListCell {
     titleLabel.translatesAutoresizingMaskIntoConstraints = false
     indicator.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(indicator)
-    contentView.addSubview(titleLabel)
+    contentView.addSubview(textStack)
     // Titles are a single truncated line, so the indicator slot is simply centred on the title.
     NSLayoutConstraint.activate([
       indicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0),
       indicator.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
       indicator.heightAnchor.constraint(equalToConstant: 20),
-      titleLabel.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 6),
-      titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
-      titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-      titleLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 9),
-      titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -9),
+      textStack.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 6),
+      textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+      textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 9),
+      textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -9),
       contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
     ])
     isAccessibilityElement = true
@@ -541,16 +703,58 @@ final class ThreadCell: UICollectionViewListCell {
     backgroundConfiguration = background
   }
 
-  func configure(_ row: ThreadRowModel) {
+  func configure(_ row: ThreadRowModel, showProject: Bool = false) {
+    let project = showProject ? (row.projectLabel ?? "") : ""
+    projectLabel.text = project
+    projectLabel.textColor = color(fromHex: row.projectColor ?? "") ?? .secondaryLabel
+    projectLabel.isHidden = project.isEmpty
     contentView.alpha = row.faded == true ? 0.65 : 1
     titleLabel.text = (row.pinned == true ? "📌 " : "") + row.title
     let body = UIFont.preferredFont(forTextStyle: .body)
     let font = row.unread ? body.bold() : body
     titleLabel.font = font
     let spoken = indicator.configure(status: row.status, unread: row.unread)
-    accessibilityLabel = (row.pinned == true ? "Pinned, " : "") + row.title
+    accessibilityLabel = (row.pinned == true ? "Pinned, " : "") + row.title + (project.isEmpty ? "" : ", \(project)")
     accessibilityValue = spoken.isEmpty ? nil : spoken
     accessibilityTraits = .button
+  }
+}
+
+final class SectionTitleCell: UICollectionViewListCell {
+  private let icon = UIImageView(image: UIImage(systemName: "clock.fill"))
+  private let label = UILabel()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+    icon.tintColor = .secondaryLabel
+    label.font = UIFont.preferredFont(forTextStyle: .subheadline).bold()
+    label.adjustsFontForContentSizeCategory = true
+    label.textColor = .secondaryLabel
+    label.accessibilityTraits = .header
+    let stack = UIStackView(arrangedSubviews: [icon, label, UIView()])
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 8
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+      stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2),
+      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+      stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+    ])
+    var background = UIBackgroundConfiguration.clear()
+    background.backgroundColor = .clear
+    backgroundConfiguration = background
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func configure(text: String) {
+    label.text = text
+    isAccessibilityElement = true
+    accessibilityLabel = text
+    accessibilityTraits = .header
   }
 }
 

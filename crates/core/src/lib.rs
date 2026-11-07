@@ -37,6 +37,7 @@ pub mod import;
 mod computer_use;
 mod agent_mcp;
 pub mod mcp;
+pub mod commander;
 
 pub mod platform;
 #[cfg(windows)]

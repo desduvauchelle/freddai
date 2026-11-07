@@ -1,13 +1,24 @@
 import { OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
+import { COMPANION_RECENT_PAGING, asThreadNavView, selectRecentThreads, type ThreadNavView } from '../recentThreads';
 import { companionStatusRead, groupCompanionThreads, selectThreads, scopeCompanion } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
 export type NativeThread = { pinned?: boolean; id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
-export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
+export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; kind?: 'commander'; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
+/** A flat "Recent" row: the usual thread row plus the owning project's name/colour for the small tag. */
+export type NativeRecentThread = NativeThread & { projectLabel: string; projectColor: string };
+export type NativeRecent = { threads: NativeRecentThread[]; remaining: number; expanded: boolean };
 export type NativeOption = { id: string; label: string };
 export type NativeThreadsModel = {
   groups: NativeThreadGroup[];
+  canReorderProjects?: boolean;
+  /** Which list the drawer shows; owned by JS (`freddai.companion.threadNavView`) and echoed back via `setView`. */
+  view: ThreadNavView;
+  /** Computed with the shared `selectRecentThreads` helper so Swift/Kotlin never re-implement ordering or paging. */
+  recent: NativeRecent;
+  /** Always-visible "Recent" section at the bottom of the Projects view (5, +10), independent of `recent`. */
+  recentSection: NativeRecent;
   selectedId: string;
   filters: { workspace?: string; project: string; status: ThreadFilter; query: string };
   workspaceOptions?: NativeOption[];
@@ -40,21 +51,35 @@ function nativeThread(thread: CompanionThread, read: Record<string, number>): Na
   };
 }
 
+const isCommanderGroup = (group: { project?: { kind?: string | null } }) => group.project?.kind === 'commander';
+
 /** Builds the drawer model with the same selection, grouping and paging logic as the web list. */
 export function buildThreadsModel(input: {
-  workspace?: string; canManageWorkspaces?: boolean; data: CompanionSnapshot; read: Record<string, number>; selected: string; project: string; query: string; filter: ThreadFilter; olderPages: Record<string, number>;
+  workspace?: string; canManageWorkspaces?: boolean; data: CompanionSnapshot; read: Record<string, number>; selected: string; project: string; query: string; filter: ThreadFilter; olderPages: Record<string, number>; view?: ThreadNavView; recentPages?: number; sectionPages?: number;
 }): NativeThreadsModel {
   const { selected, project, query, filter, olderPages } = input;
   const data = scopeCompanion(input.data, input.workspace || "");
   const read = companionStatusRead(data, input.read);
   const threads = selectThreads(data, project, query, filter, 'recent', read);
   const groups = groupCompanionThreads(data, threads, { read, selected, filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
+  const recentRows = (pick: ReturnType<typeof selectRecentThreads<CompanionThread>>): NativeRecent => ({
+    threads: pick.threads.map(t => {
+      const owner = data.projects.find(p => p.id === t.project);
+      return { ...nativeThread(t, read), projectLabel: owner?.name || 'Project', projectColor: owner?.color || '' };
+    }),
+    remaining: pick.remaining,
+    expanded: pick.expanded,
+  });
   return {
-    groups: groups.map(group => ({
+    view: input.view ?? 'projects',
+    recent: recentRows(selectRecentThreads(threads, input.recentPages ?? 0, COMPANION_RECENT_PAGING)),
+    recentSection: recentRows(selectRecentThreads(threads, input.sectionPages ?? 0)),
+    groups: [...groups].sort((a, b) => Number(isCommanderGroup(b)) - Number(isCommanderGroup(a))).map(group => ({
       project: group.id,
       label: group.project?.name || 'Project',
       color: group.project?.color || '',
       canStart: !!group.project?.canStart,
+      ...(group.project && 'kind' in group.project && group.project.kind === 'commander' ? { kind: 'commander' as const } : {}),
       threads: [...group.active, ...group.older].map(t => nativeThread(t, read)),
       olderRemaining: group.remaining,
       olderLabel: group.pageCount ? `Show ${Math.min(OLDER_PAGE_SIZE, group.remaining)} more (${group.remaining})` : `Show older threads (${group.remaining})`,
@@ -89,6 +114,8 @@ export type ThreadEventActions = {
   setFilters(project: string, status: ThreadFilter): void;
   newThread(project: string): void;
   showOlder(project: string): void;
+  setView?(view: ThreadNavView): void;
+  recentPage?(action: 'more' | 'less', section?: boolean): void;
 };
 /** Maps raw native event payloads onto state changes, tolerating malformed payloads. */
 export function createThreadEventHandlers(actions: ThreadEventActions) {
@@ -103,6 +130,8 @@ export function createThreadEventHandlers(actions: ThreadEventActions) {
     },
     newThread: (payload: { project?: unknown }) => actions.newThread(typeof payload?.project === 'string' ? payload.project : ''),
     showOlder: (payload: { project?: unknown }) => { if (typeof payload?.project === 'string') actions.showOlder(payload.project); },
+    setView: (payload: { view?: unknown }) => actions.setView?.(asThreadNavView(payload?.view)),
+    recentPage: (payload: { action?: unknown; section?: unknown }) => { if (payload?.action === 'more' || payload?.action === 'less') actions.recentPage?.(payload.action, payload.section === 'bottom'); },
   };
 }
 

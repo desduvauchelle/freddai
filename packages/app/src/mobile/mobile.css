@@ -344,6 +344,12 @@
   font-size: 12px;
   color: var(--muted-foreground);
 }
+/* Projects | Recent switch and the Recent list's project tag. */
+.companion .thread-view-toggle { display: flex; gap: 2px; margin: 0 16px 12px; padding: 2px; border-radius: 9px; background: var(--muted, rgb(127 127 127 / .16)); }
+.companion .thread-view-toggle > button { flex: 1; min-width: 0; height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-foreground, #a29ba9); font: inherit; font-size: 13px; font-weight: 550; }
+.companion .thread-view-toggle > button[aria-pressed="true"] { background: var(--background, #fff); color: var(--foreground, inherit); box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
+.companion-project-chip { display: inline-block; max-width: 45%; margin-right: 6px; padding: 0 6px; overflow: hidden; vertical-align: bottom; text-overflow: ellipsis; white-space: nowrap; border-radius: 999px; background: color-mix(in srgb, currentColor 14%, transparent); font-size: 11px; line-height: 16px; }
+.companion-recent .recent-threads-footer > button { margin: 0 8px; font-size: 12px; color: var(--muted-foreground); }
 .companion-day-label {
   padding: 12px 16px 4px;
   font-size: 11px;
@@ -438,13 +444,16 @@
   display: flex;
   flex-direction: column;
 }
-.companion-latest {
+.companion .companion-latest {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -941,3 +950,23 @@
 .companion-queue-list .companion-queue-steer { width: auto; min-width: 44px; padding-inline: 8px; }
 
 .companion-workspaces { max-height: 85dvh; overflow-y: auto; }
+
+.companion-project-drag { touch-action: none; cursor: grab; border: 0; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+.companion-project-drag:active { cursor: grabbing; }
+
+.companion-outbox { flex-shrink: 0; max-height: 160px; overflow: auto; margin: 8px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 12px; }
+.companion-outbox > div { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.companion-outbox button { background: transparent; color: inherit; border: 0; text-align: left; cursor: pointer; }
+.companion-outbox button:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-outbox button:disabled { opacity: .4; cursor: default; }
+
+/* Match the desktop queue and composer while retaining phone touch targets. */
+.companion .message-queue { margin: 12px 12px 0; border-bottom: 1px solid var(--adaptive-border, #484853); border-radius: 18px; padding-bottom: 0; font-size: 14px; }
+.companion .message-queue li { flex-wrap: wrap; gap: 4px; padding: 4px 8px; }
+.companion .message-queue-preview { flex-basis: calc(100% - 24px); }
+.companion .message-queue-actions { gap: 4px; }
+.companion .message-queue button { min-width: 44px; min-height: 44px; font-size: 12px; }
+.companion .message-queue-action-label { display: inline; }
+.companion .message-queue textarea { font-size: 16px; }
+.companion-composer { border-radius: 24px; }
+.companion-composer-tools { flex-wrap: nowrap; }

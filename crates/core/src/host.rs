@@ -112,6 +112,11 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             project: p["context"]["project"].as_str().map(str::to_owned),
             thread: p["context"]["thread"].as_str().map(str::to_owned),
         })?,
+        "mcp_is_commander" => json!(crate::mcp::is_commander_context(rt, &crate::mcp::Context {
+            project: p["context"]["project"].as_str().map(str::to_owned),
+            thread: p["context"]["thread"].as_str().map(str::to_owned),
+        })),
+        m if crate::commander::is_host_command(m) => crate::commander::host_call(rt, m, &p)?,
         "snapshot" => {
             let (db, wait, held) = rt.snapshot_timed();
             let t = std::time::Instant::now();
@@ -394,6 +399,10 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
     lock.try_lock_exclusive()
         .map_err(|_| "A Freddai host already owns this workspace")?;
     let rt = Runtime::open(root.clone())?;
+    // Loud, but not fatal: the rest of the app must still work if the Commander folder is unusable.
+    if let Err(error) = rt.ensure_commander() {
+        eprintln!("{}", json!({"event":"commander.ensure_failed","error":error}));
+    }
     #[cfg(unix)]
     install_shutdown_flush(rt.clone());
     let scheduler = rt.clone();

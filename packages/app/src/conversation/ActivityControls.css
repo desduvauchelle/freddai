@@ -1,0 +1,2 @@
+.activity-control { min-height: 44px; min-width: 76px; flex-shrink: 0; }
+ .activity-control.activity-stop { margin-inline-start: auto; min-width: 44px; width: 44px; }

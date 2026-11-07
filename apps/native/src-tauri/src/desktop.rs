@@ -538,6 +538,72 @@ async fn save_project(h: State<'_, Host>, project: Value) -> Result<Value, Strin
     .await
 }
 #[tauri::command]
+async fn commander_state(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_state", json!({})).await
+}
+#[tauri::command]
+async fn commander_todos(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_todos", json!({})).await
+}
+#[tauri::command]
+async fn commander_todo_save(h: State<'_, Host>, todo: Value) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_todo_save", json!({"todo":todo})).await
+}
+#[tauri::command]
+async fn commander_notes(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_notes", json!({})).await
+}
+#[tauri::command]
+async fn commander_note_read(h: State<'_, Host>, name: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_note_read", json!({"name":name})).await
+}
+#[tauri::command]
+async fn commander_note_write(h: State<'_, Host>, name: String, body: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_note_write", json!({"name":name,"body":body})).await
+}
+#[tauri::command]
+async fn commander_proposals(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_proposals", json!({})).await
+}
+#[tauri::command]
+async fn commander_proposal_respond(h: State<'_, Host>, id: String, approve: bool, prompt: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_proposal_respond", json!({"id":id,"approve":approve,"prompt":prompt})).await
+}
+#[tauri::command]
+async fn commander_memory(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_memory", json!({})).await
+}
+#[tauri::command]
+async fn commander_memory_save(h: State<'_, Host>, memory: Value) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_memory_save", json!({"memory":memory})).await
+}
+#[tauri::command]
+async fn project_objective_set(h: State<'_, Host>, project: String, objective: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "project_objective_set", json!({"project":project,"objective":objective})).await
+}
+#[tauri::command]
+async fn commander_settings_set(h: State<'_, Host>, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    // Read the raw body: an explicit `null` clears a setting, an absent key leaves it alone.
+    let tauri::ipc::InvokeBody::Json(body) = request.body() else {
+        return Err("commander_settings_set expects a JSON object".into());
+    };
+    let mut p = serde_json::Map::new();
+    for key in ["account", "model"] {
+        if let Some(value) = body.get(key) {
+            p.insert(key.into(), value.clone());
+        }
+    }
+    rpc(h.inner().clone(), "commander_settings_set", Value::Object(p)).await
+}
+#[tauri::command]
+async fn load_project_order(h: State<'_, Host>) -> Result<Option<Vec<String>>, String> {
+    crate::thread_list_settings::project_order(&h.root)
+}
+#[tauri::command]
+async fn save_project_order(h: State<'_, Host>, order: Vec<String>) -> Result<(), String> {
+    crate::thread_list_settings::save_project_order(&h.root, &order)
+}
+#[tauri::command]
 async fn save_thread_list(h: State<'_, Host>, settings: crate::thread_list_settings::ThreadListSettings) -> Result<(), String> {
     let dir = h.root.join("companion");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -1025,6 +1091,20 @@ pub fn run() {
             import_sessions,
             save_preferences,
             save_thread_list,
+            load_project_order,
+            save_project_order,
+            commander_state,
+            commander_todos,
+            commander_todo_save,
+            commander_notes,
+            commander_note_read,
+            commander_note_write,
+            commander_proposals,
+            commander_proposal_respond,
+            commander_memory,
+            commander_memory_save,
+            project_objective_set,
+            commander_settings_set,
             login,
             login_state,
             cancel_login,

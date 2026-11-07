@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { empty } from "./types";
 import { DesktopApp } from "./DesktopApp";
@@ -11,9 +11,18 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke: vi.fn(asyn
   return null;
 }) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => ["/fixture/notes.txt"]) }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
-const nativeDrops = vi.hoisted(() => ({ window: null as null | ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) }));
-vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ onDragDropEvent: vi.fn(async (handler) => { nativeDrops.window = handler; return () => { nativeDrops.window = null; }; }) }) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, handler, options) => {
+  if (name === "tauri://drag-drop") {
+    const callback: NonNullable<typeof nativeDrops.raw> = (target, payload) => {
+      if (options?.target?.kind === "AnyLabel" && options.target.label === target.label) handler({ payload });
+    };
+    nativeDrops.raw = callback;
+    return () => { if (nativeDrops.raw === callback) nativeDrops.raw = null; };
+  }
+  return () => {};
+}) }));
+const nativeDrops = vi.hoisted(() => ({ raw: null as null | ((target: { kind: string; label: string }, payload: { paths: string[]; position: { x: number; y: number } }) => void) }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ label: "main" }) }));
 vi.mock("./Dormouse", () => ({ Dormouse: () => null }));
 beforeEach(() => {
   localStorage.clear(); resetDrafts();
@@ -71,11 +80,37 @@ it("accepts window-routed file drops into a running thread's next draft after th
   fireEvent.click(await screen.findByText("Alpha"));
   fireEvent.change(screen.getByRole("textbox", { name: "Message agent" }), { target: { value: "Next draft" } });
   // Tauri routes main-content drops to Window when a child browser webview exists.
-  await act(async () => nativeDrops.window?.({ payload: { type: "drop", paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } } }));
+  await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
+  await act(async () => nativeDrops.raw?.({ kind: "Window", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
   expect(screen.queryByText("notes.txt")).toBeTruthy();
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Next draft");
   fireEvent.click(screen.getByText("Beta"));
   expect(screen.queryByText("notes.txt")).toBeNull();
   fireEvent.click(screen.getByText("Alpha"));
   expect(screen.getByText("notes.txt")).toBeTruthy();
+});
+
+it("accepts webview-routed Finder drops into the conversation draft", async () => {
+  render(<DesktopApp />);
+  fireEvent.click(await screen.findByText("Alpha"));
+  await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("notes.txt")).toBeTruthy();
+});
+
+it("ignores drops intended for a separate conversation window", async () => {
+  render(<DesktopApp />);
+  fireEvent.click(await screen.findByText("Alpha"));
+  await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "thread-other" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("notes.txt")).toBeNull();
+});
+
+it("accepts webview drops into the new-thread draft", async () => {
+  render(<DesktopApp />);
+  await screen.findByText("Alpha");
+  fireEvent.click(screen.getByRole("button", { name: "New thread" }));
+  await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("notes.txt")).toBeTruthy();
 });

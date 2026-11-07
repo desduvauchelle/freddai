@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Session } from "./types";
 import { ConversationActivity } from "./MascotScenes";
@@ -58,4 +58,15 @@ it("tracks dispatch time across updates and waiting, resets per turn and hides o
     view.rerender(<ConversationActivity thread={{ ...active, status: "done" }} />);
     expect(screen.queryByText(/elapsed/)).toBeNull();
   } finally { vi.useRealTimers(); }
+});
+
+it("keeps Stop and Resume scoped to their own conversation panes", () => {
+  const stopLeft = vi.fn(), resumeRight = vi.fn();
+  render(<><ConversationActivity thread={{ ...thread, status: "running" }} onStop={stopLeft} />
+    <ConversationActivity thread={{ ...thread, id: "right", status: "interrupted" }} onResume={resumeRight} /></>);
+  fireEvent.click(screen.getByRole("button", { name: /Stop current turn/ }));
+  expect(stopLeft).toHaveBeenCalledOnce();
+  expect(resumeRight).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+  expect(resumeRight).toHaveBeenCalledOnce();
 });

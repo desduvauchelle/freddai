@@ -21,9 +21,10 @@ vi.mock('./native-shell', () => ({
   setDashboard: shell.setDashboard, onDashboardAction: shell.on('dashboardAction'),
   setConnection: vi.fn(async () => {}), setThreads: vi.fn(async () => {}), setThreadMeta: vi.fn(async () => {}),
   onNavBack: shell.on('navBack'), onComposerSend: shell.on('composerSend'), onConnectionTap: shell.on('connectionTap'), onThreadAction: shell.on('threadAction'), onSelectThread: shell.on('selectThread'),
-  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onShowOlder: shell.on('showOlder'), onDashboard: shell.on('dashboard'),
+  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onMoveProject: shell.on('moveProject'), onShowOlder: shell.on('showOlder'), onSetView: shell.on('setView'), onRecentPage: shell.on('recentPage'), onDashboard: shell.on('dashboard'),
 }));
 import { MobileApp } from './MobileApp';
+import { setThreads as sentThreads } from './native-shell';
 
 const assistants = [{ id: 'a', name: 'Personal', provider: 'claude' }, { id: 'b', name: 'Work', provider: 'codex' }];
 const data: CompanionSnapshot = {
@@ -118,13 +119,14 @@ it('shows an upload spinner until the attachment finishes, then a sending spinne
   await waitFor(() => expect(screen.queryByText('Sending…')).toBeNull());
 });
 
-it('hands the text and chips back to the native composer and shows the error when the send fails', async () => {
+it('retains rejected text and chips in the outbox without overwriting the next draft', async () => {
   const client = clientWith({ start: vi.fn(async () => { throw new Error('Mac said no'); }) });
   render(<MobileApp client={client} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await send('Try again', [file]);
-  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Mac said no');
-  expect(shell.setComposerText).toHaveBeenCalledWith('Try again', [file]);
+  expect(await screen.findByText('Mac said no')).toBeTruthy();
+  expect(shell.setComposerText).not.toHaveBeenCalledWith('Try again', [file]);
+  expect(JSON.parse(localStorage.getItem('freddai.companion.outbox.v1') || '[]')[0]).toMatchObject({ prompt: 'Try again', nativeFiles: [file], blocked: true });
   expect(shell.discardFiles).not.toHaveBeenCalled();
 });
 
@@ -190,7 +192,8 @@ it('shows an accepted new message without a Mac handoff or queue label while the
   render(<MobileApp client={clientWith()} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await send('Start this work');
-  await screen.findByText('Start this work');
+  // The header pill shows the thread title too; the message itself must be in the transcript.
+  await waitFor(() => expect(screen.getAllByText('Start this work').some(el => !el.closest('.companion-fh'))).toBe(true));
   expect(screen.queryByText('Queued on your Mac')).toBeNull();
   expect(screen.queryByText('Continue this thread on your Mac.')).toBeNull();
   expect(screen.getByText('Starting…')).toBeTruthy();
@@ -279,15 +282,15 @@ it('starts an idle reply immediately and never duplicates it in the dispatch que
 });
 
 
-it('restores an idle reply on failure and returns the avatar to its real state', async () => {
+it('retains a rejected idle reply for explicit retry and returns the avatar to its real state', async () => {
   render(<MobileApp client={clientWith({ reply: vi.fn(async () => { throw new Error('Reply rejected'); }) })} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 't1' }); });
   await send('Keep my reply');
   expect(await screen.findByText('Reply rejected')).toBeTruthy();
-  expect(screen.queryByRole('article', { name: 'Your message' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   expect(screen.getByText('Completed')).toBeTruthy();
-  expect(shell.setComposerText).toHaveBeenCalledWith('Keep my reply', []);
+  expect(shell.setComposerText).not.toHaveBeenCalledWith('Keep my reply', []);
 });
 
 it('shows a connection scene before projects are available, then replaces it with ready controls', async () => {
@@ -440,6 +443,34 @@ it.each(['thread', 'home', 'away-and-back'])('keeps newer %s navigation when an 
   // The completed send is still tracked; only its stale navigation is suppressed.
   if (destination === 'away-and-back') {
     await act(async () => { (shell.handlers.selectThread as (p: { id: string }) => void)({ id: 'new-thread' }); });
-    expect(await screen.findByText('Transcribed new task')).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByText('Transcribed new task').some(el => !el.closest('.companion-fh'))).toBe(true));
   }
+});
+
+it('drives the native drawer Projects/Recent mode, the bottom section and paging through the threads payload', async () => {
+  localStorage.clear();
+  const many: CompanionSnapshot = { ...data, threads: Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, project: i % 2 ? 'p1' : 'p2', title: `Thread ${i}`, status: 'done', updated: 100 + i, messages: [], canReply: true, queued: 0, error: null })) };
+  render(<MobileApp client={clientWith({ snapshot: async () => structuredClone(many) })} />);
+  const last = () => (sentThreads as unknown as { mock: { calls: [any][] } }).mock.calls.at(-1)![0];
+  const fire = (name: string, payload: unknown) => act(async () => { (shell.handlers[name] as (p: unknown) => void)(payload); });
+  await waitFor(() => expect(last().groups.length).toBe(2));
+  expect(last().view).toBe('projects');
+  expect(last().recentSection.threads.map((t: { id: string }) => t.id)).toEqual(['n39', 'n38', 'n37', 'n36', 'n35']);
+  await fire('recentPage', { action: 'more', section: 'bottom' });
+  await waitFor(() => expect(last().recentSection.threads).toHaveLength(15));
+  expect(last().recent.threads).toHaveLength(25);
+  await fire('recentPage', { action: 'less', section: 'bottom' });
+  await waitFor(() => expect(last().recentSection.threads).toHaveLength(5));
+  await fire('setView', { view: 'recent' });
+  await waitFor(() => expect(last().view).toBe('recent'));
+  expect(localStorage.getItem('freddai.companion.threadNavView')).toBe('recent');
+  expect(last().recent.threads).toHaveLength(25);
+  expect(last().recent.threads[0]).toMatchObject({ id: 'n39', projectLabel: 'First' });
+  await fire('recentPage', { action: 'more' });
+  await waitFor(() => expect(last().recent.threads).toHaveLength(40));
+  await fire('search', { query: 'Thread' });
+  await waitFor(() => expect(last().recent.threads).toHaveLength(25));
+  await fire('recentPage', { action: 'more' });
+  await fire('recentPage', { action: 'less' });
+  await waitFor(() => expect(last().recent.expanded).toBe(false));
 });

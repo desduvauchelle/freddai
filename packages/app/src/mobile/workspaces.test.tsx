@@ -20,7 +20,8 @@ it('persists workspace scope and All workspaces clears search, project and statu
   fireEvent.change(screen.getByRole('textbox', { name: 'Search threads' }), { target: { value: 'nothing' } });
   fireEvent.change(screen.getByRole('combobox', { name: 'Status filter' }), { target: { value: 'running' } });
   fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: '' } });
-  expect(screen.getByRole('button', { name: /Task b/ })).toBeTruthy();
+  // A thread appears in its project and in the bottom Recent section.
+  expect(screen.getAllByRole('button', { name: /Task b/ }).length).toBeGreaterThan(0);
   expect((screen.getByRole('textbox', { name: 'Search threads' }) as HTMLInputElement).value).toBe('');
 });
 it('saves workspace management through the paired client', async () => {

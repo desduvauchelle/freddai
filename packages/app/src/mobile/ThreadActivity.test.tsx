@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { ThreadActivity } from './ThreadActivity';
+import type { CompanionThread } from './companion';
+vi.mock('../desktop/Dormouse', () => ({ Dormouse: () => null }));
+afterEach(cleanup);
 import { companionActivity } from './ThreadActivity';
 
 describe('companion activity', () => {
@@ -22,4 +27,17 @@ describe('companion activity', () => {
     expect(companionActivity({ status: 'running', queuePaused: true }, 'ok').state).toBe('running');
     expect(companionActivity(undefined, 'ok').state).toBe('loading');
   });
+});
+
+it('offers turn controls in the companion activity row and removes them offline', () => {
+  const thread = { status: 'running' } as CompanionThread;
+  const onStop = vi.fn(), onResume = vi.fn();
+  const view = render(<ThreadActivity thread={thread} connection="ok" onStop={onStop} onResume={onResume} />);
+  fireEvent.click(screen.getByRole('button', { name: /Stop current turn/ }));
+  expect(onStop).toHaveBeenCalledOnce();
+  view.rerender(<ThreadActivity thread={{ ...thread, status: 'interrupted' }} connection="ok" onStop={onStop} onResume={onResume} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+  expect(onResume).toHaveBeenCalledOnce();
+  view.rerender(<ThreadActivity thread={{ ...thread, status: 'interrupted' }} connection="down" onStop={onStop} onResume={onResume} />);
+  expect(screen.queryByRole('button')).toBeNull();
 });

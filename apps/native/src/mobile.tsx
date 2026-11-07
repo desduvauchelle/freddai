@@ -9,7 +9,7 @@ const root = createRoot(document.getElementById('root')!);
 // Simulator-only fixture mode: VITE_COMPANION_FIXTURE=1 at build time. Replaced by `false` in device builds, so the dynamic import is dead code and never bundled.
 if (import.meta.env.VITE_COMPANION_FIXTURE === '1') {
   void import('@freddai/app/mobile-fixture').then(({ createFixtureClient }) => {
-    const client = createFixtureClient();
+    const client = createFixtureClient({ many: import.meta.env.VITE_COMPANION_FIXTURE_MANY === '1', stallReplies: import.meta.env.VITE_COMPANION_FIXTURE_STALL === '1' });
     root.render(<StrictMode><MobileApp client={client} onPairAgain={() => {}} /></StrictMode>);
   });
 } else {

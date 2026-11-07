@@ -1,3 +1,4 @@
+import { isCommanderThread } from "../commanderThreads";
 import { statusReadCursors } from "../desktop/status-read-cursors";
 import { bucketThreads, compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, threadListStatus } from '../desktop/types.ts';
 import type { ConversationUsage } from '../desktop/conversation-usage';
@@ -5,12 +6,27 @@ import type { Model } from '../desktop/agent-selection';
 import type { BackgroundTask, Message, Pending, Attachment, Workspace } from '../desktop/types';
 
 // Intentionally excludes account credentials, filesystem paths and settings.
-export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[] };
-export type CompanionThread = { pinned?: boolean; id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
-export type CompanionSnapshot = { workspaces?: Workspace[]; schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
+export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[]; kind?: 'commander' | null; objective?: string | null };
+export type CompanionThread = { origin?: { kind: string; thread?: string | null; project?: string | null } | null; pinned?: boolean; id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
+export type CompanionSnapshot = { canReorderProjects?: boolean; workspaces?: Workspace[]; schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
 export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
+/** Commander-in-Chief operations proxied to the Mac. The state omits the folder path; memory and settings stay desktop-only. */
+type DesktopCommanderState = import('../desktop/commander/api').CommanderState;
+export type CompanionCommanderState = Omit<DesktopCommanderState, 'project'> & { project: Omit<DesktopCommanderState['project'], 'path'> };
+export type CommanderClient = {
+  state(): Promise<CompanionCommanderState>;
+  proposals(): Promise<import('../desktop/commander/api').Proposal[]>;
+  respond(input: { id: string; approve: boolean; prompt?: string }): Promise<import('../desktop/commander/api').Proposal>;
+  todos(): Promise<import('../desktop/commander/api').Todo[]>;
+  saveTodo(todo: Partial<import('../desktop/commander/api').Todo> & { id?: string }): Promise<import('../desktop/commander/api').Todo>;
+  notes(): Promise<import('../desktop/commander/api').NoteSummary[]>;
+  readNote(name: string): Promise<{ name: string; body: string }>;
+  writeNote(name: string, body: string): Promise<import('../desktop/commander/api').NoteSummary>;
+};
 export type ComposerTarget = { thread?: string; project?: string; assistant?: string };
 export type CompanionClient = {
+  commander?: CommanderClient;
+  moveProject?(project: string, target: string, after: boolean): Promise<string[]>;
   saveWorkspaces?(workspaces: Workspace[]): Promise<void>;
   generatedFile?(thread: string, href: string, offset: number): Promise<import("../conversation/GeneratedFile").FileChunk>;
   scheduleCommand?: import("../desktop/ScheduleManager").ScheduleCommand;
@@ -24,7 +40,8 @@ export type CompanionClient = {
   voice?(): Promise<{ enabled: boolean; ready: boolean }>;
   /** Uploads a dictation recording the native composer saved to the tmp dir; the Mac transcribes it and the file is deleted. */
   transcribe?(file: { path: string }): Promise<{ text: string; durationMs: number; model: string }>;
-  queue?(input: { thread: string; action: 'pause' | 'resume' | 'delete' | 'clear' | 'steer'; message?: string }): Promise<void>;
+  resume?(input: { thread: string; requestId: string }): Promise<void>;
+  queue?(input: { thread: string; action: 'pause' | 'resume' | 'delete' | 'clear' | 'steer' | 'edit'; message?: string; prompt?: string }): Promise<void>;
   action?(input: { thread: string; action: 'stop' | 'archive' | 'delete' | 'pin' | 'unpin' }): Promise<void>;
   markRead?(input: { thread: string; at: number }): Promise<void>;
   mergeRead?(cursors: Record<string, number>): Promise<void>;
@@ -55,7 +72,7 @@ export function selectThreads(snapshot: CompanionSnapshot, project: string, quer
   read = companionStatusRead(snapshot, read);
   const search = query.trim().toLocaleLowerCase();
   const names = new Map(snapshot.projects.map(p => [p.id, p.name]));
-  return snapshot.threads.filter(t => (!project || t.project === project)
+  return snapshot.threads.filter(t => !isCommanderThread(t, snapshot.projects.find(p => p.kind === "commander")?.id) && (!project || t.project === project)
     && `${t.title} ${names.get(t.project) || ''}`.toLocaleLowerCase().includes(search)
     && (filter === 'all' || filter === 'attention' && ['waiting', 'error', 'failed', 'interrupted', 'unread'].includes(threadListStatus(t, read))
       || filter === 'running' && ['starting', 'running'].includes(t.status)

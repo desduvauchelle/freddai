@@ -51,6 +51,21 @@ The executable handles `--mcp` before GUI initialization. Keep Freddai open so i
 | `freddai_schedule_action` | Pause/resume/run/delete an explicitly requested routine |
 | `freddai_start_task` | Start a requested new thread with normal approval mode; reuse `request_id` on retry |
 
+## Commander-in-Chief tools and the action gate
+
+The bridge process asks the host whether its project is the built-in Commander project (`mcp_is_commander`). Only then does `tools/list` include these tools; every other project gets `Unknown Freddai tool` if it calls them.
+
+| Tool | Behavior |
+| --- | --- |
+| `freddai_todo_list` / `_add` / `_update` | Read, create and update to-dos in the Commander folder. An agent may set `done` only when every `verification[]` row is `met`; `user_confirmed` is reserved for the user |
+| `freddai_note_list` / `_read` / `_write` | Markdown notes in `notes/`; names are plain file stems |
+| `freddai_memory_remember` / `_forget` / `_search` | Preferences, facts, people and project details; duplicates merge, unpinned entries go stale after 30 days |
+| `freddai_propose` | `{tool, arguments, summary}` for `freddai_start_task`, `freddai_save_schedule` or `freddai_schedule_action`; creates a pending proposal. `arguments.todo_id` links an existing to-do |
+
+`freddai_list_projects` and `freddai_context` include each project's `objective` for all callers.
+
+Action gate (Commander project only): `freddai_start_task`, `freddai_save_schedule` when it enables (or edits an enabled) schedule, and `freddai_schedule_action` with resume, run or delete do not execute. They return `{ok:true, held:true, proposal_id, message:"Waiting for the user's approval"}`. The user approves in Freddai (`commander_proposal_respond`); the host then replays the exact call, so approval is enforced in the runtime, not by prompt. Internal tools run directly. Every call is appended to `actions.log` as `{at, tool, args_summary, decision: executed|held|denied, ok, error}`, and errors return `{ok:false, error}`. A Commander task cannot target the Commander project. Threads started this way record `origin: {kind:"commander", thread}`; when they finish, the host marks the linked to-do `needs_review` and queues a light-review message into the latest Commander thread.
+
 The bridge does not expose account creation/sign-in, approval responses, arbitrary host commands, preferences, shell execution, or permission bypass controls. A schedule keeps any controls previously configured in the UI. Reads return allowlisted data, not account configuration paths or credentials. Thread content is untrusted data.
 
 ## Provider connections

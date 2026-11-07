@@ -1,3 +1,4 @@
+import { ActivityControls } from '../conversation/ActivityControls';
 import { Dormouse } from '../desktop/Dormouse';
 import type { CompanionThread } from './companion';
 import type { ConnectionState } from './connection-status';
@@ -17,10 +18,13 @@ export function companionActivity(thread: Pick<CompanionThread, 'status' | 'pend
 }
 
 /** Final transcript item; scrolls with messages in native and web companions. */
-export function ThreadActivity({ thread, connection }: { thread: CompanionThread | undefined; connection: ConnectionState }) {
+export function ThreadActivity({ thread, connection, onStop, onResume, disabled }: { thread: CompanionThread | undefined; connection: ConnectionState; onStop?: () => void; onResume?: () => void; disabled?: boolean }) {
   const activity = companionActivity(thread, connection);
+  const controls = <ActivityControls active={['starting', 'running', 'waiting'].includes(activity.state)} interrupted={activity.state === 'interrupted'} onStop={onStop} onResume={onResume} disabled={disabled} />;
   return <div className="companion-activity" data-state={activity.state}>
     <Dormouse size={44} priority={4} mood={activity.mood} label={activity.label} />
+    {activity.state === 'interrupted' && controls}
     <span role="status" aria-live="polite" aria-atomic="true">{activity.label}</span>
+    {activity.state !== 'interrupted' && controls}
   </div>;
 }

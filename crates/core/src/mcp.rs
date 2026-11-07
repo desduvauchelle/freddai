@@ -12,7 +12,7 @@ const INSTRUCTIONS: &str = "Freddai manages projects, agent threads and schedule
 fn schema(properties: Value, required: &[&str]) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
-fn tool(name: &str, description: &str, properties: Value, required: &[&str], read: bool) -> Value {
+pub(crate) fn tool(name: &str, description: &str, properties: Value, required: &[&str], read: bool) -> Value {
     json!({"name":name,"description":description,"inputSchema":schema(properties,required),
         "annotations":{"readOnlyHint":read,"destructiveHint":!read,"idempotentHint":read,"openWorldHint":!read}})
 }
@@ -36,8 +36,16 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
-fn validate(name: &str, args: &Value) -> Result<(), String> {
-    let spec = tools()
+/// The base catalog plus, for the Commander project only, its extra tools.
+pub fn tools_for(commander: bool) -> Vec<Value> {
+    let mut all = tools();
+    if commander {
+        all.extend(crate::commander::tool_specs());
+    }
+    all
+}
+pub(crate) fn validate(name: &str, args: &Value) -> Result<(), String> {
+    let spec = tools_for(true)
         .into_iter()
         .find(|t| t["name"] == name)
         .ok_or("Unknown Freddai tool")?;
@@ -66,6 +74,9 @@ fn validate(name: &str, args: &Value) -> Result<(), String> {
             "string" => value.is_string(),
             "integer" => value.as_u64().is_some(),
             "boolean" => value.is_boolean(),
+            "number" => value.is_number(),
+            "array" => value.is_array(),
+            "object" => value.is_object(),
             "null" => value.is_null(),
             _ => false,
         });
@@ -118,7 +129,19 @@ fn page(items: Vec<Value>, args: &Value, default: usize) -> Value {
     json!({"items":result,"total":total,"next_offset":if next < total {Some(next)} else {None}})
 }
 
+fn is_commander_caller(rt: &crate::runtime::Runtime, context: &Context) -> bool {
+    match (rt.commander_project(), &context.project) {
+        (Some(c), Some(p)) => &c.id == p,
+        _ => false,
+    }
+}
+/// True when this bridge session belongs to the Commander project (it then lists the extra tools).
+pub fn is_commander_context(rt: &crate::runtime::Runtime, context: &Context) -> bool {
+    is_commander_caller(rt, context)
+}
 /// Only this allowlist can reach the host. No generic invoke, login, preferences or approvals.
+/// Calls from the Commander project pass through the action gate: outward tools are held as
+/// proposals, every call is logged, and errors come back as `{ok:false,error}`.
 pub fn dispatch(
     rt: &crate::runtime::Runtime,
     name: &str,
@@ -126,6 +149,52 @@ pub fn dispatch(
     context: &Context,
 ) -> Result<Value, String> {
     validate(name, &args)?;
+    let commander = is_commander_caller(rt, context);
+    if crate::commander::TOOL_NAMES.contains(&name) && !commander {
+        // Other projects never see these tools.
+        return Err("Unknown Freddai tool".into());
+    }
+    if !commander {
+        return dispatch_inner(rt, name, args, context);
+    }
+    let store = crate::commander::store(rt)?;
+    let outcome = if crate::commander::TOOL_NAMES.contains(&name) {
+        let held = name == "freddai_propose";
+        let result = crate::commander::call_tool(rt, name, &args, context);
+        (result, if held { "held" } else { "executed" })
+    } else if crate::commander::is_outward(rt, name, &args) {
+        (crate::commander::hold(rt, name, &args, None, context), "held")
+    } else {
+        (dispatch_inner(rt, name, args.clone(), context), "executed")
+    };
+    let (result, decision) = outcome;
+    match result {
+        Ok(value) => {
+            store.log_action(name, &args, decision, true, None);
+            Ok(value)
+        }
+        Err(error) => {
+            store.log_action(name, &args, if decision == "held" { "denied" } else { "executed" }, false, Some(&error));
+            Ok(json!({"ok":false,"error":error}))
+        }
+    }
+}
+/// Replay of an approved proposal: the exact held call, validated again, without the gate.
+pub(crate) fn dispatch_ungated(
+    rt: &crate::runtime::Runtime,
+    name: &str,
+    args: Value,
+    context: &Context,
+) -> Result<Value, String> {
+    validate(name, &args)?;
+    dispatch_inner(rt, name, args, context)
+}
+fn dispatch_inner(
+    rt: &crate::runtime::Runtime,
+    name: &str,
+    args: Value,
+    context: &Context,
+) -> Result<Value, String> {
     let db = rt.snapshot();
     let caller = context
         .thread
@@ -134,10 +203,10 @@ pub fn dispatch(
     let project_filter = args["project"].as_str().or(context.project.as_deref());
     match name {
         "freddai_context" => Ok(
-            json!({"context":context.value(),"bridge_version":1,"providers":["codex","claude","gemini","antigravity","grok","opencode","cursor"]}),
+            json!({"context":context.value(),"project":context.project.as_ref().and_then(|id|db.projects.iter().find(|p|&p.id==id)).map(|p|json!({"id":p.id,"name":p.name,"objective":p.objective})),"bridge_version":1,"providers":["codex","claude","gemini","antigravity","grok","opencode","cursor"]}),
         ),
         "freddai_list_projects" => Ok(
-            json!({"projects":db.projects.iter().map(|p|json!({"id":p.id,"name":p.name,"path":p.path,"color":p.color})).collect::<Vec<_>>()}),
+            json!({"projects":db.projects.iter().map(|p|json!({"id":p.id,"name":p.name,"path":p.path,"color":p.color,"objective":p.objective})).collect::<Vec<_>>()}),
         ),
         "freddai_list_agents" => Ok(
             json!({"agents":db.accounts.iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.provider})).collect::<Vec<_>>()}),
@@ -211,9 +280,14 @@ pub fn dispatch(
         "freddai_start_task" => {
             let project = selected(&args, "project", context.project.as_deref())?;
             let account = selected(&args, "account", caller.map(|s| s.account.as_str()))?;
+            let from_commander = is_commander_caller(rt, context);
+            if from_commander && db.projects.iter().any(|p| p.id == project && p.is_commander()) {
+                return Err("Commander cannot delegate a task to itself; pick another project.".into());
+            }
             let options = crate::runtime::LaunchOptions {
                 request_id: Some(selected(&args, "request_id", None)?.into()),
                 permission_mode: Some(crate::runtime::PermissionMode::Ask),
+                origin: from_commander.then(|| crate::commander::origin_for(context)),
                 ..Default::default()
             };
             Ok(
@@ -231,6 +305,8 @@ fn error(id: Value, code: i32, message: &str) -> Value {
 struct Protocol {
     initialized: bool,
     ready: bool,
+    /// The bridge belongs to the Commander project: list its extra tools.
+    commander: bool,
 }
 impl Protocol {
     fn handle(
@@ -287,7 +363,7 @@ impl Protocol {
                         "This tool catalog has no pagination cursor",
                     ));
                 }
-                json!({"tools":tools()})
+                json!({"tools":tools_for(self.commander)})
             }
             "tools/call" => {
                 let Some(name) = params["name"].as_str() else {
@@ -312,10 +388,18 @@ impl Protocol {
 /// JSON lines on stdin/stdout only. Diagnostics belong on stderr; EOF cleanly ends the bridge.
 pub fn serve(
     input: impl BufRead,
+    output: impl Write,
+    call: impl FnMut(&str, Value) -> Result<Value, String>,
+) -> Result<(), String> {
+    serve_with(input, output, false, call)
+}
+pub fn serve_with(
+    input: impl BufRead,
     mut output: impl Write,
+    commander: bool,
     mut call: impl FnMut(&str, Value) -> Result<Value, String>,
 ) -> Result<(), String> {
-    let mut state = Protocol::default();
+    let mut state = Protocol { commander, ..Default::default() };
     let mut input = input;
     loop {
         let mut bytes = Vec::new();
@@ -339,9 +423,15 @@ pub fn serve(
     }
 }
 pub fn run(root: &Path, context: Context) -> Result<(), String> {
-    serve(
+    // Ask the host once whether this session is the Commander project. An older host does not know
+    // the question, so the extra tools stay hidden (and would be refused by it anyway).
+    let commander = crate::host::call(root, "mcp_is_commander", json!({"context":context.value()}))
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    serve_with(
         std::io::stdin().lock(),
         std::io::stdout().lock(),
+        commander,
         |name, args| {
             if name == "freddai_context" {
                 let host = crate::host::call(root, "hello", json!({}))?;
@@ -517,5 +607,17 @@ mod tests {
             page(vec![json!(1)], &json!({"offset":50}), 50)["items"],
             json!([])
         );
+    }
+    #[test]
+    fn commander_bridge_lists_extra_tools_only_when_flagged() {
+        let input = format!("{}{}\n", handshake(), json!({"jsonrpc":"2.0","id":"l","method":"tools/list"}));
+        let count = |commander| {
+            let mut output = Vec::new();
+            serve_with(input.as_bytes(), &mut output, commander, |_, _| unreachable!()).unwrap();
+            let replies: Vec<Value> = String::from_utf8(output).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+            replies[1]["result"]["tools"].as_array().unwrap().len()
+        };
+        assert_eq!(count(false), 9);
+        assert_eq!(count(true), 19);
     }
 }

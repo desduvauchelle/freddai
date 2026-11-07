@@ -22,7 +22,8 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         "provider":resolve(db,p,None).ok().and_then(|id|db.accounts.iter().find(|a|a.id==id).map(|a|a.provider.clone())),
         "defaultAssistant":resolve(db,p,None).ok(),
         "assistants":db.accounts.iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.provider})).collect::<Vec<_>>(),
-        "canStart":!db.accounts.is_empty() && Path::new(&p.path).is_dir()
+        "canStart":!db.accounts.is_empty() && Path::new(&p.path).is_dir(),
+        "kind":p.kind, "objective":p.objective
     })).collect();
     let threads: Vec<_> = db.sessions.iter().filter(|s| !s.archived && s.deleted_at.is_none() && s.status != "archived").map(|s| {
         let queue = db.queues.iter().find(|q| q.session == s.id);
@@ -30,13 +31,13 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         if !include_history {
             // Keep the searchable title index and attention/read badges, not conversation payloads.
             // An empty pending object is a presence marker; messagesLoaded=false prevents acting on it.
-            return json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,"pinned":s.pinned,
+            return json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,
                 "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,
                 "messages":[],"messagesLoaded":false,"canReply":false,"error":null,
                 "pending":s.pending.as_ref().map(|_|json!({})),
                 "queued":queue.map(|q|q.messages.len()).unwrap_or(0)});
         }
-        json!({"id":s.id,"project":s.project,"title":s.title,"status":s.status,"pinned":s.pinned,
+        json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,
             "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
@@ -49,8 +50,38 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
     }).collect();
     json!({"projects":projects,"threads":threads,"schedules":db.schedules,"workspaces":db.preferences.workspaces})
 }
-fn snapshot(root: &Path) -> Result<(Database, bool, bool), String> {
-    let value = host::call(root,"snapshot",json!({}))?;
+fn snapshot(root: &Path, scoped: bool, thread: Option<&str>) -> Result<(Database, bool, bool), String> {
+    let mut value = if scoped {
+        // Scope at the host boundary, before its reply can exceed the IPC limit.
+        // Revision zero always gives a complete index; no client-side delta state is needed.
+        host::call(root,"snapshot_since",json!({"revision":0,"openThreads":thread.into_iter().collect::<Vec<_>>()}))?
+    } else { host::call(root,"snapshot",json!({}))? };
+    if scoped {
+        if let Some(sessions)=value["sessions"].as_array_mut() {
+            for session in sessions {
+                if session["id"].as_str()!=thread {
+                    session["messages"]=json!([]);
+                    continue;
+                }
+                // Desktop projections bound tool output. Restore only the open phone
+                // transcript through bounded, hash-checked reads, preserving its history.
+                let id=session["id"].as_str().unwrap_or("").to_owned();
+                if let Some(messages)=session["messages"].as_array_mut() { for message in messages {
+                    let Some(bytes)=message["toolTextBytes"].as_u64() else {continue};
+                    let mut text=String::new();
+                    while (text.len() as u64)<bytes {
+                        let page=host::call(root,"tool_text",json!({"thread":id,"message":message["id"],"offset":text.len(),"hash":message["toolTextHash"]}))?;
+                        let chunk=page["text"].as_str().ok_or("Invalid tool output page")?;
+                        if chunk.is_empty() || page["offset"].as_u64()!=Some(text.len() as u64) || text.len() as u64+chunk.len() as u64>bytes {
+                            return Err("Invalid tool output page".into());
+                        }
+                        text.push_str(chunk);
+                    }
+                    message["text"]=json!(text);
+                }}
+            }
+        }
+    }
     let workspaces = value["preferences"]["workspaces"].is_array();
     let pins = value["sessions"].as_array().is_some_and(|sessions| sessions.iter().all(|s| s["pinned"].is_boolean()));
     Ok((serde_json::from_value(value).map_err(|e|e.to_string())?, workspaces, pins))
@@ -91,6 +122,29 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     let input = &p["input"];
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
+        "move_project" => {
+            let id = text(input, "project")?;
+            let target = text(input, "target")?;
+            if id == target || !db.projects.iter().any(|p| p.id == id) || !db.projects.iter().any(|p| p.id == target) {
+                return Err("Project unavailable".into());
+            }
+            let mut order = crate::thread_list_settings::project_order(root)?.unwrap_or_else(|| {
+                fs::read(root.join("companion/thread-list.json")).ok()
+                    .and_then(|bytes| serde_json::from_slice::<ThreadListSettings>(&bytes).ok())
+                    .map(|s| s.project_order).unwrap_or_default()
+            });
+            order.retain(|p| p != id && db.projects.iter().any(|project| &project.id == p));
+            // Unsaved groups follow user-send recency, just like both navigation UIs.
+            let mut sessions: Vec<_> = db.sessions.iter().filter(|s| !s.archived && s.deleted_at.is_none() && s.status != "archived").collect();
+            sessions.sort_by(|a, b| b.last_user_message_at.unwrap_or(b.updated).cmp(&a.last_user_message_at.unwrap_or(a.updated)).then_with(|| a.id.cmp(&b.id)));
+            for project in sessions.iter().map(|s| &s.project).chain(db.projects.iter().map(|p| &p.id)) {
+                if project != id && !order.contains(project) && db.projects.iter().any(|p| &p.id == project) { order.push(project.clone()); }
+            }
+            let index = order.iter().position(|p| p == target).ok_or("Project unavailable")?;
+            order.insert(index + usize::from(input["after"].as_bool().unwrap_or(false)), id.to_string());
+            crate::thread_list_settings::save_project_order(root, &order)?;
+            Ok(json!(order))
+        }
         "save_workspaces" => {
             let workspaces: Vec<freddai_core::runtime::Workspace> = serde_json::from_value(input["workspaces"].clone()).map_err(|_|"Invalid workspaces")?;
             if workspaces.len() > 200 || workspaces.iter().any(|w| w.id.trim().is_empty() || w.id.len() > 200 || w.name.trim().is_empty() || w.name.len() > 200 || w.color.len() != 7 || !w.color.starts_with('#') || !w.color[1..].bytes().all(|b| b.is_ascii_hexdigit()) || w.projects.len() > db.projects.len() || w.projects.iter().any(|id| !db.projects.iter().any(|p| &p.id == id))) {
@@ -108,11 +162,24 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
             };
             host::call(root,"account_models",json!({"account":account}))
         },
+        "resume_thread" => {
+            let session = session.ok_or("Thread unavailable")?;
+            if session.status != "interrupted" || session.pending.is_some() || session.provider_id.is_none() {
+                return Err("This thread cannot be resumed right now".into());
+            }
+            let request_id = text(input, "requestId")?;
+            if request_id.len() > 200 { return Err("Invalid request id".into()); }
+            if db.queues.iter().any(|q| q.session == session.id) {
+                host::call(root,"queue_action",json!({"session":session.id,"action":"pause","message":null}))?;
+            }
+            host::call(root,"launch",json!({"project":session.project,"account":null,"existing":session.id,
+                "prompt":"Continue where you left off.","options":{"request_id":format!("phone:{request_id}")}}))
+        },
         "queue" => {
             let session=session.ok_or("Thread unavailable")?;
             let action=text(input,"action")?;
-            if !["pause","resume","delete","clear","steer"].contains(&action) {return Err("Unknown queue action".into());}
-            host::call(root,"queue_action",json!({"session":session.id,"action":action,"message":input["message"]}))
+            if !["pause","resume","delete","clear","steer","edit"].contains(&action) {return Err("Unknown queue action".into());}
+            host::call(root,"queue_action",json!({"session":session.id,"action":action,"message":input["message"],"prompt":input["prompt"]}))
         },
         _ => Err("Unknown composer operation".into())
     }
@@ -213,14 +280,20 @@ fn voice_composer(root: &Path, p: &Value) -> Result<Value,String> {
     }
 }
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
-    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("day_summary"|"summarize_day"|"save_schedule"|"schedule_action")) {
-        return host::call(root, text(&p,"operation")?, p["input"].clone());
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write")) {
+        let operation = text(&p,"operation")?;
+        let mut result = host::call(root, operation, p["input"].clone())?;
+        // The companion snapshot never exposes filesystem paths.
+        if operation == "commander_state" { if let Some(project) = result["project"].as_object_mut() { project.remove("path"); } }
+        return Ok(result);
     }
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
     // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
     if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
-    let (db, supports_workspaces, supports_pins) = snapshot(root)?;
+    let scoped = route != "/v1/snapshot" || p["scoped"].as_bool().unwrap_or(false);
+    let thread = if route == "/v1/snapshot" {p["thread"].as_str()} else {None};
+    let (db, supports_workspaces, supports_pins) = snapshot(root, scoped, thread)?;
     if route == "/v1/composer" {
         if p["operation"] == "save_workspaces" && !supports_workspaces { return Err("The background host needs an update before editing workspaces. Let active work finish and reopen Freddai on your Mac.".into()); }
         return composer(root, &db, &p);
@@ -236,6 +309,11 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
                 result["threadList"] = json!(settings);
             }
         }
+        if let Some(order) = crate::thread_list_settings::project_order(root)? {
+            if !result["threadList"].is_object() { result["threadList"] = json!({}); }
+            result["threadList"]["projectOrder"] = json!(order);
+        }
+        result["canReorderProjects"] = json!(true);
         return Ok(result);
     }
     if route=="/v1/action" {
@@ -666,6 +744,61 @@ mod workspace_pin_transport_tests {
             "sessions":[{"id":"t","project":"p","account":"","title":"Pinned task","status":"running","updated":1,"pinned":true,"messages":[]}]})).unwrap()
     }
     #[test]
+    fn interrupted_resume_reaches_launch_without_draining_paused_queue() {
+        use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+        let root = std::env::temp_dir().join(format!("fr-resume-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let mut value = serde_json::to_value(database()).unwrap();
+        value["sessions"][0]["status"] = json!("interrupted");
+        value["sessions"][0]["provider_id"] = json!("synthetic-provider-thread");
+        value["queues"] = json!([{"session":"t","paused":true,"messages":[]}]);
+        let db: Database = serde_json::from_value(value).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let host = std::thread::spawn(move || {
+            for method in ["queue_action", "launch"] {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], method);
+                if method == "queue_action" { assert_eq!(request["params"]["action"], "pause"); }
+                else {
+                    assert_eq!(request["params"]["existing"], "t");
+                    assert_eq!(request["params"]["prompt"], "Continue where you left off.");
+                    assert_eq!(request["params"]["options"]["request_id"], "phone:resume-test");
+                }
+                writeln!(connection, "{}", json!({"result":null})).unwrap();
+            }
+        });
+        crate::companion_operations::validate("resume_thread").unwrap();
+        composer(&root, &db, &json!({"operation":"resume_thread","input":{"thread":"t","requestId":"resume-test"}})).unwrap();
+        host.join().unwrap();
+        let mut invalid = db;
+        invalid.sessions[0].status = "running".into();
+        assert!(composer(&root, &invalid, &json!({"operation":"resume_thread","input":{"thread":"t","requestId":"rejected"}})).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn remote_project_moves_preserve_hidden_projects_and_sidebar_settings() {
+        let root = std::env::temp_dir().join(format!("fr-order-{}", crate::companion_crypto::random()));
+        fs::create_dir_all(root.join("companion")).unwrap();
+        let mut value = serde_json::to_value(database()).unwrap();
+        let mut second = value["projects"][0].clone(); second["id"] = json!("q");
+        let mut hidden = second.clone(); hidden["id"] = json!("hidden");
+        value["projects"].as_array_mut().unwrap().extend([second, hidden]);
+        let db: Database = serde_json::from_value(value).unwrap();
+        let settings = json!({"projectOrder":["p","hidden","q"],"grouped":true,"hideRead":false,"recentFinished":10});
+        fs::write(root.join("companion/thread-list.json"), settings.to_string()).unwrap();
+        crate::companion_operations::validate("move_project").unwrap();
+        let result = composer(&root, &db, &json!({"operation":"move_project","input":{"project":"q","target":"p","after":false}})).unwrap();
+        assert_eq!(result, json!(["q","p","hidden"]));
+        assert_eq!(crate::thread_list_settings::project_order(&root).unwrap().unwrap(), vec!["q", "p", "hidden"]);
+        assert_eq!(serde_json::from_slice::<Value>(&fs::read(root.join("companion/thread-list.json")).unwrap()).unwrap(), settings);
+        assert!(composer(&root, &db, &json!({"operation":"move_project","input":{"project":"q","target":"missing"}})).is_err());
+        assert_eq!(composer(&root, &db, &json!({"operation":"move_project","input":{"project":"q","target":"hidden","after":true}})).unwrap(), json!(["p","hidden","q"]));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn full_and_scoped_projection_share_workspaces_and_pins_without_preferences() {
         let db = database();
         for scoped in [false, true] {
@@ -701,7 +834,7 @@ mod workspace_pin_transport_tests {
                     BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
                     let request: Value = serde_json::from_str(&line).unwrap();
                     let result = if step == 0 {
-                        assert_eq!(request["method"], "snapshot"); db.clone()
+                        assert_eq!(request["method"], "snapshot_since"); db.clone()
                     } else if action == "save_workspaces" {
                         assert_eq!(request["method"], "save_preferences");
                         assert_eq!(request["params"], json!({"patch":{"workspaces":[]}})); Value::Null
@@ -733,12 +866,12 @@ mod old_workspace_host_tests {
         let mut db = serde_json::to_value(Database::default()).unwrap();
         db["preferences"].as_object_mut().unwrap().remove("workspaces");
         let host = std::thread::spawn(move || {
-            for _ in 0..2 {
+            for step in 0..2 {
                 let (mut connection, _) = socket.accept().unwrap();
                 let mut line = String::new();
                 BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
                 let request: Value = serde_json::from_str(&line).unwrap();
-                assert_eq!(request["method"], "snapshot");
+                assert_eq!(request["method"], if step == 0 {"snapshot"} else {"snapshot_since"});
                 writeln!(connection, "{}", json!({"result":db})).unwrap();
             }
         });
@@ -746,5 +879,70 @@ mod old_workspace_host_tests {
         assert!(snapshot.get("workspaces").is_none());
         assert!(dispatch(&root,"/v1/composer",json!({"operation":"save_workspaces","input":{"workspaces":[]}})).unwrap_err().contains("background host needs an update"));
         host.join().unwrap(); fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod scoped_host_transport_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+    #[test]
+    fn scoped_connection_restores_open_tool_history_without_loading_closed_history() {
+        let root=std::env::temp_dir().join(format!("fr-tool-{}",&crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket=UnixListener::bind(root.join("host.sock")).unwrap();
+        let original="🦀 tool output ".repeat(12_000);
+        let expected=original.clone();
+        let hash=freddai_core::desktop_snapshot::text_hash(&original);
+        let worker=std::thread::spawn(move || {
+            let mut restored=0;
+            loop {
+                let (mut connection,_)=socket.accept().unwrap();
+                let mut line=String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request:Value=serde_json::from_str(&line).unwrap();
+                let result=if request["method"]=="snapshot_since" {
+                    assert_eq!(request["params"]["openThreads"],json!(["open"]));
+                    let mut db=serde_json::to_value(Database::default()).unwrap();
+                    db["sessions"]=json!([
+                        {"id":"open","project":"p","account":"none","title":"Open","status":"done","updated":1,"messages":[{"id":"tool","role":"tool","text":"{}","toolTextBytes":original.len(),"toolTextHash":hash}]},
+                        {"id":"closed","project":"p","account":"none","title":"Closed","status":"done","updated":1,"messages":[{"id":"user","role":"user","text":"Unrelated history"}]}]);
+                    db
+                } else {
+                    assert_eq!(request["method"],"tool_text");
+                    assert_eq!(request["params"]["hash"],hash);
+                    assert_eq!(request["params"]["offset"],restored);
+                    let page=freddai_core::desktop_snapshot::text_chunk(&original,restored,Some(&hash)).unwrap();
+                    restored+=page["text"].as_str().unwrap().len();page
+                };
+                writeln!(connection,"{}",json!({"result":result})).unwrap();
+                if restored==original.len() {break;}
+            }
+        });
+        let result=dispatch(&root,"/v1/snapshot",json!({"scoped":true,"thread":"open"})).unwrap();
+        worker.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert_eq!(result["threads"][0]["messages"][0]["text"],expected);
+        assert_eq!(result["threads"][1]["messages"],json!([]));
+        assert_eq!(result["threads"][0]["messagesLoaded"],true);
+    }
+    #[test]
+    fn companion_connects_without_requesting_the_entire_workspace() {
+        let root=std::env::temp_dir().join(format!("fr-connect-{}",&crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket=UnixListener::bind(root.join("host.sock")).unwrap();
+        let worker=std::thread::spawn(move || {
+            let (mut connection,_)=socket.accept().unwrap();
+            let mut line=String::new();
+            BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+            let request:Value=serde_json::from_str(&line).unwrap();
+            // Model the live failure at its actual RPC boundary, without a 512 MB fixture.
+            let reply=if request["method"]=="snapshot_since" && request["params"]["openThreads"]==json!([]) {
+                json!({"result":Database::default()})
+            } else {json!({"error":"Host reply for `snapshot` exceeded 536870912 bytes and was truncated"})};
+            writeln!(connection,"{reply}").unwrap();
+        });
+        let result=dispatch(&root,"/v1/snapshot",json!({"scoped":true}));
+        worker.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert!(result.is_ok(),"Initial companion connection must use the bounded host projection: {result:?}");
     }
 }

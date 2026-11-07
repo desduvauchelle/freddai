@@ -1,3 +1,4 @@
+import { isCommanderThread } from "../commanderThreads";
 import { BrowserWorkspace, BrowserToggle } from "./BrowserWorkspace";
 import { useNavigationState } from '../hooks/use-navigation-state';
 import { useThreadPins } from "./thread-pins";
@@ -13,13 +14,19 @@ import { browserThreadRecencyTracker } from "../thread-recency";
 import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
 import { MessageQueue } from "./MessageQueue";
+import { listenNativeDrops } from "./native-drops";
 import { projectDropTarget } from "./project-drop";
 import { OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, RECENT_FINISHED_MAX, compareThreadRecency, sanitizeRecentCount, splitOlderThreads, groupThreadsByDay, bucketThreads, attentionCount, threadListStatus, threadVisibility, threadCapabilities } from "./types";
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuLabel } from "@freddai/ui/components/context-menu";
 import { ConversationUsage } from "./ConversationUsage";
 import { ThreadError } from "./ThreadError";
 import { ThreadList } from "./ThreadList";
+import { RecentThreadsFooter, ThreadViewToggle } from "../RecentThreadsControls";
+import { THREAD_NAV_VIEW_KEY, asThreadNavView, selectRecentThreads } from "../recentThreads";
 import { HomeView } from "./HomeView";
+import { CommanderView } from "./commander/CommanderView";
+import { ProjectObjective } from "./commander/ProjectObjective";
+import { commanderApi } from "./commander/api";
 import { ThreadTitle } from "./ThreadTitle";
 import { resolveHomeLaunch } from "./home-launch";
 import { PermissionSelect, effectivePermissionMode } from "./PermissionSelect";
@@ -416,7 +423,10 @@ function ConversationPane({
             />
             </div>
           )}
-          <ConversationActivity thread={task} />
+          <ConversationActivity thread={task}
+            onStop={capabilities.stop ? () => void action(async () => { await invoke("stop", { session: task.id }); await refresh(); }) : undefined}
+            onResume={capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
+            disabled={working || !native || !!db.host_update_pending} />
           </ThreadTranscript>
         </ScrollArea>
         {showLatest && <Button
@@ -556,6 +566,8 @@ function DesktopWorkspace() {
   const [launching, setLaunching] = useState<Session | null>(null);
   // Home hub is the landing view; it yields to any thread, new-thread draft or git pane the user opens.
   const [home, setHome] = useNavigationState(!windowThread, navigationRevision);
+  const [commanderOpen, setCommanderOpen] = useState(false);
+  const commanderThread = useRef("");
   const lastSelected = useRef(selected);
   useEffect(() => { if (selected && selected !== lastSelected.current) setHome(false); lastSelected.current = selected; }, [selected]);
   useEffect(() => { if (pane) setHome(false); }, [pane]);
@@ -591,11 +603,27 @@ function DesktopWorkspace() {
     if (projectFilter !== "all" && !workspaceProjects.some(p => p.id === projectFilter)) setProjectFilter("all");
   }, [projectFilter, workspaceProjects.map(p => p.id).join(",")]);
   const [savedProjectOrder, setSavedProjectOrder] = usePreference<string[]>("freddai.projectOrder", []);
+  const projectOrderWrites = useRef(0), projectOrderVersion = useRef(0);
+  useEffect(() => {
+    if (!native) return;
+    let live = true;
+    const sync = () => {
+      if (projectOrderWrites.current) return;
+      const version = projectOrderVersion.current;
+      void invoke<string[] | null>("load_project_order").then(order => {
+      if (live && order && version === projectOrderVersion.current) setSavedProjectOrder(previous => JSON.stringify(previous) === JSON.stringify(order) ? previous : order);
+    }).catch(e => { if (live) setError(String(e)); }); };
+    sync();
+    const timer = window.setInterval(sync, 2000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [native]);
   const [projectDrag, setProjectDrag] = useState<{ id: string; target: string; after: boolean } | null>(null);
   const [collapsedProjects, setCollapsedProjects] = usePreference<string[]>("freddai.collapsedProjects", []);
   const [grouped, setGrouped] = usePreference("freddai.grouped", true),
     [ignoreUnread, setIgnoreUnread] = usePreference("freddai.ignoreUnread", false),
     [hideRead, setHideRead] = usePreference("freddai.hideRead", true),
+    [storedNavView, setNavView] = usePreference<string>(THREAD_NAV_VIEW_KEY, "projects"),
+    [recentPages, setRecentPages] = useState(0),
     [recentFinishedPref, setRecentFinished] = usePreference<number>("freddai.recentFinished", RECENT_FINISHED_DEFAULT),
     [readOverlay, setReadOverlay] = useState<Record<string, number>>({}),
     [olderPages, setOlderPages] = useState<Record<string, number>>({});
@@ -850,15 +878,32 @@ function DesktopWorkspace() {
   // Above the single-pane (mobile) breakpoint the list always has a pane beside it: with nothing open, that is the new-thread draft.
   // Opening it only fills in local draft state; no thread is created until the user sends.
   useEffect(() => {
-    if (!narrow && !home && !selected && !dialog && !pane && !scheduleView && !threadDialog && !launching) openNewThread(false);
-  }, [narrow, home, selected, dialog, pane, scheduleView, threadDialog, launching]);
+    if (!narrow && !home && !commanderOpen && !selected && !dialog && !pane && !scheduleView && !threadDialog && !launching) openNewThread(false);
+  }, [narrow, home, commanderOpen, selected, dialog, pane, scheduleView, threadDialog, launching]);
   useEffect(() => { if (dialog === "new") setHome(false); }, [dialog]);
-  const homeActive = home && dialog !== "new" && !scheduleView;
+  const homeActive = home && dialog !== "new" && !scheduleView && !commanderOpen;
+  const commanderActive = commanderOpen && !dialog && !scheduleView && !pane;
+  // Commander-in-Chief view: reuses the normal conversation for its thread; any other navigation closes it.
+  useEffect(() => { if (selected && selected !== commanderThread.current) setCommanderOpen(false); }, [selected]);
+  useEffect(() => { if (pane || scheduleView || dialog === "new") setCommanderOpen(false); }, [pane, scheduleView, dialog]);
+  function openCommander() {
+    setScheduleView(null); setDialog(null); setPane(null);
+    setCommanderOpen(true);
+  }
+  /** Dashboard cluster / mic / plus: continue Commander's thread, or start one in the commander project. */
+  async function sendToCommander(text: string) {
+    if (!native) throw new Error("Open the Freddai desktop app to message Commander.");
+    const state = await commanderApi.state();
+    const thread = state.thread_id ? db.sessions.find(t => t.id === state.thread_id) : undefined;
+    if (thread) { await resumeThread(thread, text); await refresh(); }
+    else await createHomeThread(state.project.id, text);
+  }
   function goHome() {
     setScheduleView(null);
     setDialog(null);
     setAccountReturn(null);
     setPane(null);
+    setCommanderOpen(false);
     setHome(true);
   }
   function newThreadInProject(project: string, focus = true) {
@@ -953,10 +998,7 @@ function DesktopWorkspace() {
   useEffect(() => {
     if (!native) return;
     let off: (() => void) | undefined, disposed = false;
-    // Main-content drops target the Window once an embedded browser child exists.
-    // A Window listener also receives labeled events before any child is created.
-    void getCurrentWindow().onDragDropEvent(e => {
-      const event = e.payload;
+    void listenNativeDrops(getCurrentWindow().label, event => {
       if (event.type === "leave") { setProjectDropActive(false); return; }
       const inNavigation = projectDropTarget(event.position,
         projectNavigation.current?.getBoundingClientRect(), window.devicePixelRatio, settingsVisible || !!threadDialog);
@@ -1098,10 +1140,13 @@ function DesktopWorkspace() {
     const sentNavigation = navigationRevision.current;
     setLaunching(preview);
     try {
-      const sid = await invoke<string>("launch", { project, account, prompt, options, existing: null });
+      const commander = db.projects.find(p => p.id === project)?.kind === "commander";
+      const existing = commander ? (await commanderApi.state()).thread_id : null;
+      const sid = await invoke<string>("launch", { project, account: existing ? null : account, prompt, options, existing });
       setLaunching({ ...preview, id: sid });
       if (select && navigationRevision.current === sentNavigation) {
         setSelected(sid);
+        if (commander) { commanderThread.current = sid; setCommanderOpen(true); }
         setDialog(null);
       }
       return sid;
@@ -1209,7 +1254,8 @@ function DesktopWorkspace() {
       return true;
     });
   }
-  const sorted = [...db.sessions]
+  const commanderProjectId = db.projects.find(p => p.kind === "commander")?.id;
+  const sorted = db.sessions.filter(t => !isCommanderThread(t, commanderProjectId))
     .sort(compareThreadRecency)
     .filter(
       (t) =>
@@ -1231,7 +1277,9 @@ function DesktopWorkspace() {
       (projectFilter === "all" || projectFilter === p.id),
     ).map(p => p.id) : []),
   ])];
+  // The Commander project always sorts first.
   const fullProjectOrder = [...new Set([
+    ...(commanderProjectId ? [commanderProjectId] : []),
     ...savedProjectOrder.filter(id => db.projects.some(p => p.id === id)),
     ...defaultProjectOrder,
     ...db.projects.map(p => p.id),
@@ -1244,6 +1292,10 @@ function DesktopWorkspace() {
     if (index < 0) return;
     next.splice(index + (after ? 1 : 0), 0, id);
     setSavedProjectOrder(next);
+    if (native) {
+      projectOrderVersion.current++; projectOrderWrites.current++;
+      void invoke("save_project_order", { order: next }).catch(e => setError(String(e))).finally(() => { projectOrderWrites.current--; });
+    }
   }
   // Two buckets: active (live) rows, then an unlabeled continuation of the newest `recentFinished` read/finished rows (per project when grouped,
   // across all projects when flat), then older rows revealed OLDER_PAGE_SIZE at a time. Selection never moves a row between buckets;
@@ -1253,6 +1305,9 @@ function DesktopWorkspace() {
     read, selected, recentCount: recentFinished, scope: grouped ? "grouped" : "flat", hideRead, filter, pinned: secondary,
     queued: t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0,
   });
+  // "Recent" is one flat list across every project, newest first; it honours the same search/project/status filters as the project view.
+  const navView = asThreadNavView(storedNavView);
+  const recent = selectRecentThreads(sorted, recentPages);
   const olderFor = (pid: string) => buckets.older.filter(t => t.project === pid);
   const shownOlder = (pid: string) => olderFor(pid).slice(0, (olderPages[pid] ?? 0) * OLDER_PAGE_SIZE);
   const recentFor = (pid: string) => buckets.recent.filter(t => t.project === pid);
@@ -1334,8 +1389,10 @@ function DesktopWorkspace() {
           {a?.provider === "codex" ? <Code2 size={14} /> : <Terminal size={14} />}
         </span>
         <strong className="session-title"><ThreadTitle title={t.title} displayTitle={t.schedule_id ? t.title : threadListTitle(t.title, t.messages)} onRename={title => renameThread(t.id, title)} /></strong>
-        {!grouped && (
+        {(!grouped || navView === "recent") && (
           <span
+            className={navView === "recent" ? "session-project thread-project-chip" : undefined}
+            title={db.projects.find((p) => p.id === t.project)?.name}
             style={{
               color: db.projects.find((p) => p.id === t.project)?.color,
             }}
@@ -1578,6 +1635,7 @@ function DesktopWorkspace() {
                       <span>Dashboard</span>
                     </button>
                   </div>
+                  <ThreadViewToggle value={navView} onChange={view => { setNavView(view); setRecentPages(0); }} />
                   <div className="list-heading list-search-row">
                     <div className="toolbar-search">
                       <Search size={13} />
@@ -1641,7 +1699,14 @@ function DesktopWorkspace() {
 
                   </div>
                   <ScrollArea className="thread-list-scroll min-h-0 flex-1" viewportRef={list} viewportProps={{ className: "thread-list", "aria-label": "Thread list" }}>
-                    {grouped ? (
+                    {navView === "recent" ? (
+                      <>
+                        <ThreadList key={`recent:${filter}:${query}:${projectFilter}`} threads={recent.threads} renderRow={row} />
+                        <RecentThreadsFooter className="thread-history" remaining={recent.remaining} expanded={recent.expanded}
+                          onMore={() => setRecentPages(p => p + 1)} onLess={() => setRecentPages(0)} />
+                        {!recent.threads.length && <p className="thread-recent-empty" role="status">No recent threads</p>}
+                      </>
+                    ) : grouped ? (
                       projectOrder.map((pid) => {
                         const p = db.projects.find((p) => p.id === pid);
                         const collapsed = collapsedProjects.includes(pid);
@@ -1689,15 +1754,20 @@ function DesktopWorkspace() {
                                 onPointerCancel={() => setProjectDrag(null)}
                                 onLostPointerCapture={() => setProjectDrag(null)}
                               ><GripVertical size={13} /></button>
-                              <button type="button" className="project-toggle"
+                              {p?.kind === "commander" ? <>
+                                <button type="button" className="project-toggle" aria-label={`Open ${p.name}`} title={`Open ${p.name}`} onClick={openCommander}>
+                                  <strong style={{ color: p.color }}>{p.name}</strong>
+                                </button>
+                              </> : <button type="button" className="project-toggle"
                                 aria-expanded={!collapsed}
                                 aria-label={`${collapsed ? "Expand" : "Collapse"} ${p?.name}`}
                                 title={`${collapsed ? "Expand" : "Collapse"} ${p?.name}`}
                                 onClick={() => setCollapsedProjects(c => c.includes(pid) ? c.filter(x => x !== pid) : [...c, pid])}>
                                 {collapsed ? <Folder size={14} style={{ color: p?.color }} /> : <FolderOpen size={14} style={{ color: p?.color }} />}
                                 <strong style={{ color: p?.color }}>{p?.name}</strong>
-                              </button>
+                              </button>}
                               {collapsed && attention > 0 && <span className="project-attention" role="status" aria-label={`${attention} ${attention === 1 ? "thread needs" : "threads need"} attention in ${p?.name}`}>{attention}</span>}
+                              {p?.kind !== "commander" && <>
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button variant="ghost" size="icon" className="project-settings-button project-more-button"
@@ -1730,8 +1800,9 @@ function DesktopWorkspace() {
                               >
                                 <Plus size={13} />
                               </Button>
+                              </>}
                             </div>
-                            {!collapsed && <>
+                            {p?.kind !== "commander" && !collapsed && <>
                             {native && scheduleProjects.includes(pid) && <div className="project-schedules" aria-label={`${p?.name} scheduled tasks`}>
                               {projectSchedules.map(s => <button type="button" className="schedule-thread-row" key={s.id} aria-pressed={scheduleView?.id === s.id} onClick={() => {
                                 setScheduleView({project: pid, id: s.id}); setHome(false); setDialog(null); setPane(null);
@@ -1753,7 +1824,7 @@ function DesktopWorkspace() {
                         {projectOrder.map(pid => older(pid))}
                       </>
                     )}
-                    {!sorted.length && (
+                    {!sorted.length && navView !== "recent" && (
                       <div className="native-empty">
                         <MascotHero line={db.projects.length ? "Nothing here yet. Want to start something?" : "Hi, I'm Freddai. Let's get you set up."} />
                         <FolderGit2 size={24} />
@@ -1837,10 +1908,23 @@ function DesktopWorkspace() {
             native={native} homeSelections={homeSelections}
             onHomeSelection={(account, selection) => setHomeSelections(previous => ({ ...previous, [account]: selection }))}
             onCreateThread={createHomeThread}
+            commander={native ? { onOpen: openCommander, onSend: sendToCommander } : undefined}
             resolveLaunch={resolveHomeTile}
             onRespond={respondHome}
           />
                   </div>
+                </ResizablePanel>
+              </>}
+              {commanderActive && <>
+                <ResizableHandle withHandle />
+                <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
+                  <CommanderView projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
+                    renderConversation={id => selected === id ? conversation(view.focus) : null}
+                    onSelectThread={id => { commanderThread.current = id; if (selected !== id) setSelected(id); }}
+                    onOpenThread={id => { commanderThread.current = ""; setCommanderOpen(false); setSelected(id); }}
+                    onCreateThread={createHomeThread}
+                    onManageSchedules={() => setDialog("schedules")}
+                    onBack={goHome} />
                 </ResizablePanel>
               </>}
               {pane?.kind === "git" && !dialog && !homeActive && !scheduleView && <>
@@ -1863,7 +1947,7 @@ function DesktopWorkspace() {
 
                 </ResizablePanel>
               </>}
-              {dialog !== "new" && !homeActive && !scheduleView && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
+              {dialog !== "new" && !homeActive && !commanderActive && !scheduleView && (task || splitActive) && !(pane?.kind === "git" && !dialog) && (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
@@ -2059,6 +2143,7 @@ function DesktopWorkspace() {
                 <ColorField label="Project color" value={editing.color}
                   onChange={color => setEditing(p => ({ ...p, color }))} />
               </label>
+              {editing.id && <ProjectObjective projectId={editing.id} objective={db.projects.find(p => p.id === editing.id)?.objective ?? editing.objective} disabled={!native} onSaved={refresh} />}
               <h3>Default agent & account</h3>
               {!db.accounts.length ? (
                 <div className="setup-note">

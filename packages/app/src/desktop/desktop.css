@@ -1293,6 +1293,19 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .dashboard-link:hover, .dashboard-link[aria-current="page"] { color: var(--foreground); background: var(--accent); }
 .dashboard-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
+/* Projects | Recent switch above the thread search. */
+.thread-view-toggle { display: flex; gap: 2px; margin: 8px 12px 0; padding: 2px; border-radius: 7px; background: var(--muted); flex-shrink: 0; }
+.thread-view-toggle > button { flex: 1; min-width: 0; height: 22px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground); font: inherit; font-size: 11px; font-weight: 500; cursor: pointer; }
+.thread-view-toggle > button:hover { color: var(--foreground); }
+.thread-view-toggle > button[aria-pressed="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px rgb(0 0 0 / .18); }
+.thread-view-toggle > button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+
+/* Recent view: project tag on each row, truncating long names so the title keeps the space. */
+.native-workspace .thread-project-chip { max-width: 38%; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, currentColor 14%, transparent); font-size: 10px; line-height: 14px; }
+.native-workspace .thread-project-chip.session-project { flex-shrink: 1; }
+.thread-recent-empty { padding: 24px 12px; text-align: center; color: var(--muted-foreground); font-size: 12px; }
+.recent-threads-footer { display: flex; flex-direction: column; }
+
 /* Project dictation uses the dashboard's hold/release controller. */
 .project-group-heading .project-mic-button { margin-left: 0; width: 24px; height: 24px; flex-shrink: 0; touch-action: none; }
 .project-group-heading .project-mic-button svg { width: 13px; height: 13px; }

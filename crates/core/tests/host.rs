@@ -50,6 +50,8 @@ mod unix {
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "unix::host_worker"])
             .env("FREDDAI_TEST_HOST_ROOT", root)
+            // Keep the built-in Commander folder out of the real home directory.
+            .env("FREDDAI_COMMANDER_DIR", root.join("commander-home"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -102,7 +104,8 @@ mod unix {
                 .as_array()
                 .unwrap()
                 .len(),
-            1
+            // The imported folder plus the built-in Commander project.
+            2
         );
         call(&root,"save_preferences",json!({"preferences":{"prefer_last":false,"fallback":null,"last":null,"use_worktree":true}})).unwrap();
         let mut socket = UnixStream::connect(root.join("host.sock")).unwrap();
@@ -127,7 +130,7 @@ mod unix {
             true
         );
         assert_eq!(
-            call(&root, "snapshot", json!({})).unwrap()["projects"][0]["id"],
+            call(&root, "snapshot", json!({})).unwrap()["projects"][1]["id"],
             imported["id"]
         );
         let forced = call(&root, "upgrade_force", json!({})).unwrap();

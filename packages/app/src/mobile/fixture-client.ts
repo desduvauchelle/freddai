@@ -1,6 +1,7 @@
 import type { Message } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
-import type { CompanionClient, CompanionSnapshot, CompanionThread } from './companion';
+import type { CompanionClient, CompanionSnapshot, CompanionThread, CommanderClient } from './companion';
+import type { Proposal, Todo, NoteSummary } from '../desktop/commander/api';
 
 /**
  * Offline fake Mac for simulator screenshots and UI work. Never imported by device builds:
@@ -14,6 +15,7 @@ const msg = (role: string, text: string): Message => ({ id: `fx-${++seq}`, role,
 
 const assistants = [{ id: 'claude-personal', name: 'Personal', provider: 'claude' }, { id: 'codex-work', name: 'Work', provider: 'codex' }];
 const projects: CompanionSnapshot['projects'] = [
+  { id: 'commander', name: 'Commander-in-Chief', color: '#d98a3d', canStart: true, provider: 'claude', defaultAssistant: 'claude-personal', assistants, kind: 'commander', objective: 'Chief of staff: routes work to projects, tracks to-dos and checks results.' },
   { id: 'freddai', name: 'Freddai', color: '#7c6cf0', canStart: true, provider: 'claude', defaultAssistant: 'claude-personal', assistants },
   { id: 'lucy-web', name: 'Lucy Web', color: '#2fa37a', canStart: true, provider: 'codex', defaultAssistant: 'codex-work', assistants },
   { id: 'dormouse-rive', name: 'Dormouse Rive', color: '#e0803c', canStart: true, provider: 'claude', defaultAssistant: 'claude-personal', assistants },
@@ -82,6 +84,7 @@ const t = (id: string, project: string, title: string, status: string, ago: numb
 });
 
 const threads: CompanionThread[] = [
+  t('cmd1', 'commander', 'Commander chat', 'done', 6 * min, { messages: [msg('user', 'What is blocked today?'), msg('assistant', 'Two things need you: the Lucy Web pricing change and the iOS install. Everything else is moving.')] }),
   t('t1', 'freddai', 'Sync read state between Mac and iPhone', 'done', 4 * min, { messages: longTranscript }),
   t('t2', 'freddai', 'Native drawer for thread list', 'running', 20_000, { messages: [msg('user', 'Build a native iOS drawer for the thread list.'), msg('tool', 'Read  MobileApp.tsx'), msg('tool', 'Edit  native-shell.ts'), msg('assistant', 'Wiring the drawer rows to the existing thread model now.')] }),
   t('t3', 'freddai', 'Run the iOS install script on device', 'waiting', 3 * min, {
@@ -105,24 +108,78 @@ const models: Model[] = [
   { model: 'claude-haiku-4-5', displayName: 'Haiku', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] },
 ];
 
+/** Screenshot aid only (`VITE_COMPANION_FIXTURE_MANY=1`): older finished threads that exercise the 25-row Recent view. */
+const manyThreads = (): CompanionThread[] => Array.from({ length: 30 }, (_, i) => t(`many${i}`, i % 3 === 0 ? 'lucy-web' : 'freddai', `Archive task ${String(i + 1).padStart(2, '0')}`, 'done', (3 + i) * hour));
+
 const codexModels: Model[] = [
   { model: 'gpt-5.5', displayName: 'GPT-5.5', isDefault: true, supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'].map(reasoningEffort => ({ reasoningEffort })) },
   { model: 'gpt-5.5-mini', displayName: 'GPT-5.5 Mini', supportedReasoningEfforts: ['low', 'medium'].map(reasoningEffort => ({ reasoningEffort })) },
 ];
 
-export function createFixtureClient(): CompanionClient {
-  const state: CompanionSnapshot = { projects, threads: threads.map(x => ({ ...x, messages: [...x.messages] })) };
+const iso = (ago: number) => new Date(now - ago).toISOString();
+const baseTodo = (id: string, title: string, project: string | null, owner: Todo['owner'], status: Todo['status'], extra: Partial<Todo> = {}): Todo => ({
+  id, title, description: null, project, owner, thread: null, status, due: null, check_back_at: null, verification: [],
+  completion_basis: null, completion_note: null, created_at: iso(day), updated_at: iso(hour), history: [], ...extra,
+});
+function createCommanderFixture(getThreads: () => CompanionThread[]): CommanderClient {
+  const proposals: Proposal[] = [{
+    id: 'fx-prop-1', tool: 'freddai_start_task', summary: 'Start a task in Lucy Web: add a pricing FAQ', project: 'lucy-web',
+    arguments: { project: 'lucy-web', prompt: 'Add a pricing FAQ section below the plans table.' }, status: 'pending', result: null, error: null,
+    thread: null, created_at: iso(5 * min), decided_at: null,
+  }];
+  const todos: Todo[] = [
+    baseTodo('fx-todo-1', 'Review the dark mode pricing page', 'lucy-web', 'me', 'needs_review', {
+      thread: 't5', verification: [{ requirement: 'Dark mode applies to all plan cards', status: 'met', evidence: 'Screenshot in the thread' }, { requirement: 'Contrast checked', status: 'unclear', evidence: null }] }),
+    baseTodo('fx-todo-2', 'Tune sleeping animation timing', 'dormouse-rive', 'thread', 'in_progress', { thread: 't8' }),
+    baseTodo('fx-todo-3', 'Plan the 2.4 release notes', 'freddai', 'commander', 'open', { due: iso(-day) }),
+  ];
+  const notes: (NoteSummary & { body: string })[] = [{ name: 'weekly-focus', title: 'Weekly focus', updated_at: iso(2 * hour), preview: 'Ship companion Commander.', body: '# Weekly focus\n\nShip companion Commander.' }];
+  return {
+    state: async () => ({
+      project: { id: 'commander', name: 'Commander-in-Chief', objective: projects[0].objective ?? null, account: null, model: 'latest' },
+      thread_id: getThreads().find(x => x.project === 'commander')?.id ?? null,
+      status: { needs_you: proposals.filter(p => p.status === 'pending').length + todos.filter(x => x.status === 'needs_review').length, running: 1, done_today: 2 },
+    }),
+    proposals: async () => proposals.map(p => ({ ...p })),
+    respond: async ({ id, approve, prompt }) => {
+      const p = proposals.find(x => x.id === id); if (!p) throw new Error('Proposal not found');
+      Object.assign(p, approve ? { status: 'approved', result: `Started a task${prompt ? ' (edited)' : ''}.`, thread: 't8' } : { status: 'declined' }, { decided_at: new Date().toISOString() });
+      return { ...p };
+    },
+    todos: async () => todos.map(x => ({ ...x })),
+    saveTodo: async patch => {
+      const existing = todos.find(x => x.id === patch.id);
+      if (existing) { Object.assign(existing, patch, { updated_at: new Date().toISOString() }); return { ...existing }; }
+      const created = baseTodo(`fx-todo-${todos.length + 1}`, patch.title ?? 'Untitled', patch.project ?? null, patch.owner ?? 'me', patch.status ?? 'open', patch);
+      todos.push(created); return { ...created };
+    },
+    notes: async () => notes.map(({ body: _body, ...n }) => n),
+    readNote: async name => ({ name, body: notes.find(n => n.name === name)?.body ?? '' }),
+    writeNote: async (name, body) => { const n = notes.find(x => x.name === name); if (n) n.body = body; return { name, title: name, updated_at: new Date().toISOString(), preview: body.slice(0, 80) }; },
+  };
+}
+
+export function createFixtureClient(options: { many?: boolean; stallReplies?: boolean } = {}): CompanionClient {
+  const state: CompanionSnapshot = { canReorderProjects: true, threadList: { projectOrder: projects.map(p => p.id) }, projects, threads: [...threads, ...(options.many ? manyThreads() : [])].map(x => ({ ...x, messages: [...x.messages] })) };
   const touch = (id: string, fn: (th: CompanionThread) => void) => {
     const th = state.threads.find(x => x.id === id); if (!th) return;
     fn(th); th.updated = Date.now(); th.last_user_message_at = th.updated;
   };
+  const commander = createCommanderFixture(() => state.threads);
   return {
+    commander,
+    moveProject: async (project, target, after) => {
+      const order = (state.threadList?.projectOrder || state.projects.map(p => p.id)).filter(id => id !== project);
+      order.splice(order.indexOf(target) + (after ? 1 : 0), 0, project);
+      state.threadList = { ...state.threadList, projectOrder: order };
+      return order;
+    },
     summaries: {
       get: async date => ({ date, running: false, error: null, threads: 3,
         summary: { date, markdown: 'Completed the dashboard layout and reviewed project activity. All summaries stay in the same scrolling page as your projects.', generated_at: now, provider: 'fixture', account: '', model: '', threads: 3 } }),
       generate: async () => { throw new Error('Summary generation is disabled in the offline layout fixture.'); },
     },
-    snapshot: async () => ({ projects: state.projects, threads: state.threads.map(x => ({ ...x, messages: [...x.messages] })) }),
+    snapshot: async () => ({ canReorderProjects: true, threadList: state.threadList, projects: state.projects, threads: state.threads.map(x => ({ ...x, messages: [...x.messages] })) }),
     models: async target => {
       const a = assistants.find(x => x.id === target.assistant);
       const provider = a?.provider ?? (target.thread ? state.threads.find(x => x.id === target.thread)?.provider : projects.find(p => p.id === target.project)?.provider);
@@ -137,7 +194,7 @@ export function createFixtureClient(): CompanionClient {
       state.threads.unshift({ id, project, title: prompt.slice(0, 60), status: 'running', updated: Date.now(), last_user_message_at: Date.now(), messages: [msg('user', prompt), msg('assistant', 'On it. (Fixture mode: no agent is running.)')], canReply: true, queued: 0, error: null, provider: assistants.find(a => a.id === assistant)?.provider ?? projects.find(p => p.id === project)?.provider, options: options && { model: options.model, effort: options.effort, permission_mode: options.permission_mode } });
       return id;
     },
-    reply: async ({ thread, prompt }) => touch(thread, th => { th.messages.push(msg('user', prompt), msg('assistant', 'Got it. (Fixture mode: no agent is running.)')); }),
+    reply: async ({ thread, prompt }) => options.stallReplies ? new Promise<never>(() => {}) /* screenshot aid: keeps the message in the on-device queue strip */ : touch(thread, th => { th.messages.push(msg('user', prompt), msg('assistant', 'Got it. (Fixture mode: no agent is running.)')); }),
     respond: async ({ thread, allow }) => touch(thread, th => { th.pending = null; th.status = 'running'; th.messages.push(msg('assistant', allow ? 'Allowed. Continuing.' : 'Declined. Skipping that step.')); }),
     action: async ({ thread, action }) => { if (action === 'stop') touch(thread, th => { th.status = 'done'; }); else state.threads = state.threads.filter(x => x.id !== thread); },
     queue: async () => {},

@@ -11,6 +11,13 @@ export function dashboardControlKey(project: CompanionProject, selected: string)
   const assistant = dashboardAssistantFor(project, selected);
   return `new:${project.id}:${assistant?.id || ''}:${assistant?.provider || project.provider || ''}`;
 }
+/** The Commander cluster for the native dashboard. Counts come from the snapshot (threads Commander started are not linkable there), so MobileApp overrides these with the Mac's commander_state when it has it. */
+function commanderModel(snapshot: CompanionSnapshot) {
+  const project = snapshot.projects.find(p => p.kind === 'commander');
+  if (!project) return null;
+  const threads = snapshot.threads.filter(t => t.project === project.id);
+  return { id: project.id, name: project.name, needsYou: threads.filter(t => nativeRunState(t) === 'waiting').length, running: threads.filter(t => nativeRunState(t) === 'running').length, doneToday: 0 };
+}
 export function buildDashboardModel(snapshot: CompanionSnapshot, connected: boolean, selected: string,
   controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false) {
   const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
@@ -18,7 +25,8 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
   return {
     summaries: [] as NativeSummary[], schedules: false, message: '',
     connected, busy, expanded, agent: assistants.find(a => a.id === selected) ? assistantLabel(assistants.find(a => a.id === selected)!) : 'Project defaults',
-    projects: snapshot.projects.map(project => {
+    commander: commanderModel(snapshot),
+    projects: snapshot.projects.filter(p => p.kind !== 'commander').map(project => {
       const assistant = dashboardAssistantFor(project, selected), provider = assistant?.provider || project.provider;
       const threads = snapshot.threads.filter(t => t.project === project.id);
       const working = threads.filter(t => nativeRunState(t) === 'running').length;

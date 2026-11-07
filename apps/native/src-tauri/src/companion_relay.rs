@@ -91,7 +91,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
         let host=std::thread::spawn(move || {
             let (mut connection,_)=socket.accept().unwrap();let mut line=String::new();
             BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
-            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot");
+            assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot_since");
             writeln!(connection,"{}",json!({"result":db})).unwrap();
         });
         let id=crypto::random();let context=format!("response:{}:{id}",d.id);
@@ -138,7 +138,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             writeln!(connection,"{}",json!({"result":freddai_core::runtime::Database::default()})).unwrap();
         });
         let id=crypto::random();let v=process(&root,&Mutex::new(()),&d,&id,&request(&d,&id,"/v1/snapshot",crypto::now()+90)).unwrap();
-        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[]}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[],"canReorderProjects":true}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
     }
     #[test] fn scoped_refresh_crosses_host_dispatch_and_encrypted_relay_without_all_histories() {
         let (root,d)=fixture();
@@ -152,7 +152,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             for _ in 0..2 {
                 let (mut connection,_)=socket.accept().unwrap();let mut line=String::new();
                 BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
-                assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot");
+                assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["method"],"snapshot_since");
                 writeln!(connection,"{}",json!({"result":db})).unwrap();
             }
         });

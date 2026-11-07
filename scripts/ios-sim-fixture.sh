@@ -17,6 +17,9 @@ state="$(xcrun simctl list devices --json | FREDDAI_SELECTED_SIM="$device" pytho
 if [ "$state" != Booted ]; then xcrun simctl boot "$device"; fi
 xcrun simctl bootstatus "$device" -b
 export VITE_COMPANION_FIXTURE=1
+export VITE_COMPANION_FIXTURE_MANY="${VITE_COMPANION_FIXTURE_MANY:-}"
+# Replies never complete in the fixture, so a sent follow-up stays in the queued-message strip (layout tests).
+export VITE_COMPANION_FIXTURE_STALL="${VITE_COMPANION_FIXTURE_STALL:-1}"
 pnpm --filter @freddai/native tauri ios build --debug --ci --target aarch64-sim
 app="apps/native/src-tauri/gen/apple/build/arm64-sim/Freddai.app"
 [ -d "$app" ] || { echo "Simulator Freddai.app not found" >&2; exit 1; }
