@@ -1,0 +1,68 @@
+name: Verify Linux portable archive
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Published release whose AppImage should be wrapped and tested'
+        required: true
+        default: 'v0.1.1'
+        type: string
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published AppImage and verify GitHub digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release }}
+        run: |
+          mkdir -p portable
+          gh release download "$RELEASE_TAG" --pattern Freddai-linux-x64.AppImage --dir portable
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | select(.name == "Freddai-linux-x64.AppImage") | .digest' > portable/digest
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          folder = Path('portable')
+          assert folder.joinpath('digest').read_text().strip() == 'sha256:' + hashlib.sha256(folder.joinpath('Freddai-linux-x64.AppImage').read_bytes()).hexdigest()
+          PY
+      - name: Package browser-safe archive and check extracted permissions
+        run: |
+          python3 -m unittest discover -s scripts/tests/linux-archive
+          chmod 644 portable/Freddai-linux-x64.AppImage
+          python3 scripts/package-linux-archive.py portable/Freddai-linux-x64.AppImage portable/Freddai-linux-x64.tar.gz
+          mkdir unpacked
+          tar -xzf portable/Freddai-linux-x64.tar.gz -C unpacked
+          test -x unpacked/Freddai-linux-x64/Freddai-linux-x64.AppImage
+          cmp portable/Freddai-linux-x64.AppImage unpacked/Freddai-linux-x64/Freddai-linux-x64.AppImage
+      - name: Install display and WebKit dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb dbus-x11 libwebkit2gtk-4.1-0 libappindicator3-1
+      - name: Verify launch without FUSE, accounts or provider activity
+        shell: bash
+        run: |
+          cd unpacked/Freddai-linux-x64
+          ./Freddai-linux-x64.AppImage --appimage-extract > extract.log
+          mkdir -p "$RUNNER_TEMP/portable-smoke/data" "$RUNNER_TEMP/portable-smoke/config"
+          set +e
+          XDG_DATA_HOME="$RUNNER_TEMP/portable-smoke/data" XDG_CONFIG_HOME="$RUNNER_TEMP/portable-smoke/config" \
+            timeout 20s dbus-run-session -- xvfb-run -a ./squashfs-root/AppRun > ../../portable/launch.log 2>&1
+          result=$?
+          set -e
+          cat ../../portable/launch.log
+          test "$result" = 124 || { echo "App exited before launch check (status $result)"; exit 1; }
+          if grep -E 'panicked at|symbol lookup error|error while loading shared libraries' ../../portable/launch.log; then exit 1; fi
+      - name: Stage checksum
+        run: |
+          cd portable
+          sha256sum Freddai-linux-x64.tar.gz > Freddai-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-portable-verified
+          path: |
+            portable/Freddai-linux-x64.tar.gz
+            portable/Freddai-linux-x64.tar.gz.sha256
+            portable/launch.log

@@ -50,7 +50,7 @@ export function testFlightUrl(value: string | undefined): string | null {
 }
 
 export async function latestDownloads() {
-  const downloads = { mac: releaseDownloadUrl(process.env.MACOS_DOWNLOAD_URL), linux: null as string | null, linuxDeb: null as string | null, windows: null as string | null, ios: testFlightUrl(process.env.TESTFLIGHT_PUBLIC_URL), android: releaseDownloadUrl(process.env.ANDROID_DOWNLOAD_URL) };
+  const downloads = { mac: releaseDownloadUrl(process.env.MACOS_DOWNLOAD_URL), linux: null as string | null, linuxDeb: null as string | null, linuxArchive: null as string | null, windows: null as string | null, ios: testFlightUrl(process.env.TESTFLIGHT_PUBLIC_URL), android: releaseDownloadUrl(process.env.ANDROID_DOWNLOAD_URL) };
   const repository = process.env.RELEASES_REPOSITORY;
   if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) return downloads;
   try {
@@ -60,6 +60,7 @@ export async function latestDownloads() {
     if (!response.ok) return downloads;
     const release: unknown = await response.json();
     downloads.mac ??= macDownloadFromRelease(release, repository);
+    downloads.linuxArchive = assetDownloadFromRelease(release, repository, "Freddai-linux-x64.tar.gz");
     downloads.linux = assetDownloadFromRelease(release, repository, "Freddai-linux-x64.AppImage");
     downloads.linuxDeb = assetDownloadFromRelease(release, repository, "Freddai-linux-x64.deb");
     downloads.windows = assetDownloadFromRelease(release, repository, "Freddai-windows-x64-setup.exe");

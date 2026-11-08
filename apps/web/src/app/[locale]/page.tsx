@@ -59,7 +59,7 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
           <div className="download-grid">
             {[
               {name: "Mac", url: downloads.mac, label: d.downloadMac, detail: d.macDetail, pending: d.unavailable},
-              {name: "Linux", url: downloads.linux || downloads.linuxDeb, label: d.downloadLinux, detail: d.linuxDetail, pending: d.unavailable},
+              {name: "Linux", url: downloads.linuxArchive || downloads.linux || downloads.linuxDeb, label: d.downloadLinux, detail: d.linuxDetail, pending: d.unavailable},
               {name: "Windows", url: downloads.windows, label: d.downloadWindows, detail: d.windowsDetail, pending: d.windowsPending},
               {name: "Android", url: downloads.android, label: d.downloadAndroid, detail: d.androidDetail, pending: d.unavailable},
               {name: "iPhone & iPad", url: downloads.ios, label: d.downloadIos, detail: d.iosDetail, pending: d.iosPending},
@@ -68,6 +68,7 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
               <p className="mt-3 mb-6 text-sm leading-relaxed opacity-75">{platform.detail}</p>
               {platform.url ? <a className="btn btn-primary mt-auto" href={platform.url}>{platform.label}</a> : <div className="mt-auto"><button className="btn btn-outline" disabled>{platform.label}</button><p className="mt-3 min-h-10 text-xs leading-relaxed opacity-70">{platform.pending}</p></div>}
               {platform.name === "Android" && platform.url && <a className="link mt-3 text-sm" href="https://github.com/desduvauchelle/freddai/blob/main/docs/android.md">{d.androidSetup}</a>}
+              {platform.name === "Linux" && platform.url && <a className="link mt-3 text-sm" href="https://github.com/desduvauchelle/freddai/blob/main/docs/linux.md">{d.linuxSetup}</a>}
               {platform.name === "Linux" && downloads.linux && downloads.linuxDeb && <a className="link mt-3 text-sm" href={downloads.linuxDeb}>{d.downloadDeb}</a>}
             </article>)}
           </div>

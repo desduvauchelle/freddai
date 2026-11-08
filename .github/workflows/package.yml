@@ -136,6 +136,13 @@ jobs:
           if not expected <= produced:
               raise SystemExit(f'Missing expected assets: {sorted(expected - produced)}')
           PY
+      - name: Preserve executable permission in Linux download archive
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m unittest discover -s scripts/tests/linux-archive
+          python3 scripts/package-linux-archive.py release-assets/Freddai-linux-x64.AppImage release-assets/Freddai-linux-x64.tar.gz
+          cd release-assets
+          sha256sum Freddai-linux-x64.tar.gz > Freddai-linux-x64.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ runner.os }}
