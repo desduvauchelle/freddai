@@ -1,0 +1,9 @@
+.desktop-recording-control { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
+.desktop-recording-control .composer-mic { touch-action: none; user-select: none; }
+.desktop-recording-pill { position: absolute; z-index: 40; right: 0; bottom: calc(100% + 8px); display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 24px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); box-shadow: 0 4px 18px #0003; white-space: nowrap; }
+.desktop-recording-pill button { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--secondary); color: var(--foreground); cursor: pointer; }
+.desktop-recording-pill button:last-child { background: var(--primary); color: var(--primary-foreground); }
+.desktop-recording-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--foreground); }
+.desktop-recording-wave { display: flex; align-items: center; gap: 2px; height: 24px; width: 94px; color: #369964; }
+.desktop-recording-wave i { display: block; width: 2px; border-radius: 2px; background: currentColor; }
+.project-group-heading .desktop-recording-control .desktop-recording-pill { right: auto; left: -140px; bottom: auto; top: calc(100% + 6px); }

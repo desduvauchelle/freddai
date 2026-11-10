@@ -9,8 +9,52 @@ use tiny_http::{Header, Method, Response, Server, SslConfig, StatusCode};
 
 use crate::thread_list_settings::ThreadListSettings;
 
+// Quota reads run outside snapshot delivery and never start a model turn.
+fn companion_product_usage(root: &Path, db: &Database) -> Value {
+    type Entry = (Instant, Option<Value>, bool);
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, Entry>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut cache = cache.lock().unwrap();
+    Value::Array(db.accounts.iter().map(|account| {
+        let key = root.join("usage").join(&account.id);
+        let entry = cache.entry(key.clone()).or_insert((Instant::now() - Duration::from_secs(121), None, false));
+        if !entry.2 && entry.0.elapsed() >= Duration::from_secs(120) {
+            entry.2 = true;
+            let root = root.to_path_buf();
+            let id = account.id.clone();
+            std::thread::spawn(move || {
+                let result = host::call(&root, "account_usage", json!({"account":id}));
+                if let Some(entry) = CACHE.get().unwrap().lock().unwrap().get_mut(&key) {
+                    if let Ok(value) = result { entry.1 = Some(value); }
+                    entry.0 = Instant::now();
+                    entry.2 = false;
+                }
+            });
+        }
+        json!({"id":account.id,"name":account.name,"provider":account.provider,"color":account.color,"usage":entry.1})
+    }).collect())
+}
+
 const PORT: u16 = 49744;
 const LIMIT: u64 = 128 * 1024;
+
+// The first provider turn may not have published its session ID yet. Its follow-ups
+// can already enter the host FIFO, which waits for the active turn to finish.
+fn can_queue_reply(has_provider_session: bool, status: &str) -> bool {
+    has_provider_session || matches!(status, "starting" | "running" | "waiting")
+}
+
+#[cfg(test)]
+mod reply_readiness_tests {
+    use super::*;
+    #[test]
+    fn active_first_turn_accepts_queued_followups_before_provider_session_exists() {
+        for status in ["starting", "running", "waiting"] { assert!(can_queue_reply(false, status)); }
+        for status in ["done", "failed", "interrupted"] { assert!(!can_queue_reply(false, status)); }
+        assert!(can_queue_reply(true, "done"));
+    }
+}
+
 
 pub fn project_snapshot(db: &Database) -> Value {
     project_snapshot_selection(db, None, false)
@@ -31,21 +75,21 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         if !include_history {
             // Keep the searchable title index and attention/read badges, not conversation payloads.
             // An empty pending object is a presence marker; messagesLoaded=false prevents acting on it.
-            return json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,
+            return json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,"scheduled":s.schedule_id.is_some() || s.options.scheduled,
                 "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,
                 "messages":[],"messagesLoaded":false,"canReply":false,"error":null,
                 "pending":s.pending.as_ref().map(|_|json!({})),
-                "queued":queue.map(|q|q.messages.len()).unwrap_or(0)});
+                "queued":queue.map(|q|q.messages.iter().filter(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX)).count()).unwrap_or(0)});
         }
-        json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,
+        json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,"scheduled":s.schedule_id.is_some() || s.options.scheduled,
             "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
             "usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
             "options":{"model":s.options.model,"effort":s.options.effort,"permission_mode":s.options.permission_mode},
             "queue":queue.map(|q|q.messages.iter().map(|m|json!({"id":m.id,"prompt":m.prompt,"attachments":m.options.attachments.len()})).collect::<Vec<_>>()).unwrap_or_default(),
-            "queued":queue.map(|q|q.messages.len()).unwrap_or(0),
-            "queuePaused":queue.is_some_and(|q|q.paused),
+            "queued":queue.map(|q|q.messages.iter().filter(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX)).count()).unwrap_or(0),
+            "queuePaused":queue.is_some_and(|q|q.paused && q.messages.iter().any(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX))),
             "queueError":queue.and_then(|q|q.error.clone())})
     }).collect();
     json!({"projects":projects,"threads":threads,"schedules":db.schedules,"workspaces":db.preferences.workspaces})
@@ -122,6 +166,18 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     let input = &p["input"];
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
+        "update_project_organization" => {
+            let id = text(input, "project")?;
+            if !db.projects.iter().any(|p| p.id == id) { return Err("Project unavailable".into()); }
+            let name = text(input, "name")?.trim();
+            let color = text(input, "color")?;
+            if name.is_empty() || name.len() > 200 || color.len() != 7 || !color.starts_with('#') || !color[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("Invalid project name or color".into());
+            }
+            host::call(root, "update_project_organization", json!({"project":id,"name":name,"color":color})).map_err(|error| {
+                if error.contains("Unknown host command") { "The background host needs an update before editing project names and colors. Let active work finish and reopen Freddai on your Mac.".into() } else { error }
+            })
+        }
         "move_project" => {
             let id = text(input, "project")?;
             let target = text(input, "target")?;
@@ -279,9 +335,28 @@ fn voice_composer(root: &Path, p: &Value) -> Result<Value,String> {
         Err(e)=>{eprintln!("companion.transcribe id={id} bytes={bytes} result=err elapsed_ms={} error={e}",started.elapsed().as_millis());Err(e)}
     }
 }
+/// Preview tunnel RPC: needs the calling device's key and mailbox, so it is handled before generic dispatch.
+fn preview_open(root: &Path, device: &crate::companion_pairing::Device, input: &Value) -> Result<Value,String> {
+    crate::preview_host::import_shared(root);
+    let port = input["port"].as_u64().ok_or("preview_invalid_request")?;
+    let path = input["path"].as_str().unwrap_or("/");
+    let thread = text(input,"threadId").map_err(|_|"preview_invalid_request".to_string())?;
+    // Read the transcript only when no explicit share exists for the port.
+    let transcript = if u16::try_from(port).is_ok_and(crate::preview_host::is_granted) { None } else {
+        let (db,_,_) = snapshot(root,true,Some(thread))?;
+        db.sessions.iter().find(|s|s.id==thread && !s.archived && s.deleted_at.is_none() && s.status!="archived").map(|s|json!(s.messages).to_string())
+    };
+    let relay = crate::companion_pairing::edit(root,|r|Ok(r.relay.clone()))?;
+    crate::preview_host::open(&crate::preview_host::RelayAuth{relay:relay.as_deref(),token:&device.mailbox,key:&device.key},port,path,transcript.as_deref())
+}
+pub(crate) fn dispatch_for_device(root: &Path, device: &crate::companion_pairing::Device, route: &str, p: Value) -> Result<Value,String> {
+    if route == "/v1/composer" && p["operation"] == "preview_open" { return preview_open(root, device, &p["input"]); }
+    dispatch(root, route, p)
+}
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
-    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write")) {
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
         let operation = text(&p,"operation")?;
+        if operation == "google_capability" { return Ok(crate::companion_operations::google_capability(&host::call(root, "hello", json!({}))?)); }
         let mut result = host::call(root, operation, p["input"].clone())?;
         // The companion snapshot never exposes filesystem paths.
         if operation == "commander_state" { if let Some(project) = result["project"].as_object_mut() { project.remove("path"); } }
@@ -313,6 +388,7 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
             if !result["threadList"].is_object() { result["threadList"] = json!({}); }
             result["threadList"]["projectOrder"] = json!(order);
         }
+        result["productUsage"] = companion_product_usage(root, &db);
         result["canReorderProjects"] = json!(true);
         return Ok(result);
     }
@@ -361,7 +437,7 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
         "/v1/reply" => {
             let s = db.sessions.iter().find(|s|Some(s.id.as_str())==p["thread"].as_str() && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")?;
             if s.pending.is_some() { return Err("This thread needs a decision on your Mac before continuing.".into()); }
-            if s.provider_id.is_none() { return Err("This conversation cannot be resumed. Start a new thread.".into()); }
+            if !can_queue_reply(s.provider_id.is_some(), &s.status) { return Err("This conversation cannot be resumed. Start a new thread.".into()); }
             // Always use the existing persistent FIFO; the host owns execution and retries.
             host::call(root,"queue_message",json!({"session":s.id,"prompt":prompt,"options":options}))
         }
@@ -412,11 +488,13 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
                 let result=req.as_reader().take(LIMIT+1).read_to_end(&mut body);
                 if result.is_err() || body.len() as u64>LIMIT {reason="request body unreadable or over limit".into();(413,Err("Request is too large".into()))}
                 else {
-                    let _lock=gate.lock().unwrap();
+                    // preview_open may spend seconds dialing the relay, so it must not hold the global gate; it only reads state.
+                    let preview=route=="/v1/composer" && serde_json::from_slice::<Value>(&body).is_ok_and(|p|p["operation"]=="preview_open");
+                    let _lock=(!preview).then(||gate.lock().unwrap());
                     let caught=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||serde_json::from_slice(&body).map_err(|_|"Invalid request".to_string()).and_then(|p|match route.as_str() {
                         "/v1/pair/request"=>crate::companion_pairing::request(&root,&p),
                         "/v1/pair/claim"=>crate::companion_pairing::claim(&root,&p),
-                        _=> { if crate::companion_pairing::device(&root,&auth)?.is_none() {return Err("Device revoked".into());} dispatch(&root,&route,p) },
+                        _=> { let Some(device)=crate::companion_pairing::device(&root,&auth)? else {return Err("Device revoked".into())}; dispatch_for_device(&root,&device,&route,p) },
                     })));
                     let mut panicked=false;
                     let result=caught.unwrap_or_else(|_|{panicked=true;reason="panic while handling request".into();Err("Companion server error. Check the Freddai log on your Mac.".into())});
@@ -609,7 +687,7 @@ mod tests {
             "messages":[{"id":"m","role":"assistant","text":"TRANSCRIPT_DETAIL"}],
             "pending":{"id":3,"params":{"command":"APPROVAL_DETAIL"}},"error":"ERROR_DETAIL",
             "options":{"model":"MODEL_DETAIL"},"usage":{"context_tokens":42,"context_window":100}})).unwrap());
-        db.queues.push(serde_json::from_value(json!({"session":"thread","paused":true,"error":"QUEUE_ERROR_DETAIL","messages":[{"id":"q","prompt":"QUEUE_PROMPT_DETAIL","options":{}}]})).unwrap());
+        db.queues.push(serde_json::from_value(json!({"session":"thread","paused":true,"error":"QUEUE_ERROR_DETAIL","messages":[{"id":"q","prompt":"QUEUE_PROMPT_DETAIL","options":{}},{"id":"commander-heartbeat-1","prompt":"Heartbeat","options":{}},{"id":"commander-wake-1","prompt":"Delegated notice","options":{}}]})).unwrap());
         let overview=project_snapshot_selection(&db,None,true);
         let row=&overview["threads"][0];
         assert_eq!(row["title"],"Waiting task");
@@ -717,6 +795,39 @@ mod schedule_transport_tests {
 }
 
 #[cfg(test)]
+mod google_transport_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+    #[test]
+    fn google_accounts_and_triggers_reach_host_and_credentials_do_not() {
+        let root = std::env::temp_dir().join(format!("fr-google-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let operations = ["google_accounts", "google_disconnect", "google_triggers", "google_trigger_save", "google_trigger_delete"];
+        let host = std::thread::spawn(move || {
+            for operation in operations {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], operation);
+                assert_eq!(request["params"]["marker"], "kept");
+                writeln!(connection, "{}", json!({"result":null})).unwrap();
+            }
+        });
+        for operation in operations {
+            crate::companion_operations::validate(operation).unwrap();
+            dispatch(&root, "/v1/composer", json!({"operation":operation,"input":{"marker":"kept"}})).unwrap();
+        }
+        for operation in ["google_config_get", "google_config_set", "google_connect_start", "google_connect_status"] {
+            assert!(crate::companion_operations::validate(operation).is_err());
+        }
+        host.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod thread_list_settings_tests {
     use super::*;
 
@@ -776,6 +887,29 @@ mod workspace_pin_transport_tests {
         let mut invalid = db;
         invalid.sessions[0].status = "running".into();
         assert!(composer(&root, &invalid, &json!({"operation":"resume_thread","input":{"thread":"t","requestId":"rejected"}})).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn remote_project_presentation_rejects_invalid_input_and_filters_host_payload() {
+        let root = std::env::temp_dir().join(format!("fr-pe-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let db = database();
+        for input in [json!({"project":"missing","name":"Name","color":"#123456"}), json!({"project":"p","name":" ","color":"#123456"}), json!({"project":"p","name":"Name","color":"red"})] {
+            assert!(composer(&root, &db, &json!({"operation":"update_project_organization","input":input})).is_err());
+        }
+        let listener = UnixListener::bind(root.join("host.sock")).unwrap();
+        let host = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "update_project_organization");
+            assert_eq!(request["params"], json!({"project":"p","name":"Renamed","color":"#123456"}));
+            writeln!(connection, "{}", json!({"result":null})).unwrap();
+        });
+        crate::companion_operations::validate("update_project_organization").unwrap();
+        composer(&root, &db, &json!({"operation":"update_project_organization","input":{"project":"p","name":" Renamed ","color":"#123456","path":"/must-not-forward","account":"must-not-forward"}})).unwrap();
+        host.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -944,5 +1078,20 @@ mod scoped_host_transport_tests {
         let result=dispatch(&root,"/v1/snapshot",json!({"scoped":true}));
         worker.join().unwrap();fs::remove_dir_all(root).unwrap();
         assert!(result.is_ok(),"Initial companion connection must use the bounded host projection: {result:?}");
+    }
+}
+
+#[cfg(test)]
+mod scheduled_indicator_tests {
+    use super::*;
+    #[test]
+    fn scheduled_flag_survives_summary_and_full_snapshots() {
+        for (schedule_id, scheduled, expected) in [(Some("schedule"), false, true), (None, true, true), (None, false, false)] {
+            let mut db = Database::default();
+            db.sessions.push(serde_json::from_value(json!({"id":"t","project":"p","account":"","title":"Task","status":"done","updated":1,"messages":[],"schedule_id":schedule_id,"options":{"scheduled":scheduled}})).unwrap());
+            for scoped in [false, true] {
+                assert_eq!(project_snapshot_selection(&db, None, scoped)["threads"][0]["scheduled"], expected);
+            }
+        }
     }
 }

@@ -30,6 +30,18 @@ export type Memory = {
   status: "active" | "stale" | "forgotten"; project: string | null; source_thread: string | null; superseded_by?: string | null; created_at: string; updated_at: string;
 };
 
+export type ProfileFile = "soul" | "user";
+export type ProfileRevision = { file: ProfileFile; at: string; by: "user" | "commander"; reason: string | null };
+export type CommanderProfileData = { name: string; soul: string; user: string; prompt_preview: string; revisions: ProfileRevision[] };
+
+export type CommanderAutonomy = { mode: "propose" | "budgeted"; maxConcurrent: number; dailyStartCap: number; allowedProjectIds: string[] };
+export type CommanderHeartbeat = { enabled: boolean; intervalMinutes: number; activeStart: string; activeEnd: string };
+export type CommanderSettings = { autonomy: CommanderAutonomy; heartbeat: CommanderHeartbeat };
+export const DEFAULT_COMMANDER_SETTINGS: CommanderSettings = {
+  autonomy: { mode: "propose", maxConcurrent: 2, dailyStartCap: 5, allowedProjectIds: [] },
+  heartbeat: { enabled: true, intervalMinutes: 60, activeStart: "08:00", activeEnd: "20:00" },
+};
+
 export const commanderApi = {
   state: () => invoke<CommanderState>("commander_state"),
   todos: () => invoke<Todo[]>("commander_todos"),
@@ -43,6 +55,12 @@ export const commanderApi = {
   memory: () => invoke<Memory[]>("commander_memory"),
   memorySave: (memory: Partial<Memory> & { id?: string }) => invoke<Memory>("commander_memory_save", { memory }),
   objectiveSet: (project: string, objective: string | null) => invoke<void>("project_objective_set", { project, objective }),
+  profile: () => invoke<CommanderProfileData>("commander_profile"),
+  profileSave: (patch: { name?: string; soul?: string; user?: string; reason?: string }) => invoke<CommanderProfileData>("commander_profile_save", patch),
+  revisionRestore: (file: ProfileFile, at: string) => invoke<CommanderProfileData>("commander_revision_restore", { file, at }),
+  getCommanderSettings: () => invoke<CommanderSettings>("commander_settings_get"),
+  /** Rejects with a message naming the failing field. */
+  saveCommanderSettings: (settings: CommanderSettings) => invoke<CommanderSettings>("commander_settings_save", { settings }),
   settingsSet: (patch: { account?: string | null; model?: string | null }) => invoke<void>("commander_settings_set", patch),
 };
 export type CommanderApi = typeof commanderApi;

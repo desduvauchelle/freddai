@@ -87,3 +87,35 @@ it("builds the clock shrine from enabled schedules sorted by due time", () => {
   expect(m.shrine?.entries.map(e => e.id)).toEqual(["a", "b"]);
   expect(m.shrine?.next).toBe(NOW + 10);
 });
+
+it('keeps the boss room but does not clone Commander conversations into workers or folders', () => {
+  const chief = { ...project('chief', 'Ada'), kind: 'commander' as const };
+  const model = officeModel([thread('normal'), thread('chief-running', { project: 'chief' }), thread('chief-done', { project: 'chief', status: 'done' })], [chief, ...projects], NOW);
+  expect(model.rooms[0].name).toBe('Ada');
+  expect(model.agents.map(agent => agent.threadId)).toEqual(['normal']);
+  expect(model.tray).toHaveLength(0);
+  expect(model.summary).toBe('1 working');
+});
+
+const hold = (id: string, over: Record<string, unknown> = {}) => ({ id, tool: 'freddai_start_task', summary: `Start ${id}`, project: 'beta', arguments: { prompt: 'x' }, status: 'pending', ...over });
+
+it('shows one Commander desk: working while any Commander thread runs, idle otherwise, never on project desks', () => {
+  const chief = { ...project('chief', 'Ada'), kind: 'commander' as const };
+  const busy = officeModel([thread('c1', { project: 'chief' }), thread('c2', { project: 'chief', status: 'done' })], [chief, ...projects], NOW);
+  expect(busy.commander).toMatchObject({ projectId: 'chief', name: 'Ada', state: 'working', running: 1 });
+  expect(busy.agents).toHaveLength(0);
+  const quiet = officeModel([thread('c2', { project: 'chief', status: 'done' })], [chief, ...projects], NOW);
+  expect(quiet.commander).toMatchObject({ state: 'idle', running: 0 });
+  expect(officeModel([], projects, NOW).commander).toBeNull();
+});
+
+it('turns only pending freddai_start_task holds into cards, routed to the target room or the lobby', () => {
+  const chief = { ...project('chief', 'Ada'), kind: 'commander' as const };
+  const m = officeModel([], [chief, ...projects], NOW, [], new Set(), [
+    hold('a'), hold('b', { project: 'nowhere' }), hold('c', { project: null }), hold('d', { project: 'chief' }),
+    hold('e', { status: 'approved' }), hold('f', { tool: 'freddai_save_schedule' }), hold('g', { arguments: { title: 'Fix login' } }),
+  ]);
+  expect(m.cards.map(c => [c.proposalId, c.projectId])).toEqual([['a', 'beta'], ['b', null], ['c', null], ['d', null], ['g', 'beta']]);
+  expect(m.cards.find(c => c.proposalId === 'g')?.title).toBe('Fix login');
+  expect(m.cards[0].title).toBe('Start a');
+});

@@ -1,3 +1,4 @@
+import { SatelliteApp } from "./SatelliteApp";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -9,8 +10,9 @@ import "@freddai/ui/styles.css";
 // Native platform owns routing; window size never unmounts active desktop work.
 async function boot() {
   const platform = isTauri() ? await invoke<string>("platform") : "browser";
+  const satellite = isTauri() && await invoke<boolean>("satellite_mode").catch(() => false);
   const preview = new URLSearchParams(window.location.search).get("companion") === "1";
-  createRoot(document.getElementById("root")!).render(<StrictMode>{platform === "ios"
+  createRoot(document.getElementById("root")!).render(<StrictMode>{satellite ? <SatelliteApp /> : (platform === "ios" || platform === "android")
     ? <MobileApp client={nativeCompanionClient} />
     : preview ? <MobileApp /> : <DesktopApp />}</StrictMode>);
 }

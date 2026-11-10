@@ -4,6 +4,41 @@ import UIKit
 /// Runs against the separately installed offline fixture app. Never use this against a paired device.
 final class CompanionLayoutUITests: XCTestCase {
   @MainActor
+  func testThreadSheetDismissesToDashboard() throws {
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication(bundleIdentifier: "com.freddai.companion")
+    app.launch()
+    let menu = app.buttons["Threads"]
+    XCTAssertTrue(menu.waitForExistence(timeout: 15)); menu.tap()
+    let dashboard = app.buttons["companion-dashboard"]
+    XCTAssertTrue(dashboard.waitForExistence(timeout: 5)); dashboard.tap()
+    let scroll = app.scrollViews["dashboard-scroll"]
+    XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+    let thread = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dashboard-thread-")).firstMatch
+    XCTAssertTrue(thread.waitForExistence(timeout: 5))
+    if !thread.isHittable { scroll.swipeUp() }
+    for _ in 0..<2 {
+      thread.tap()
+      let navigation = app.navigationBars.firstMatch
+      XCTAssertTrue(navigation.waitForExistence(timeout: 5))
+      XCTAssertFalse(app.buttons["Close thread"].exists)
+      XCTAssertFalse(app.buttons["Close thread and return to dashboard"].exists)
+      let top = navigation.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+      top.press(forDuration: 0.1, thenDragTo: top.withOffset(CGVector(dx: 0, dy: app.frame.height * 0.7)))
+      XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+      XCTAssertTrue(thread.waitForExistence(timeout: 5))
+    }
+  }
+
+  @MainActor
+  private func selectThreadView(_ title: String, app: XCUIApplication) {
+    app.buttons["Filter threads"].tap()
+    let choice = app.buttons[title]
+    XCTAssertTrue(choice.waitForExistence(timeout: 3))
+    choice.tap()
+  }
+
+  @MainActor
   func testDashboardUsesNativeCardsAndProjectAgentSelection() throws {
     let app = XCUIApplication(bundleIdentifier: "com.freddai.companion")
     XCUIDevice.shared.orientation = .portrait
@@ -71,9 +106,9 @@ final class CompanionLayoutUITests: XCTestCase {
     let list = app.collectionViews["thread-drawer-list"]
     if !list.waitForExistence(timeout: 2) { menu.tap() }
     XCTAssertTrue(list.waitForExistence(timeout: 5))
-    let toggle = app.segmentedControls["thread-view-toggle"]
+    let toggle = app.buttons["Filter threads"]
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-    toggle.buttons["Projects"].tap()
+    selectThreadView("Projects", app: app)
     // First group in the drawer, ahead of every other project.
     let header = list.cells["project-header-commander"]
     XCTAssertTrue(header.waitForExistence(timeout: 5))
@@ -153,9 +188,9 @@ final class CompanionLayoutUITests: XCTestCase {
     let list = app.collectionViews["thread-drawer-list"]
     if !list.waitForExistence(timeout: 2) { menu.tap() }
     XCTAssertTrue(list.waitForExistence(timeout: 5))
-    let toggle = app.segmentedControls["thread-view-toggle"]
+    let toggle = app.buttons["Filter threads"]
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-    toggle.buttons["Recent"].tap()
+    selectThreadView("Recent", app: app)
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let dir = ProcessInfo.processInfo.environment["FREDDAI_SCREENSHOT_DIR"] ?? root.appendingPathComponent("output/screenshots").path
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -247,10 +282,10 @@ final class CompanionLayoutUITests: XCTestCase {
     let list = app.collectionViews["thread-drawer-list"]
     if !list.waitForExistence(timeout: 2) { menu.tap() }
     XCTAssertTrue(list.waitForExistence(timeout: 5))
-    let toggle = app.segmentedControls["thread-view-toggle"]
+    let toggle = app.buttons["Filter threads"]
     if !toggle.waitForExistence(timeout: 2) { menu.tap() }
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-    toggle.buttons["Projects"].tap()
+    selectThreadView("Projects", app: app)
     let first = list.cells["project-header-freddai"]
     let second = list.cells["project-header-lucy-web"]
     XCTAssertTrue(first.waitForExistence(timeout: 5))
@@ -281,11 +316,11 @@ final class CompanionLayoutUITests: XCTestCase {
     menu.tap()
     let list = app.collectionViews["thread-drawer-list"]
     XCTAssertTrue(list.waitForExistence(timeout: 5))
-    let toggle = app.segmentedControls["thread-view-toggle"]
+    let toggle = app.buttons["Filter threads"]
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
     // The choice persists across launches (JS-owned preference), so start from a known mode.
-    toggle.buttons["Projects"].tap()
-    XCTAssertTrue(toggle.buttons["Projects"].isSelected)
+    selectThreadView("Projects", app: app)
+    XCTAssertTrue((toggle.value as? String)?.hasPrefix("Projects") == true)
     func shoot(_ name: String) {
       let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
       shot.name = name
@@ -304,8 +339,8 @@ final class CompanionLayoutUITests: XCTestCase {
     for dark in [false, true] {
       if #available(iOS 17.0, *) { XCUIDevice.shared.appearance = dark ? .dark : .light }
       let mode = dark ? "dark" : "light"
-      toggle.buttons["Projects"].tap()
-      XCTAssertTrue(toggle.buttons["Projects"].isSelected)
+      selectThreadView("Projects", app: app)
+      XCTAssertTrue((toggle.value as? String)?.hasPrefix("Projects") == true)
       shoot("drawer-projects-\(mode)")
       // Always-visible Recent section at the bottom of the Projects view: 5 rows, +10, then Show less.
       scrollTo(sectionTitle)
@@ -322,8 +357,8 @@ final class CompanionLayoutUITests: XCTestCase {
       list.cells["Show less"].tap()
       XCTAssertTrue(list.cells["Show more"].waitForExistence(timeout: 3))
       // Recent view: 25 rows, Show more, Show less.
-      toggle.buttons["Recent"].tap()
-      XCTAssertTrue(toggle.buttons["Recent"].isSelected)
+      selectThreadView("Recent", app: app)
+      XCTAssertTrue((toggle.value as? String)?.hasPrefix("Recent") == true)
       XCTAssertFalse(list.staticTexts["Recent"].exists)
       shoot("drawer-recent-\(mode)")
       list.swipeUp()
@@ -333,7 +368,7 @@ final class CompanionLayoutUITests: XCTestCase {
       if more.exists { more.tap(); shoot("drawer-recent-more-\(mode)"); let less = list.cells["Show less"]; scrollTo(less); XCTAssertTrue(less.waitForExistence(timeout: 3)); less.tap(); XCTAssertTrue(list.cells["Show more"].waitForExistence(timeout: 3)) }
     }
     // Opening a Recent row opens the thread like the project view does.
-    toggle.buttons["Recent"].tap()
+    selectThreadView("Recent", app: app)
     let first = list.cells.element(boundBy: 0)
     XCTAssertTrue(first.waitForExistence(timeout: 3))
     first.tap()
@@ -341,7 +376,7 @@ final class CompanionLayoutUITests: XCTestCase {
     // Leave the persisted view on Projects so other tests start from the default.
     menu.tap()
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-    toggle.buttons["Projects"].tap()
+    selectThreadView("Projects", app: app)
     if #available(iOS 17.0, *) { XCUIDevice.shared.appearance = .light }
   }
 

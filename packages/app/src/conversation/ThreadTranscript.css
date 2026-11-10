@@ -200,3 +200,9 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* Host-injected notices (completion / due / heartbeat) are not user messages: one muted line. */
+.thread-transcript .chat-system-note { margin: 0; padding: 0 4px; color: var(--adaptive-muted, var(--muted-foreground)); font-size: 12px; line-height: 1.4; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Marks a message that was spoken in a voice call (its <voice-call> instruction block is hidden). */
+.user-message-voice { display: inline-flex; align-items: center; margin-right: 6px; vertical-align: middle; color: var(--adaptive-muted, #9690a6); }

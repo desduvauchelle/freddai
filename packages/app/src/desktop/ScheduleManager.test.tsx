@@ -248,3 +248,14 @@ it('lets a routine save full access and shows every created thread',async()=>{
   await userEvent.click(screen.getByText('Run history (35)'));
   expect(screen.getAllByRole('button',{name:'Open thread'})).toHaveLength(35);
 });
+
+it('keeps schedule defaults: Claude/Codex accounts start with full access, other accounts switch to ask, and no trigger warning appears',async()=>{
+  const command=vi.fn(async()=>{});
+  render(<ScheduleManager db={{...db,accounts:[{id:'c',name:'Claude',provider:'claude'},{id:'g',name:'Gem',provider:'gemini'}],schedules:[]}} native command={command} onRefresh={async()=>{}} onSelect={()=>{}}/>);
+  await userEvent.click(screen.getByRole('button',{name:'New schedule'}));
+  expect(screen.getByRole('switch',{name:'Full access'}).getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByText(/Full access lets this agent act without asking/)).toBeNull();
+  await userEvent.click(screen.getByRole('combobox',{name:'Schedule account'}));
+  await userEvent.click(await screen.findByRole('option',{name:/Gem/}));
+  expect(screen.getByRole('switch',{name:'Full access'}).getAttribute('aria-checked')).toBe('false');
+});

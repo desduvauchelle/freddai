@@ -4,6 +4,7 @@ import type { Attachment, BackgroundTask, Message } from '../desktop/types';
 import { GeneratedFileContext, LocalPageContext, type FileReader, type LocalPageResolver } from './GeneratedFile';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UserMessage } from './UserMessage';
+import { parseSystemNotice } from './systemNotice';
 import { BackgroundTasks } from './BackgroundTasks';
 import { ToolActivity } from './ToolActivity';
 import { ToolTextContext, type ToolTextReader } from './ToolText';
@@ -64,6 +65,9 @@ export function ThreadTranscript({ readToolText, readGeneratedFile, resolveLocal
       if (item.kind === 'tools') return <Fragment key={item.id}><ToolActivity messages={item.messages} className={fresh.has(item.id) ? 'transcript-enter' : undefined} /><BackgroundTasks tasks={placed.get(item.id) ?? []} /></Fragment>;
       const m = item.message;
       const enter = fresh.has(m.id) && !(m.role === 'user' && echoed.has(m.text));
+      const notice = m.role === 'user' ? parseSystemNotice(m.text) : null;
+      // Internal wake inputs are background context, never conversation content.
+      if (notice || (m.role === 'user' && /^Delegated thread .+ finished with status /.test(m.text))) return null;
       return <article
         key={m.id}
         data-role={m.role}

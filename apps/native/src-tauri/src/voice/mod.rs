@@ -1,6 +1,8 @@
 //! Local push-to-talk dictation (Whisper). Plain Rust keyed by the app data
 //! `root`, no Tauri dependency, so the companion-server process can call it too.
 
+pub mod call;
+pub mod cleanup;
 pub mod decode;
 pub mod download;
 pub mod recorder;
@@ -8,6 +10,7 @@ pub mod registry;
 pub mod resample;
 pub mod settings;
 pub mod transcribe;
+pub mod tts;
 
 use serde::Serialize;
 use settings::{SettingsPatch, VoiceSettings};
@@ -34,6 +37,7 @@ pub struct VoiceStatus {
     pub active_model: Option<String>,
     pub shortcut: String,
     pub language: String,
+    pub remove_filler_words: bool,
     pub ready: bool,
     pub recording: bool,
     pub models: Vec<ModelStatus>,
@@ -64,6 +68,7 @@ pub fn status(root: &Path) -> VoiceStatus {
         active_model: s.active_model,
         shortcut: s.shortcut,
         language: s.language,
+        remove_filler_words: s.remove_filler_words,
         recording: recorder::is_recording(),
         models,
     }
@@ -105,6 +110,7 @@ pub fn update_settings(root: &Path, patch: SettingsPatch) -> Result<VoiceStatus,
         }
         if let Some(sc) = &patch.shortcut { s.shortcut = sc.clone(); }
         if let Some(l) = &patch.language { s.language = l.clone(); }
+        if let Some(remove) = patch.remove_filler_words { s.remove_filler_words = remove; }
         Ok(())
     })?;
     Ok(status(root))
@@ -134,6 +140,9 @@ pub fn delete_model(root: &Path, id: &str) -> Result<VoiceStatus, String> {
 }
 
 pub fn start_recording(root: &Path) -> Result<(), String> {
+    if call::is_active() {
+        return Err("A voice call is running — end it before dictating".into());
+    }
     ready(root)?;
     recorder::start()?;
     transcribe::warm(root);
@@ -184,6 +193,10 @@ mod tests {
         assert!(e.contains("not downloaded"));
         assert!(update_settings(&root, SettingsPatch { shortcut: Some("F1".into()), ..Default::default() }).is_err());
         let st = update_settings(&root, SettingsPatch { shortcut: Some("MetaRight".into()), language: Some("de".into()), ..Default::default() }).unwrap();
+        assert!(st.remove_filler_words);
+        let st = update_settings(&root, SettingsPatch { remove_filler_words: Some(false), ..Default::default() }).unwrap();
+        assert!(!st.remove_filler_words);
+        assert!(!settings::load(&root).unwrap().remove_filler_words);
         assert_eq!((st.shortcut.as_str(), st.language.as_str()), ("MetaRight", "de"));
     }
 

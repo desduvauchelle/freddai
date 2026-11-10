@@ -110,3 +110,12 @@ button.dormouse-circle { cursor: pointer; }
 @media (pointer: coarse) {
   .dormouse-sized .dormouse-motion { width: 28px; height: 28px; right: -12px; top: -8px; }
 }
+
+/* The companion's 44px button minimum must apply to both axes. Keep the
+   desktop badge compact, but give every phone mascot a circular touch target. */
+.companion .dormouse-motion {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}

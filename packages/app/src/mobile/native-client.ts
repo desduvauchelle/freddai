@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Attachment } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
 import type { CommanderClient, CompanionClient, CompanionSnapshot } from './companion';
+/** Presents a Mac localhost URL as a native preview; rejects with the native error string (e.g. preview_not_granted). */
+export const previewOpen = (threadId: string, url: string) => invoke<void>('preview_open', { threadId, url });
 const composer = <T,>(operation: string, input: unknown) => invoke<T>('companion_composer', { operation, input });
 // The Mac reports its hardware MAC/broadcast address so the phone can wake it later. Refreshed at most hourly.
 let wakeRefreshedAt = 0;
@@ -22,6 +24,7 @@ export const nativeCommanderClient: CommanderClient = {
 };
 export const nativeCompanionClient: CompanionClient = {
   commander: nativeCommanderClient,
+  updateProjectOrganization: (project, name, color) => composer("update_project_organization", { project, name, color }),
   moveProject: (project, target, after) => composer("move_project", { project, target, after }),
   saveWorkspaces: workspaces => composer("save_workspaces", { workspaces }),
   generatedFile: (thread, href, offset) => composer("generated_file", { thread, href, offset }),
@@ -32,6 +35,7 @@ export const nativeCompanionClient: CompanionClient = {
     return value;
   },
   scheduleCommand: (operation, input) => composer(operation, input),
+  googleCommand: (operation, input) => composer(operation, input),
   wake: () => invoke<number>('companion_wake'),
   hasWakeInfo: async () => !!(await invoke<unknown>('companion_wake_info')),
   models: target => composer<Model[]>('models', target),
@@ -41,7 +45,7 @@ export const nativeCompanionClient: CompanionClient = {
   },
   async transcribeAudio(audio) {
     if (!audio.size || audio.size > 10 * 1024 * 1024) throw new Error('Record between 1 byte and 10 MB of audio.');
-    const id = await composer<string>('upload', { action: 'begin', name: audio.type.includes('mp4') ? 'dictation.m4a' : 'dictation.webm' });
+    const id = await composer<string>('upload', { action: 'begin', name: audio.type.includes('wav') ? 'dictation.wav' : audio.type.includes('mp4') ? 'dictation.m4a' : 'dictation.webm' });
     for (let offset = 0; offset < audio.size; offset += 24 * 1024) {
       const bytes = new Uint8Array(await audio.slice(offset, offset + 24 * 1024).arrayBuffer());
       await composer('upload', { action: 'chunk', id, offset, data: Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('') });

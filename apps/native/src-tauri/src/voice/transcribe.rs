@@ -90,7 +90,8 @@ pub fn unload_all() {
 /// Blocking. `samples` must be 16 kHz mono.
 pub fn transcribe_samples(root: &Path, samples: &[f32]) -> Result<Transcript, String> {
     let id = super::ready(root)?;
-    let language = settings::load(root)?.language;
+    let settings = settings::load(root)?;
+    let language = settings.language;
     let duration_ms = samples.len() as u64 * 1000 / 16_000;
     if samples.len() < MIN_SAMPLES || rms(samples) < 1e-4 {
         return Ok(Transcript { text: String::new(), duration_ms, model: id });
@@ -111,6 +112,7 @@ pub fn transcribe_samples(root: &Path, samples: &[f32]) -> Result<Transcript, St
         loaded.last_used = Instant::now();
         result.text.trim().to_string()
     };
+    let text = super::cleanup::clean_transcript(&text, settings.remove_filler_words);
     eprintln!(
         "voice.transcribe model={id} audio_ms={duration_ms} elapsed_ms={} chars={}",
         started.elapsed().as_millis(),

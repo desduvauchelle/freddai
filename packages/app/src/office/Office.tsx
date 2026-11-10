@@ -2,7 +2,7 @@ import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Project, Session } from "../desktop/types";
-import { officeModel, STATE_CUE, STATE_LABEL, totalsLabel, type OfficeAgent, type OfficeAgentState, type OfficeModel, type OfficeSchedule } from "./officeModel";
+import { officeModel, STATE_CUE, STATE_LABEL, totalsLabel, type OfficeAgent, type OfficeAgentState, type OfficeCard, type OfficeModel, type OfficeProposal, type OfficeSchedule } from "./officeModel";
 import { BAND_H, CELL_H, FACE, SIDE, SOUTH, TRAY_COLS, TRAY_MAX, WALL, bestFullLayout, floorPlan, miniCols, type Layout, type PlacedRoom, type PlanProject } from "./officeLayout";
 import { useOfficeStage, type Char, type Stage } from "./officeStage";
 import { Bench, Bubble, Character, ClockAdmirer, CoffeeMachine, DeskFurniture, Folder, Plant, STATE_COLOR, Table, UserAvatar, WallClock, FUR } from "./sprites";
@@ -11,6 +11,10 @@ import "./office.css";
 export type OfficeProps = {
   sessions: readonly Session[];
   projects: readonly Project[];
+  /** Commander proposals; pending `freddai_start_task` holds appear as sticky notes on empty desks. */
+  proposals?: readonly OfficeProposal[];
+  /** Approve (true) or dismiss (false) a held proposal. Omit for view-only cards. Must reject on failure; the office shows the error. */
+  onProposalRespond?: (proposalId: string, approve: boolean) => Promise<unknown>;
   /** Optional scheduled work; represented by admirers at the clock shrine beside the coffee lounge. */
   schedules?: readonly OfficeSchedule[];
   /** Thread ids with queued runs; a settled thread in this set waits in the lobby. Omit if the host has no queue data. */
@@ -20,10 +24,14 @@ export type OfficeProps = {
   /** "mini" is an inline card; "full" is a fixed overlay covering the whole window. */
   variant: "mini" | "full";
   onOpenThread: (id: string) => void;
+  /** Opens the dedicated executive office instead of creating a project task. */
+  onOpenCommander?: () => void;
   /** Mini only: called when the user expands the office (the office also opens its own overlay). */
   onExpand?: () => void;
   /** Called when the full overlay is dismissed (close button or Escape). */
   onClose?: () => void;
+  /** Project-scoped hold-to-talk controls, shared by mini and expanded offices. */
+  renderTaskControls?: (project: string, onListening: (listening: boolean) => void) => ReactNode;
 };
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -48,9 +56,9 @@ type Tip = { agent: OfficeAgent; x: number; y: number; below: boolean };
 /** The plan inputs, kept referentially stable until a project is added, removed, renamed or recoloured. */
 function usePlanProjects(projects: readonly Project[]): PlanProject[] {
   "use no memo"; // compares against a ref during render so the identity only changes with the project list
-  const key = projects.map(p => `${p.id}\u0000${p.name}\u0000${p.color}`).join("\u0001");
+  const key = projects.map(p => `${p.id}\u0000${p.name}\u0000${p.color}\u0000${p.kind ?? ""}`).join("\u0001");
   const ref = useRef<{ key: string; value: PlanProject[] } | null>(null);
-  if (!ref.current || ref.current.key !== key) ref.current = { key, value: projects.map(p => ({ id: p.id, name: p.name, color: p.color })) };
+  if (!ref.current || ref.current.key !== key) ref.current = { key, value: projects.map(p => ({ id: p.id, name: p.name, color: p.color, kind: p.kind })) };
   return ref.current.value;
 }
 
@@ -86,7 +94,57 @@ function FloorDefs({ id, rooms }: { id: string; rooms: PlacedRoom[] }) {
   </defs>;
 }
 
-function RoomShell({ r, id, stage, extra }: { r: PlacedRoom; id: string; stage: Stage; extra: { totals: string; overflow: number } }) {
+/** A single executive presence, never a clone for each Commander conversation. */
+function BossRoom({ r, commander }: { r: PlacedRoom; commander: OfficeModel["commander"] }) {
+  const { x, y, w, h, floorY, project } = r, cx = x + Math.round(w / 2);
+  const working = commander?.state === "working";
+  return <g className="office-boss-suite" data-state={commander?.state ?? "idle"}>
+    <rect className="office-floor" x={x} y={floorY} width={w} height={h - FACE} fill="#343043" />
+    <rect x={x + SIDE + 8} y={floorY + 12} width={w - 2 * SIDE - 16} height={h - FACE - 26} fill="#504060" />
+    <rect x={x + SIDE + 11} y={floorY + 15} width={w - 2 * SIDE - 22} height={h - FACE - 32} fill="none" stroke="#c7a966" strokeWidth={2} />
+    <rect x={x} y={y} width={w} height={FACE} fill="#302938" />
+    <rect x={x + 8} y={y + 6} width={w - 16} height={25} fill="#211d29" stroke="#c7a966" strokeWidth={2} />
+    <text x={cx} y={y + 18} textAnchor="middle" fontFamily={MONO} fontSize={11} fontWeight={800} fill="#f5d58f">BOSS'S OFFICE</text>
+    <text x={cx} y={y + 27} textAnchor="middle" fontFamily={MONO} fontSize={7} fill="#ece0c5">{clip(project.name, Math.floor((w - 28) / 4.3))}{working ? " · working" : ""}</text>
+    <rect x={x} y={y} width={SIDE} height={h} fill="#211d29" /><rect x={x + w - SIDE} y={y} width={SIDE} height={h} fill="#211d29" />
+    <rect x={x} y={y + h - SOUTH} width={w / 2 - 17} height={SOUTH} fill="#211d29" /><rect x={cx + 17} y={y + h - SOUTH} width={w / 2 - 17} height={SOUTH} fill="#211d29" />
+    <g className="office-executive-desk" aria-hidden="true">
+      <rect x={cx - 15} y={floorY + 33} width={30} height={30} rx={3} fill="#262332" stroke="#c7a966" />
+      <Character x={cx} y={floorY + 55} variant={2} shirtColor="#c7a966" pose="seated" />
+      {working && <g className="office-attn"><Bubble x={cx + 8} y={floorY + 20} w={20} h={14} glyph="..." fill="#7bd88f" size={11} /></g>}
+      <rect x={cx - 32} y={floorY + 51} width={20} height={10} fill={working ? "#6fcf97" : "#496c65"} />
+      <rect x={cx - 53} y={floorY + 56} width={106} height={24} fill="#875937" /><rect x={cx - 53} y={floorY + 56} width={106} height={4} fill="#c89e65" />
+      <rect x={cx - 45} y={floorY + 80} width={14} height={11} fill="#5a3d2c" /><rect x={cx + 31} y={floorY + 80} width={14} height={11} fill="#5a3d2c" />
+      <rect x={cx - 34} y={floorY + 49} width={24} height={15} fill="#1e222c" /><rect x={cx - 32} y={floorY + 51} width={20} height={10} fill="#496c65" />
+      <rect x={cx + 15} y={floorY + 64} width={16} height={10} fill="#f3e7d3" /><rect x={cx - 13} y={floorY + 72} width={26} height={6} fill="#d5b16a" />
+      <rect x={cx - 34} y={floorY + 112} width={68} height={18} fill="#805f49" /><rect x={cx - 31} y={floorY + 114} width={62} height={12} fill="#a7896a" />
+      <Plant x={x + SIDE + 12} y={y + h - SOUTH - 24} /><Plant x={x + w - SIDE - 24} y={y + h - SOUTH - 24} />
+    </g>
+  </g>;
+}
+
+type CardActions = { respond?: (card: OfficeCard, approve: boolean) => void; busy: ReadonlySet<string> };
+
+/** A sticky note on a desk or the reception: task title plus Approve / Dismiss when the host can answer proposals. */
+function StickyCard({ x, y, card, actions }: { x: number; y: number; card: OfficeCard; actions: CardActions }) {
+  const w = 46, h = 36, busy = actions.busy.has(card.proposalId), title = card.title.trim();
+  const l1 = clip(title, 13), l2 = title.length > 13 ? clip(title.slice(13).trim(), 13) : "";
+  const btn = (bx: number, label: string, glyph: string, fill: string, approve: boolean) => <g role="button" tabIndex={busy ? -1 : 0} aria-disabled={busy || undefined} aria-label={`${label}: ${title}`} className="office-card-btn"
+    onClick={e => { e.stopPropagation(); if (!busy) actions.respond?.(card, approve); }}
+    onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); if (!busy) actions.respond?.(card, approve); } }}>
+    <rect x={bx} y={y + h - 12} width={19} height={10} fill={fill} stroke="#1b1a24" strokeWidth={0.8} opacity={busy ? 0.5 : 1} /><text x={bx + 9.5} y={y + h - 4.6} textAnchor="middle" fontSize={7} fontWeight={800} fill="#1b1a24" fontFamily={MONO}>{glyph}</text>
+  </g>;
+  return <g className="office-card" role="group" aria-label={`Proposed task: ${title}`}>
+    <title>{title}</title>
+    <rect x={x + 1} y={y + 2} width={w} height={h} fill="#000" opacity={0.25} /><rect x={x} y={y} width={w} height={h} fill="#f6e27a" /><rect x={x} y={y} width={w} height={4} fill="#e3c84f" />
+    <text x={x + 3} y={y + 11} fontSize={5.4} fontWeight={700} fill="#3a3010" fontFamily={MONO}>{l1}</text>
+    {l2 && <text x={x + 3} y={y + 18} fontSize={5.4} fontWeight={700} fill="#3a3010" fontFamily={MONO}>{l2}</text>}
+    {actions.respond && <>{btn(x + 3, "Approve", "OK", "#7bd88f", true)}{btn(x + w - 22, "Dismiss", "NO", "#ef8f8f", false)}</>}
+  </g>;
+}
+
+function RoomShell({ r, id, stage, extra, commander, cards, actions }: { r: PlacedRoom; id: string; stage: Stage; extra: { totals: string; overflow: number }; commander: OfficeModel["commander"]; cards: OfficeCard[]; actions: CardActions }) {
+  if (r.project.kind === "commander") return <BossRoom r={r} commander={commander} />;
   const { x, y, w, h, project } = r, color = project.color;
   const door = 34, dx = Math.round(r.doorX - door / 2), floorY = r.floorY;
   const plateW = w - 16, chars = Math.floor((plateW - 12) / 8.1);
@@ -106,9 +164,10 @@ function RoomShell({ r, id, stage, extra }: { r: PlacedRoom; id: string; stage: 
     <rect x={dx - 2} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" /><rect x={dx + door} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" />
     <rect x={dx} y={y + h - SOUTH} width={door} height={SOUTH} fill={mix(color, "#1b1a24", 0.5)} opacity={0.55} />
     {/* name plate and scoreboard on the wall */}
-    <rect x={x + 7} y={y + 5} width={plateW + 2} height={18} fill="#1b1a24" /><rect x={x + 8} y={y + 6} width={plateW} height={16} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
-    <text x={x + 8 + plateW / 2} y={y + 20} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, chars)}</text>
-    <g role="group" aria-label={`${project.name} scoreboard`}>
+    <rect className="office-project-plate-border" x={x + 7} y={y + 5} width={plateW + 2} height={18} fill="#1b1a24" /><rect className="office-project-plate" x={x + 8} y={y + 6} width={plateW} height={16} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
+    <text className="office-project-name" x={x + 8 + plateW / 2} y={y + 20} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, chars)}</text>
+    <text className="office-project-name-phone" x={x + 8 + plateW / 2} y={y + 28} textAnchor="middle" fontSize={18} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, Math.floor((plateW - 12) / 11.2))}</text>
+    <g className="office-project-scoreboard" role="group" aria-label={`${project.name} scoreboard`}>
       <rect x={x + 7} y={y + 23} width={scoreW + 2} height={11} fill="#1b1a24" /><rect x={x + 8} y={y + 24} width={scoreW} height={9} fill="#14231c" />
       <text x={x + 8 + scoreW / 2} y={y + 30.4} textAnchor="middle" fontSize={7.4} fontWeight={700} fill="#7bd88f" fontFamily={MONO} {...(extra.totals.length * 4.5 > scoreW - 6 ? { textLength: scoreW - 6, lengthAdjust: "spacingAndGlyphs" as const } : {})}>{extra.totals}</text>
       {extra.overflow > 0 && <g><rect x={x + 8 + scoreW + 2} y={y + 21} width={22} height={13} fill="#1b1a24" /><rect x={x + 9 + scoreW + 2} y={y + 22} width={20} height={11} fill="#f2c14e" /><text x={x + 19 + scoreW + 2} y={y + 30.6} textAnchor="middle" fontSize={8} fontWeight={800} fill="#1b1a24" fontFamily={MONO}>+{extra.overflow}</text></g>}
@@ -120,6 +179,7 @@ function RoomShell({ r, id, stage, extra }: { r: PlacedRoom; id: string; stage: 
       const screen: OfficeAgentState = !owner ? "idle" : owner.state === "working" ? (seated ? "working" : "idle") : owner.state === "failed" || owner.state === "needs-you" ? owner.state : "idle";
       return <DeskFurniture key={d.slot} x={d.x} y={d.y} state={screen} typing={seated && owner?.state === "working"} fur={FUR[(owner?.variant ?? 0) % 4]} />;
     })}
+    {(() => { const free = r.desks.filter(d => !owners?.has(d.slot)).reverse(); return cards.slice(0, free.length).map((c, i) => <StickyCard key={c.id} x={free[i].x + 5} y={free[i].y + 10} card={c} actions={actions} />); })()}
     <Plant x={x + SIDE + 2} y={y + h - SOUTH - 14} /><Plant x={x + w - SIDE - 14} y={y + h - SOUTH - 14} />
   </g>;
 }
@@ -149,7 +209,7 @@ function CharacterView({ c, onOpen, show, hide }: { c: Char; onOpen: (id: string
   </Hot>;
 }
 
-function Band({ layout, id, model, stage, now, show, hide, onOpen }: { layout: Layout; id: string; model: OfficeModel; stage: Stage; now: number; show: (a: OfficeAgent, el: Element) => void; hide: () => void; onOpen: (id: string) => void }) {
+function Band({ layout, id, model, stage, now, show, hide, onOpen, actions }: { actions: CardActions; layout: Layout; id: string; model: OfficeModel; stage: Stage; now: number; show: (a: OfficeAgent, el: Element) => void; hide: () => void; onOpen: (id: string) => void }) {
   const { lobby, lounge, shrine, you, reception: rc, coffee, tray, deskUser, band } = layout;
   const by = band.y, doorX = layout.door.x;
   const { lobbyExtra, loungeExtra } = stage.destinations;
@@ -168,6 +228,7 @@ function Band({ layout, id, model, stage, now, show, hide, onOpen }: { layout: L
     {/* lobby: reception desk with the receptionist, waiting benches, front door */}
     <g role="group" aria-label="Lobby">
       {plate(lobby.x + 38, by + 5, 50, "LOBBY")}
+      {model.cards.filter(c => c.projectId === null).slice(0, 2).map((c, i) => <StickyCard key={c.id} x={lobby.x + 92 + i * 50} y={by + 4} card={c} actions={actions} />)}
       <Character x={rc.x + rc.w - 12} y={rc.y + 4} variant={2} pose="seated" headset />
       <rect x={rc.x + 6} y={rc.y - 8} width={14} height={9} fill="#23222d" /><rect x={rc.x + 7} y={rc.y - 7} width={12} height={6} fill="#14203a" /><rect x={rc.x + 10} y={rc.y + 1} width={6} height={2} fill="#4a4860" />
       <rect x={rc.x} y={rc.y} width={rc.w} height={13} fill="#b98550" /><rect x={rc.x} y={rc.y} width={rc.w} height={3} fill="#d9a86e" /><rect x={rc.x} y={rc.y + 13} width={rc.w} height={4} fill="#8a5f36" />
@@ -255,13 +316,24 @@ function Corridors({ layout }: { layout: Layout }) {
   </g>;
 }
 
-function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { model: OfficeModel; layout: Layout; variant: "mini" | "full"; now: number; height?: number; onOpen: (id: string) => void; onBackground?: () => void }) {
+function Scene({ overview, model, layout, variant, now, height, onOpen, onBackground, renderTaskControls, initialProject = "", onSelectRoom, onOpenCommander, onProposalRespond }: { overview: boolean; onProposalRespond?: OfficeProps["onProposalRespond"]; onOpenCommander?: () => void; initialProject?: string; onSelectRoom?: (project: string) => void; renderTaskControls?: OfficeProps["renderTaskControls"]; model: OfficeModel; layout: Layout; variant: "mini" | "full"; now: number; height?: number; onOpen: (id: string) => void; onBackground?: () => void }) {
   const rawId = useId(), id = `o${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
   const reduced = usePrefersReducedMotion();
   const stage = useOfficeStage(model, layout, reduced);
   const stageEl = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip | null>(null);
-  const [overview, setOverview] = useState(true);
+  const [selectedProject, setSelectedProject] = useState(initialProject);
+  const [listening, setListening] = useState(false);
+  const [busyCards, setBusyCards] = useState<ReadonlySet<string>>(new Set()), [cardError, setCardError] = useState("");
+  const actions: CardActions = {
+    busy: busyCards,
+    respond: onProposalRespond ? (card, approve) => {
+      setCardError(""); setBusyCards(s => new Set(s).add(card.proposalId));
+      onProposalRespond(card.proposalId, approve).catch(e => setCardError(`Couldn't ${approve ? "approve" : "dismiss"} "${card.title}": ${e instanceof Error ? e.message : String(e)}`))
+        .finally(() => setBusyCards(s => { const n = new Set(s); n.delete(card.proposalId); return n; }));
+    } : undefined,
+  };
+  const selectedRoom = layout.rooms.find(r => r.project.id === selectedProject);
   const show = useCallback((agent: OfficeAgent, el: Element) => {
     const s = stageEl.current?.getBoundingClientRect(), r = el.getBoundingClientRect();
     if (!s) return;
@@ -270,7 +342,7 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
   }, []);
   const hide = useCallback(() => setTip(null), []);
   const { width, height: h } = layout;
-  return <div ref={stageEl} className="office-stage" data-variant={variant} style={height ? { height } : undefined} onClick={e => { if (onBackground && !(e.target as Element).closest("[role='button']")) onBackground(); }}>
+  return <div ref={stageEl} className="office-stage" data-variant={variant} style={height ? { height: height + (selectedRoom && renderTaskControls ? 140 : 0) } : undefined} onClick={e => { if (onBackground && !(e.target as Element).closest("[role='button']")) onBackground(); }}>
     <div className="office-map" onScroll={hide}>
     <svg className="office-svg" style={overview ? undefined : { width: `max(100%, ${width * 1.65}px)`, height: `max(100%, ${h * 1.65}px)` }} viewBox={`0 0 ${width} ${h}`} preserveAspectRatio="xMidYMid meet" role="group" aria-label="Office floor plan" shapeRendering="crispEdges">
       <FloorDefs id={id} rooms={layout.rooms} />
@@ -278,10 +350,26 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
       <rect width={width} height={h} fill="#221e2c" />
       <rect x={WALL} y={WALL} width={layout.innerW} height={h - 2 * WALL} fill={`url(#${id}-hall)`} />
       <Corridors layout={layout} />
-      {layout.rooms.map(r => <g key={r.index} role="group" aria-label={`${r.project.name} room`}>
-        <RoomShell r={r} id={id} stage={stage} extra={{ totals: totalsLabel(model.rooms[r.index].totals), overflow: stage.destinations.overflow.get(r.index) ?? 0 }} />
-      </g>)}
-      <Band layout={layout} id={id} model={model} stage={stage} now={now} show={show} hide={hide} onOpen={onOpen} />
+      {layout.rooms.map(r => {
+        const boss = r.project.kind === "commander", interactive = boss ? !!onOpenCommander : !!renderTaskControls;
+        const select = () => { if (listening) return; if (boss) onOpenCommander?.(); else if (onSelectRoom) onSelectRoom(r.project.id); else setSelectedProject(r.project.id); };
+        return <g key={r.index} role={interactive ? "button" : "group"} tabIndex={interactive ? 0 : undefined}
+          className="office-room" data-kind={boss ? "boss" : "project"} data-selected={selectedProject === r.project.id || undefined}
+          aria-label={boss ? `Boss's office · ${r.project.name}` : renderTaskControls ? `Give an order to ${r.project.name}` : `${r.project.name} room`}
+          aria-pressed={!boss && renderTaskControls ? selectedProject === r.project.id : undefined}
+          onClick={interactive ? e => { e.stopPropagation(); select(); } : undefined}
+          onKeyDown={interactive ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); select(); } } : undefined}>
+          <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="transparent" />
+          <RoomShell r={r} id={id} stage={stage} extra={{ totals: totalsLabel(model.rooms[r.index].totals), overflow: stage.destinations.overflow.get(r.index) ?? 0 }} commander={model.commander} cards={model.cards.filter(c => c.projectId === r.project.id)} actions={actions} />
+        </g>;
+      })}
+      {listening && selectedRoom && <g className="office-listening" aria-hidden="true">
+        <rect x={selectedRoom.x + 3} y={selectedRoom.y + 3} width={selectedRoom.w - 6} height={selectedRoom.h - 6} fill="none" stroke="#7bd88f" strokeWidth={3} />
+        {[0, 1, 2].map(i => <g key={i} className="office-listener" style={{ animationDelay: `${i * -0.18}s` }}>
+          <Character x={selectedRoom.x + 35 + i * 34} y={selectedRoom.y + selectedRoom.h - 24} variant={i} shirtColor={selectedRoom.project.color} pose="stand" moving frame={i % 2 === 0 ? 0 : 1} />
+        </g>)}
+      </g>}
+      <Band layout={layout} id={id} model={model} stage={stage} now={now} show={show} hide={hide} onOpen={onOpen} actions={actions} />
       <g clipPath={`url(#${id}-clip)`}>
         {stage.chars.map(c => <CharacterView key={c.id} c={c} onOpen={onOpen} show={show} hide={hide} />)}
       </g>
@@ -290,13 +378,18 @@ function Scene({ model, layout, variant, now, height, onOpen, onBackground }: { 
       <rect x={0} y={h - WALL} width={layout.door.x - 4} height={WALL} fill="#2a2536" /><rect x={layout.door.x + 32} y={h - WALL} width={width - layout.door.x - 32} height={WALL} fill="#2a2536" />
     </svg>
     </div>
-    <button type="button" className="office-view-toggle" aria-pressed={!overview} onClick={e => { e.stopPropagation(); hide(); setOverview(v => !v); }}>{overview ? "Zoom in" : "Fit all"}</button>
+    {cardError && <p className="office-card-error" role="alert">{cardError}</p>}
+    {selectedRoom && renderTaskControls && <div className="office-order" onClick={e => e.stopPropagation()}><strong>{selectedRoom.project.name}</strong>{renderTaskControls(selectedProject, setListening)}</div>}
     {!overview && <span className="office-pan-hint">Scroll to explore</span>}
     {tip && <div className="office-tip" data-below={tip.below || undefined} style={{ left: tip.x, top: tip.y }} aria-hidden="true">
       <i style={{ background: STATE_COLOR[tip.agent.state] }}>{STATE_CUE[tip.agent.state]}</i>
       <span><b>{tip.agent.projectName}</b> · {tip.agent.title} · {tip.agent.stateLabel}</span>
     </div>}
   </div>;
+}
+
+function ZoomControl({ overview, onToggle }: { overview: boolean; onToggle: () => void }) {
+  return <button type="button" className="office-view-toggle" aria-pressed={!overview} onClick={onToggle}>{overview ? "Zoom in" : "Fit all"}</button>;
 }
 
 function Legend({ model, children }: { model: OfficeModel; children?: ReactNode }) {
@@ -315,7 +408,8 @@ function Legend({ model, children }: { model: OfficeModel; children?: ReactNode 
 
 const FOCUSABLE = "button:not([disabled]), [role='button'][tabindex='0']";
 
-function Overlay({ model, plan, now, onOpen, onClose }: { model: OfficeModel; plan: PlanProject[]; now: number; onOpen: (id: string) => void; onClose: () => void }) {
+function Overlay({ model, plan, now, onOpen, onClose, renderTaskControls, initialProject, onOpenCommander, onProposalRespond }: { onProposalRespond?: OfficeProps["onProposalRespond"]; onOpenCommander?: () => void; initialProject?: string; renderTaskControls?: OfficeProps["renderTaskControls"]; model: OfficeModel; plan: PlanProject[]; now: number; onOpen: (id: string) => void; onClose: () => void }) {
+  const [overview, setOverview] = useState(true);
   const root = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   useEffect(() => {
@@ -344,8 +438,8 @@ function Overlay({ model, plan, now, onOpen, onClose }: { model: OfficeModel; pl
     else if (!e.shiftKey && (active === last || !root.current.contains(active))) { e.preventDefault(); first.focus(); }
   };
   return createPortal(<div ref={root} className="office-overlay" role="dialog" aria-modal="true" aria-label="Office" onKeyDown={onKeyDown}>
-    <Scene model={model} layout={layout} variant="full" now={now} onOpen={onOpen} />
-    <Legend model={model} />
+    <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander ? () => { onClose(); onOpenCommander(); } : undefined} initialProject={initialProject} renderTaskControls={renderTaskControls} model={model} layout={layout} variant="full" now={now} onOpen={onOpen} />
+    <Legend model={model}><ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} /></Legend>
       <button ref={close} type="button" className="office-btn" aria-label="Close office" title="Close (Esc)" onClick={onClose}><X size={14} aria-hidden="true" /></button>
   </div>, document.body);
 }
@@ -360,11 +454,13 @@ function useViewportHeight(): number {
   return h;
 }
 
-export function Office({ sessions, projects, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose }: OfficeProps) {
+export function Office({ sessions, projects, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose, renderTaskControls, onOpenCommander, proposals, onProposalRespond }: OfficeProps) {
   const clock = now ?? Date.now();
-  const model = useMemo(() => officeModel(sessions, projects, clock, schedules, queuedThreadIds), [sessions, projects, clock, schedules, queuedThreadIds]);
+  const model = useMemo(() => officeModel(sessions, projects, clock, schedules, queuedThreadIds, proposals), [sessions, projects, clock, schedules, queuedThreadIds, proposals]);
   const plan = usePlanProjects(projects);
   const [expanded, setExpanded] = useState(false);
+  const [overview, setOverview] = useState(true);
+  const [selectedProject, setSelectedProject] = useState("");
   const closeFull = useCallback(() => { setExpanded(false); onClose?.(); }, [onClose]);
   const openFromFull = useCallback((id: string) => { closeFull(); onOpenThread(id); }, [closeFull, onOpenThread]);
   const expand = () => { setExpanded(true); onExpand?.(); };
@@ -384,12 +480,13 @@ export function Office({ sessions, projects, schedules, queuedThreadIds, now, va
   // Stage height follows the map's aspect ratio at full card width; CSS max-height (45vh) is only a safety net.
   const stageH = width > 0 ? Math.ceil((miniLayout.height * avail) / miniLayout.width) + 8 : 240;
 
-  if (variant === "full") return <Overlay model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />;
+  if (variant === "full") return <Overlay onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />;
   return <section ref={card} className="office-mini" aria-label="Office" data-narrow={width > 0 && width < 560 ? "2" : width > 0 && width < 860 ? "1" : undefined}>
-    <Scene model={model} layout={miniLayout} variant="mini" now={clock} height={stageH} onOpen={onOpenThread} onBackground={expand} />
+    <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} onSelectRoom={project => { setSelectedProject(project); expand(); }} renderTaskControls={renderTaskControls} model={model} layout={miniLayout} variant="mini" now={clock} height={stageH} onOpen={onOpenThread} onBackground={expand} />
     <Legend model={model}>
+      <ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} />
       <button type="button" className="office-btn" aria-label="Expand office" title="Expand office" onClick={expand}><Maximize2 size={13} aria-hidden="true" /></button>
     </Legend>
-    {expanded && <Overlay model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />}
+    {expanded && <Overlay onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />}
   </section>;
 }

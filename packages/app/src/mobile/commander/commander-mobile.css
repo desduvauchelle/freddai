@@ -3,7 +3,7 @@
 .companion-commander .commander-circles { width: 188px; }
 /* DashboardMic is a labelled button; inside the circle only its icon shows. */
 .companion-commander-mic { overflow: visible; }
-.companion-commander-mic > div > button { width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; font-size: 0; gap: 0; background: var(--card); border: 1px solid var(--border); box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
+.companion-commander-mic > div > button { width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; font-size: 0; gap: 0; background: var(--primary); color: var(--primary-foreground); border: 1px solid transparent; box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
 .companion-commander-mic > div > button svg { width: 18px; height: 18px; }
 .companion-commander-mic > div > p { position: absolute; top: 48px; left: 0; width: 180px; font-size: 11px; color: var(--destructive, #e5484d); }
 .companion-commander-composer { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 420px; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); }
@@ -61,3 +61,6 @@
 .companion-commander-tabs button[aria-selected="true"] { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .2); }
 .companion-commander-tabs b { font-size: 10px; min-width: 16px; text-align: center; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); }
 .companion-commander-panel .commander-inline-form input, .companion-commander-panel .commander-editor input, .companion-commander-panel textarea { font-size: 16px; }
+
+/* Match the shared dormouse disc behind companion avatar artwork. */
+.companion-commander .commander-avatar-circle, .companion-fh-avatar { background: #eae5d7; }

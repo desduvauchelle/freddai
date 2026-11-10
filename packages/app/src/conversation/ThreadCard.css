@@ -1,0 +1,28 @@
+.thread-card { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 460px; min-width: 0; box-sizing: border-box; margin: 6px 0; padding: 8px 10px; text-align: left; font: inherit; font-size: 13px;
+  color: var(--adaptive-text, var(--foreground)); background: var(--adaptive-card, var(--card)); border: 1px solid var(--adaptive-border, var(--border)); border-radius: 10px; }
+button.thread-card { cursor: pointer; min-height: 44px; }
+button.thread-card:hover { background: var(--accent, var(--muted)); }
+button.thread-card:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: 2px; }
+.thread-card-icon { flex: none; color: var(--adaptive-muted, var(--muted-foreground)); }
+.thread-card-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.thread-card-text strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-card-text small { font-size: 11px; color: var(--adaptive-muted, var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-card-label { text-transform: uppercase; letter-spacing: .04em; font-size: 10px !important; }
+.thread-card-status { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; white-space: nowrap;
+  color: var(--adaptive-muted, var(--muted-foreground)); background: color-mix(in oklab, currentColor 12%, transparent); }
+.thread-card-status[data-status="running"] { color: #77b9df; }
+.thread-card-status[data-status="waiting"] { color: #e0b05a; }
+.thread-card-status[data-status="done"] { color: #8ec6a2; }
+.thread-card-status[data-status="failed"], .thread-card-status[data-status="interrupted"] { color: #e5857b; }
+.thread-card-spinner { animation: thread-card-spin 1.1s linear infinite; }
+@keyframes thread-card-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .thread-card-spinner { animation: none; } }
+/* Inline chip form, used for links inside a sentence. */
+.thread-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: baseline; padding: 0 8px; margin: 0 1px; border: 1px solid var(--adaptive-border, var(--border)); border-radius: 999px; background: var(--adaptive-card, var(--card)); color: inherit; font: inherit; font-size: .92em; cursor: pointer; }
+.thread-chip:hover { background: var(--accent, var(--muted)); }
+.thread-chip > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-chip-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--adaptive-muted, var(--muted-foreground)); }
+.thread-chip[data-status="running"] .thread-chip-dot { background: #77b9df; animation: background-task-pulse 1.2s ease-in-out infinite; }
+.thread-chip[data-status="waiting"] .thread-chip-dot { background: #e0b05a; }
+.thread-chip[data-status="done"] .thread-chip-dot { background: #8ec6a2; }
+.thread-chip[data-status="failed"] .thread-chip-dot, .thread-chip[data-status="interrupted"] .thread-chip-dot { background: #e5857b; }

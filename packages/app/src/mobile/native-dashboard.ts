@@ -1,7 +1,10 @@
+import { compareThreadRecency } from '../desktop/types';
+import { dashboardProjectGroups } from './dashboard-projects';
 import type { CompanionProject, CompanionSnapshot } from './companion';
-import { defaultSelection, type AgentSelection } from '../desktop/agent-selection';
+import { effortLabel, defaultSelection, type AgentSelection } from '../desktop/agent-selection';
 import { assistantLabel, modelPillLabel } from './native-home';
-import { nativeRunState } from './native-threads';
+import { companionStatusRead } from './companion';
+import { nativeThread, nativeRunState } from './native-threads';
 
 export function dashboardAssistantFor(project: CompanionProject, selected: string) {
   return project.assistants?.find(a => a.id === selected)
@@ -16,16 +19,23 @@ function commanderModel(snapshot: CompanionSnapshot) {
   const project = snapshot.projects.find(p => p.kind === 'commander');
   if (!project) return null;
   const threads = snapshot.threads.filter(t => t.project === project.id);
-  return { id: project.id, name: project.name, needsYou: threads.filter(t => nativeRunState(t) === 'waiting').length, running: threads.filter(t => nativeRunState(t) === 'running').length, doneToday: 0 };
+  return { sending: false, id: project.id, name: project.name, needsYou: threads.filter(t => nativeRunState(t) === 'waiting').length, running: threads.filter(t => nativeRunState(t) === 'running').length, doneToday: 0 };
 }
 export function buildDashboardModel(snapshot: CompanionSnapshot, connected: boolean, selected: string,
-  controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false) {
+  controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false, read: Record<string, number> = {}) {
   const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
-  const assistants = [...new Map(snapshot.projects.flatMap(p => p.assistants ?? []).map(a => [a.id, a])).values()];
+  const controlProject = snapshot.projects.find(p => p.kind !== 'commander' && (!selected || p.assistants?.some(a => a.id === selected)));
+  const controlAssistant = controlProject ? dashboardAssistantFor(controlProject, selected) : undefined;
+  const selection = controlProject ? controls[dashboardControlKey(controlProject, selected)]?.selection ?? defaultSelection : defaultSelection;
+  const provider = controlAssistant?.provider ?? controlProject?.provider;
   return {
-    summaries: [] as NativeSummary[], schedules: false, message: '',
-    connected, busy, expanded, agent: assistants.find(a => a.id === selected) ? assistantLabel(assistants.find(a => a.id === selected)!) : 'Project defaults',
+    model: modelPillLabel(provider, { ...selection, effort: 'default' }, []),
+    difficulty: selection.effort === 'default' ? 'Agent default' : effortLabel(selection.effort),
+    hasControls: !!provider,
+    workspace: null as string | null, summaries: [] as NativeSummary[], schedules: false, message: '',
+    connected, busy, expanded, workspaceHeight: 240, agent: controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider',
     commander: commanderModel(snapshot),
+    projectGroups: dashboardProjectGroups(snapshot).map(group => ({ ...group, projects: group.projects.map(project => project.id) })),
     projects: snapshot.projects.filter(p => p.kind !== 'commander').map(project => {
       const assistant = dashboardAssistantFor(project, selected), provider = assistant?.provider || project.provider;
       const threads = snapshot.threads.filter(t => t.project === project.id);
@@ -33,15 +43,16 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
       const needs = threads.filter(t => nativeRunState(t) === 'waiting').length;
       const done = threads.filter(t => t.status === 'done' && !t.pending && t.updated >= midnight.getTime()).length;
       const failed = threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight.getTime()).length;
-      return { id: project.id, name: project.name, color: project.color, assistant: assistant?.id || '',
+      return { sending: false, id: project.id, name: project.name, color: project.color, assistant: assistant?.id || '',
         canStart: connected && !busy && project.canStart && (!project.assistants || !!assistant),
         activity: `${working} working · ${needs} need you · ${done} done today · ${failed} failed today`,
+        recent: [...threads].filter(t => !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).slice(0, 3).map(t => nativeThread(t, companionStatusRead(snapshot, read))),
         model: provider ? modelPillLabel(provider, controls[dashboardControlKey(project, selected)]?.selection ?? defaultSelection, []) : '',
       };
     }),
   };
 }
 export type NativeDashboardModel = ReturnType<typeof buildDashboardModel>;
-export type DashboardAction = { action: string; project?: string; assistant?: string; path?: string };
+export type DashboardAction = { action: string; project?: string; assistant?: string; path?: string; send?: boolean; thread?: string };
 
 export type NativeSummary = { date: string; label: string; text: string; action: string | null; busy: boolean };

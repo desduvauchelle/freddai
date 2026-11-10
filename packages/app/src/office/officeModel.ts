@@ -23,7 +23,16 @@ export type OfficeAgent = {
 export type ProjectTotals = { msgs: number; threads: number; working: number };
 export type OfficeRoom = { projectId: string; name: string; color: string; totals: ProjectTotals; agents: OfficeAgent[] };
 export type OfficeShrine = { entries: { id: string; name: string; projectName: string; due: number; variant: number }[]; next: number | null };
+/** A Commander proposal as the office needs it: only pending `freddai_start_task` holds become desk cards. */
+export type OfficeProposal = { id: string; tool: string; summary: string; project: string | null; arguments?: Record<string, unknown>; status: string };
+/** Sticky-note card for a held task. `projectId` is null when the target project has no room (card goes to the lobby). */
+export type OfficeCard = { id: string; proposalId: string; title: string; projectId: string | null };
+/** The single Commander character: working while any of its threads runs, otherwise idle at its desk. */
+export type OfficeCommander = { projectId: string; name: string; state: "working" | "idle"; stateLabel: string; running: number };
 export type OfficeModel = {
+  commander: OfficeCommander | null;
+  /** Pending held start-task proposals, oldest first. */
+  cards: OfficeCard[];
   /** One room per project, in the order of the `projects` array. Never filtered or re-sorted by activity. */
   rooms: OfficeRoom[];
   /** Every character: desk (working/failed), lounge (needs-you), lobby (starting/queued) and finished threads heading for the tray. */
@@ -80,13 +89,22 @@ const PLACE: Partial<Record<OfficeAgentState, OfficePlace>> = { working: "desk",
  * Threads -> characters, one room per project. Pure; `now` is injectable.
  * `queued` lists thread ids that have queued runs: an otherwise settled thread with one waits in the lobby instead of leaving.
  */
-export function officeModel(sessions: readonly Session[], projects: readonly Project[], now: number = Date.now(), schedules: readonly OfficeSchedule[] = [], queued: ReadonlySet<string> = new Set()): OfficeModel {
+export function officeModel(sessions: readonly Session[], projects: readonly Project[], now: number = Date.now(), schedules: readonly OfficeSchedule[] = [], queued: ReadonlySet<string> = new Set(), proposals: readonly OfficeProposal[] = []): OfficeModel {
   const byId = new Map(projects.map(p => [p.id, p] as const));
   const totals = projectTotals(sessions, projects);
   const found: OfficeAgent[] = [];
+  const boss = projects.find(p => p.kind === "commander");
+  const running = boss ? sessions.filter(t => t.project === boss.id && live(t) && homeRunState(t) === "running").length : 0;
+  const commander: OfficeCommander | null = boss ? { projectId: boss.id, name: boss.name, state: running ? "working" : "idle", stateLabel: running ? "Working" : "Idle", running } : null;
+  const cards = proposals.filter(p => p.status === "pending" && p.tool === "freddai_start_task").map((p): OfficeCard => {
+    const target = p.project ? byId.get(p.project) : undefined;
+    const args = p.arguments ?? {};
+    const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : p.summary;
+    return { id: `card:${p.id}`, proposalId: p.id, title, projectId: target && target.kind !== "commander" ? target.id : null };
+  });
   for (const t of sessions) {
     const project = byId.get(t.project);
-    if (!project || !live(t)) continue;
+    if (!project || project.kind === "commander" || !live(t)) continue;
     let state = agentState(t), label = STATE_LABEL[state] as string;
     if ((state === "review" || state === "done" || state === "idle") && queued.has(t.id)) { state = "starting"; label = "Queued"; }
     const place = PLACE[state];
@@ -104,5 +122,5 @@ export function officeModel(sessions: readonly Session[], projects: readonly Pro
   const shrine = entries.length ? { entries, next: entries[0].due } : null;
   const working = agents.filter(a => a.state === "working").length, waiting = needs.length;
   const summary = [working ? `${working} working` : "", waiting ? `${waiting} need${waiting === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · ") || (agents.length ? "All settled" : "Office is empty");
-  return { rooms, agents, tray, shrine, summary };
+  return { rooms, agents, tray, shrine, summary, commander, cards };
 }

@@ -38,13 +38,17 @@ export function Permission({
     header?: string;
     options?: { label: string; description?: string }[];
   }[];
+  const isElicitation = provider === "codex" && pending.method === "mcpServer/elicitation/request";
+  const schema = (raw.requestedSchema || {}) as { properties?: Record<string, { type?: string; title?: string; description?: string; enum?: unknown[] }>; required?: string[] };
+  const fields = Object.entries(schema.properties || {});
+  const simpleForm = fields.every(([, field]) => ["string", "boolean", "number", "integer"].includes(field.type || ""));
   const isQuestion =
     provider === "codex"
       ? pending.method === "item/tool/requestUserInput"
       : pending.request?.tool_name === "AskUserQuestion";
-  const reason = typeof raw.reason === "string" ? raw.reason : typeof raw.justification === "string" ? raw.justification : "The agent needs your permission to continue.";
+  const reason = isElicitation && typeof raw.message === "string" ? raw.message : typeof raw.reason === "string" ? raw.reason : typeof raw.justification === "string" ? raw.justification : "The agent needs your permission to continue.";
   const command = typeof raw.command === "string" ? raw.command : Array.isArray(raw.command) ? raw.command.join(" ") : Array.isArray(raw.proposedExecpolicyAmendment) ? raw.proposedExecpolicyAmendment.join(" ") : null;
-  const tool = pending.request?.tool_name || (pending.method?.includes("commandExecution") ? "Run command" : pending.method?.includes("fileChange") ? "Change files" : "Use tool");
+  const tool = pending.request?.tool_name || (pending.method?.includes("commandExecution") ? "Run command" : pending.method?.includes("fileChange") ? "Change files" : isElicitation && typeof raw.serverName === "string" ? raw.serverName : "Use tool");
   return (
     <section className="approval-card" aria-label="Agent request">
       <header className="approval-heading">
@@ -53,6 +57,16 @@ export function Permission({
         {!isQuestion && <span>{tool}</span>}
       </header>
       {!isQuestion && <p>{reason}</p>}
+      {isElicitation && raw.mode === "url" && typeof raw.url === "string" && /^https?:\/\//i.test(raw.url) && <a href={raw.url} target="_blank" rel="noreferrer">Open request</a>}
+      {isElicitation && simpleForm && fields.map(([key, field]) => <label key={key}>
+        {field.title || key}{schema.required?.includes(key) ? " (required)" : ""}
+        {field.description && <p>{field.description}</p>}
+        {field.type === "boolean" || field.enum ? <select aria-label={field.title || key} value={answers[key] ?? ""} onChange={(e) => setAnswers((a) => ({ ...a, [key]: e.target.value }))}>
+          <option value="">Choose…</option>
+          {(field.enum || [true, false]).map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}
+        </select> : <Input aria-label={field.title || key} type={field.type === "string" ? "text" : "number"} step={field.type === "integer" ? 1 : "any"} value={answers[key] || ""} onChange={(e) => setAnswers((a) => ({ ...a, [key]: e.target.value }))} />}
+      </label>)}
+      {isElicitation && !simpleForm && <label>Response (JSON object)<textarea aria-label="MCP response" placeholder="{}" value={answers.__mcp || ""} onChange={(e) => setAnswers({ __mcp: e.target.value })} /></label>}
       {isQuestion ? (
         questions.map((q, i) => (
           <fieldset key={i}>
@@ -97,7 +111,17 @@ export function Permission({
       <div className="approval-actions">
         <Button
           onClick={() =>
-            void reply(
+            void (async () => {
+              if (isElicitation) {
+                try {
+                  if (simpleForm && schema.required?.some((key) => !answers[key])) throw new Error("Complete the required fields.");
+                  const content: unknown = simpleForm ? Object.fromEntries(fields.filter(([key]) => answers[key] !== undefined && answers[key] !== "").map(([key, field]) => [key, field.type === "boolean" ? answers[key] === "true" : field.type === "number" || field.type === "integer" ? Number(answers[key]) : answers[key]])) : JSON.parse(answers.__mcp || "{}");
+                  if (!content || typeof content !== "object" || Array.isArray(content)) throw new Error("Enter a JSON object for this request.");
+                  await reply(true, content as Record<string, unknown>);
+                } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+                return;
+              }
+              await reply(
               true,
               provider === "codex" && isQuestion
                 ? Object.fromEntries(
@@ -107,7 +131,8 @@ export function Permission({
                     ]),
                   )
                 : answers,
-            )
+            );
+            })()
           }
           disabled={
             isQuestion &&

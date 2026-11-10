@@ -6,15 +6,16 @@ import { resetDrafts } from "./drafts";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke: vi.fn(async (command: string) => {
   if (command === "snapshot_since") return { ...empty, full: true, revision: 1, projects: ["One", "Two"].map(id => ({ id, name: id, path: `/fixture/${id}`, color: "#888", policy: "inherit", account: null, last: null })), sessions: ["Alpha", "Beta"].map(title => ({ id: title, title, project: "", account: "", status: title === "Alpha" ? "running" : "idle", updated: 1, messages: [], pending: null, error: null })) };
-  if (command === "stage_attachments") return [{ id: "draft-file", name: "notes.txt", bytes: 12, mime: "text/plain", sha256: "fixture" }];
+  if (command === "stage_attachments") return [{ id: "draft-file", name: "image.png", bytes: 12, mime: "image/png", sha256: "fixture" }];
   if (command === "updater_state") return { state: "idle" };
   return null;
 }) }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => ["/fixture/notes.txt"]) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => ["/fixture/image.png"]) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name, handler, options) => {
   if (name === "tauri://drag-drop") {
     const callback: NonNullable<typeof nativeDrops.raw> = (target, payload) => {
-      if (options?.target?.kind === "AnyLabel" && options.target.label === target.label) handler({ payload });
+      // Native emit_to_window/emit_to_webview filters exclude AnyLabel.
+      if ([target.kind, "WebviewWindow"].includes(options?.target?.kind) && options.target.label === target.label) handler({ payload });
     };
     nativeDrops.raw = callback;
     return () => { if (nativeDrops.raw === callback) nativeDrops.raw = null; };
@@ -37,14 +38,14 @@ it("keeps independent reply drafts when switching threads and visiting Home", as
   fireEvent.click(await screen.findByText("Alpha"));
   fireEvent.change(screen.getByRole("textbox", { name: "Message agent" }), { target: { value: "Unsent Alpha" } });
   fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
-  await screen.findByText("notes.txt");
+  await screen.findByText("image.png");
   fireEvent.click(screen.getByText("Beta"));
-  expect(screen.queryByText("notes.txt")).toBeNull();
+  expect(screen.queryByText("image.png")).toBeNull();
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("");
   fireEvent.change(screen.getByRole("textbox", { name: "Message agent" }), { target: { value: "Unsent Beta" } });
   fireEvent.click(screen.getByText("Alpha"));
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Unsent Alpha");
-  expect(screen.getByText("notes.txt")).toBeTruthy();
+  expect(screen.getByText("image.png")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
   fireEvent.click(screen.getByText("Beta"));
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Unsent Beta");
@@ -72,7 +73,7 @@ it("keeps new-thread text scoped to the selected project and global context", as
   expect(editor().value).toBe("Project One prompt");
   fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
   fireEvent.click(screen.getByRole("button", { name: "New thread in One" }));
-  expect((screen.getByLabelText("Prompt for One") as HTMLInputElement).value).toBe("Project One prompt");
+  expect(editor().value).toBe("Project One prompt");
 });
 
 it("accepts window-routed file drops into a running thread's next draft after the browser has been opened", async () => {
@@ -81,29 +82,29 @@ it("accepts window-routed file drops into a running thread's next draft after th
   fireEvent.change(screen.getByRole("textbox", { name: "Message agent" }), { target: { value: "Next draft" } });
   // Tauri routes main-content drops to Window when a child browser webview exists.
   await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
-  await act(async () => nativeDrops.raw?.({ kind: "Window", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
-  expect(screen.queryByText("notes.txt")).toBeTruthy();
+  await act(async () => nativeDrops.raw?.({ kind: "Window", label: "main" }, { paths: ["/fixture/image.png"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("image.png")).toBeTruthy();
   expect((screen.getByRole("textbox", { name: "Message agent" }) as HTMLTextAreaElement).value).toBe("Next draft");
   fireEvent.click(screen.getByText("Beta"));
-  expect(screen.queryByText("notes.txt")).toBeNull();
+  expect(screen.queryByText("image.png")).toBeNull();
   fireEvent.click(screen.getByText("Alpha"));
-  expect(screen.getByText("notes.txt")).toBeTruthy();
+  expect(screen.getByText("image.png")).toBeTruthy();
 });
 
 it("accepts webview-routed Finder drops into the conversation draft", async () => {
   render(<DesktopApp />);
   fireEvent.click(await screen.findByText("Alpha"));
   await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
-  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
-  expect(screen.queryByText("notes.txt")).toBeTruthy();
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/image.png"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("image.png")).toBeTruthy();
 });
 
 it("ignores drops intended for a separate conversation window", async () => {
   render(<DesktopApp />);
   fireEvent.click(await screen.findByText("Alpha"));
   await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
-  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "thread-other" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
-  expect(screen.queryByText("notes.txt")).toBeNull();
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "thread-other" }, { paths: ["/fixture/image.png"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("image.png")).toBeNull();
 });
 
 it("accepts webview drops into the new-thread draft", async () => {
@@ -111,6 +112,6 @@ it("accepts webview drops into the new-thread draft", async () => {
   await screen.findByText("Alpha");
   fireEvent.click(screen.getByRole("button", { name: "New thread" }));
   await waitFor(() => expect(nativeDrops.raw).toBeTypeOf("function"));
-  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/notes.txt"], position: { x: 800, y: 600 } }));
-  expect(screen.queryByText("notes.txt")).toBeTruthy();
+  await act(async () => nativeDrops.raw?.({ kind: "Webview", label: "main" }, { paths: ["/fixture/image.png"], position: { x: 800, y: 600 } }));
+  expect(screen.queryByText("image.png")).toBeTruthy();
 });

@@ -12,6 +12,7 @@ import android.widget.TextView
 class RecordingStatusView(context: Context) : TextView(context) {
     var level = 0f
         set(value) { field = value; samples.add(value.coerceIn(0f, 1f)); if (samples.size > 32) samples.removeAt(0) }
+    var drawSendCue = true
     var sendProgress = 0f
     private var started = 0L
     var showWaveform = false
@@ -56,9 +57,10 @@ class RecordingStatusView(context: Context) : TextView(context) {
         canvas.drawArc(centerX - 6 * d, centerY - 6 * d, centerX + 6 * d, centerY + 6 * d, 0f, 180f, false, ink)
         canvas.drawLine(centerX, centerY + 6 * d, centerX, centerY + 10 * d, ink)
         canvas.drawLine(centerX - 4 * d, centerY + 10 * d, centerX + 4 * d, centerY + 10 * d, ink)
+        if (!drawSendCue) { if (t < 1) postInvalidateOnAnimation(); return }
         val armProgress = sendProgress.coerceIn(0f, 1f)
         val arrowY = centerY - 64 * d * reveal - (if (animated) 8 * d * armProgress else 0f)
-        val radius = 22 * (1 + 0.18f * armProgress) * d
+        val radius = 22 * (1 + armProgress) * d
         ink.style = Paint.Style.FILL; ink.color = androidx.core.graphics.ColorUtils.blendARGB(surface, accent, armProgress)
         canvas.drawCircle(centerX, arrowY, radius, ink)
         ink.color = androidx.core.graphics.ColorUtils.blendARGB(foreground, Color.WHITE, armProgress); ink.style = Paint.Style.STROKE; ink.strokeWidth = 2.2f * d

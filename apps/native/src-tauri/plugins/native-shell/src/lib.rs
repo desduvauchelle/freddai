@@ -31,9 +31,9 @@ async fn ping<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String
     app.state::<NativeShell<R>>().0.run_mobile_plugin("ping", Empty {}).map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn set_mode<R: Runtime>(app: AppHandle<R>, mode: String, title: Option<String>, placeholder: Option<String>, open_drawer: Option<bool>) -> Result<(), String> {
+async fn set_mode<R: Runtime>(app: AppHandle<R>, mode: String, title: Option<String>, placeholder: Option<String>, open_drawer: Option<bool>, thread_sheet: Option<bool>) -> Result<(), String> {
     app.state::<NativeShell<R>>().0
-        .run_mobile_plugin("setMode", serde_json::json!({"mode": mode, "title": title, "placeholder": placeholder, "openDrawer": open_drawer}))
+        .run_mobile_plugin("setMode", serde_json::json!({"mode": mode, "title": title, "placeholder": placeholder, "openDrawer": open_drawer, "threadSheet": thread_sheet.unwrap_or(false)}))
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
@@ -62,6 +62,12 @@ async fn set_thread_meta<R: Runtime>(app: AppHandle<R>, meta: serde_json::Value)
 async fn set_composer_text<R: Runtime>(app: AppHandle<R>, text: String, files: Option<serde_json::Value>) -> Result<(), String> {
     app.state::<NativeShell<R>>().0
         .run_mobile_plugin("setComposerText", serde_json::json!({"text": text, "files": files}))
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn call_control<R: Runtime>(app: AppHandle<R>, action: String, text: Option<String>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("callControl", serde_json::json!({"action": action, "text": text}))
         .map_err(|e| e.to_string())
 }
 /// Voice dictation UI: `enabled` shows the mic button, `state` is "idle" or "transcribing".
@@ -106,7 +112,7 @@ async fn remove_listener<R: Runtime>(app: AppHandle<R>, event: String, channel_i
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("native-shell")
-        .invoke_handler(tauri::generate_handler![ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_dashboard, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
+        .invoke_handler(tauri::generate_handler![call_control, ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_dashboard, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
         .setup(|app, api| {
             #[cfg(target_os = "ios")]
             {
@@ -121,6 +127,27 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .build()
+}
+
+/// Rust-only preview presentation bridge (not exposed to the WebView, so no permission entries).
+/// Presents a full-screen native web view on `url`; resolves once it is on screen.
+pub fn present_preview<R: Runtime>(app: &AppHandle<R>, url: &str, title: &str) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin::<serde_json::Value>("presentPreview", serde_json::json!({"url": url, "title": title}))
+        .map(|_| ()).map_err(|e| e.to_string())
+}
+/// Shows or updates the status banner of the open preview (`error` styles it as a failure).
+pub fn preview_status<R: Runtime>(app: &AppHandle<R>, message: &str, error: bool) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin::<serde_json::Value>("previewStatus", serde_json::json!({"message": message, "error": error}))
+        .map(|_| ()).map_err(|e| e.to_string())
+}
+/// Registers `handler` for the native `previewDismissed` event (user closed the preview).
+pub fn on_preview_dismissed<R: Runtime, F: Fn() + Send + Sync + 'static>(app: &AppHandle<R>, handler: F) -> Result<(), String> {
+    let handler = Channel::<serde_json::Value>::new(move |_| { handler(); Ok(()) });
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin::<serde_json::Value>("registerListener", RegisterListener { event: "previewDismissed".into(), handler })
+        .map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Rust-only credential storage bridge. Never exposed in the WebView invoke handler.

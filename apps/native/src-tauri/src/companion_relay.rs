@@ -55,7 +55,8 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
     if expires<crypto::now() || expires>crypto::now()+120 || value["id"].as_str()!=Some(id) {return Err("Request expired".into());}
     let route=value["route"].as_str().ok_or("Missing route")?;
     if !["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake"].contains(&route) {return Err("Unknown companion operation".into());}
-    let _guard=gate.lock().map_err(|_|"Companion busy")?;
+    let guard=gate.lock().map_err(|_|"Companion busy")?;
+    let preview=route=="/v1/composer" && value["body"]["operation"]=="preview_open";
     // Recheck revocation immediately before dispatch, including queued messages.
     if !pairing::edit(root,|r|Ok(r.devices.iter().any(|d|d.id==device.id && d.key==device.key)))? {return Err("Device revoked".into());}
     if route!="/v1/snapshot" {
@@ -67,7 +68,9 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
         let mut receipt=fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(dir.join(format!("{}-{id}",device.id))).map_err(|_|"Request already received. Check the conversation before retrying.")?;
         receipt.write_all(b"claimed").map_err(|e|e.to_string())?;receipt.sync_all().map_err(|e|e.to_string())?;
     }
-    companion_server::dispatch(root,route,value["body"].clone())
+    // preview_open dials the relay for up to 10 s: release the global gate first (revocation and receipt are already done).
+    if preview {drop(guard);}
+    companion_server::dispatch_for_device(root,device,route,value["body"].clone())
 }
 
 #[cfg(test)] mod tests {
@@ -138,7 +141,7 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             writeln!(connection,"{}",json!({"result":freddai_core::runtime::Database::default()})).unwrap();
         });
         let id=crypto::random();let v=process(&root,&Mutex::new(()),&d,&id,&request(&d,&id,"/v1/snapshot",crypto::now()+90)).unwrap();
-        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[],"canReorderProjects":true}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[],"productUsage":[],"canReorderProjects":true}));host.join().unwrap();fs::remove_dir_all(root).unwrap();
     }
     #[test] fn scoped_refresh_crosses_host_dispatch_and_encrypted_relay_without_all_histories() {
         let (root,d)=fixture();

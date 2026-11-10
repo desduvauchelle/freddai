@@ -1,0 +1,19 @@
+.voice-call-bar { position: relative; display: flex; flex-direction: column; gap: 6px; margin-block: 0 8px; padding: 8px 10px; border: 1px solid var(--adaptive-border, #484853); border-radius: 18px; background: var(--adaptive-surface, #292a32); color: var(--adaptive-text, #dedbe8); font-size: 12px; flex-shrink: 0; animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+.voice-call-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.voice-call-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; min-width: 0; }
+.voice-call-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--adaptive-muted, #8f889e); flex-shrink: 0; }
+.voice-call-bar[data-phase="listening"] .voice-call-dot { background: #4ec27a; }
+.voice-call-bar[data-phase="hearing"] .voice-call-dot { background: #e0a43a; animation: voice-pulse 1.1s ease-in-out infinite; }
+.voice-call-bar[data-phase="speaking"] .voice-call-dot { background: #6fa8ff; animation: voice-pulse 1.1s ease-in-out infinite; }
+.voice-call-bar[data-phase="error"] .voice-call-dot { background: #c23b4a; }
+.voice-call-spacer { flex: 1; }
+.voice-call-pending { margin: 0; color: var(--adaptive-muted, #aaa7b4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-call-error { margin: 0; color: #f3a6a6; overflow-wrap: anywhere; }
+.voice-call-bar button, .voice-call-bar select { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; min-width: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--adaptive-muted, #aaa7b4); font: inherit; font-size: 11px; cursor: pointer; }
+.voice-call-bar select { background: var(--background); border: 1px solid var(--border); color: var(--adaptive-text, #dedbe8); }
+.voice-call-bar button:hover { background: #ffffff0a; color: var(--adaptive-text, #dedbe8); }
+.voice-call-bar button[aria-pressed="true"] { color: var(--adaptive-text, #dedbe8); background: #ffffff14; }
+.voice-call-bar button.voice-call-end { color: #f3a6a6; }
+.voice-call-bar :is(button, select):focus-visible { outline: 2px solid #b59ae9; outline-offset: 1px; }
+.native-workspace .chat-composer-tools > .composer-call[data-active="true"] { background: #c23b4a; color: #fff; }
+@media (prefers-reduced-motion: reduce) { .voice-call-bar, .voice-call-dot { animation: none !important; } }

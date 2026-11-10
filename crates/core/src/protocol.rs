@@ -41,6 +41,13 @@ pub fn approval_response(
             "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
                 json!({"decision":if allow {"accept"} else {"decline"}})
             }
+            "mcpServer/elicitation/request" => {
+                if allow {
+                    json!({"action":"accept","content":answers})
+                } else {
+                    json!({"action":"decline"})
+                }
+            }
             "item/tool/requestUserInput" => json!({"answers":answers}),
             _ => return Err(format!("Unsupported Codex request: {method}")),
         };
@@ -123,6 +130,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r, json!({"id":42,"result":{"decision":"decline"}}));
+    }
+    #[test]
+    fn mcp_elicitation_reaches_pending_and_returns_scoped_decisions() {
+        let frame = json!({"id":"mcp-42","method":"mcpServer/elicitation/request",
+            "params":{"serverName":"Freddai","mode":"form","message":"Approve task?",
+                "requestedSchema":{"type":"object","properties":{}}}});
+        let denied = approval_response("codex", &frame, false, &json!({})).unwrap();
+        assert_eq!(denied, json!({"id":"mcp-42","result":{"action":"decline"}}));
+        let accepted = approval_response("codex", &frame, true, &json!({"approved":true})).unwrap();
+        assert_eq!(accepted, json!({"id":"mcp-42","result":{"action":"accept","content":{"approved":true}}}));
     }
     #[test]
     fn claude_preserves_tool_input() {

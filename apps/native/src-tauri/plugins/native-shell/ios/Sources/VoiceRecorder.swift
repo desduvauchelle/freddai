@@ -109,7 +109,52 @@ enum RecordingSwipe {
   static func sendsOnRelease(duration: TimeInterval, armed: Bool) -> Bool {
     duration >= 0.3 || armed
   }
+  static func shouldCancel(origin: CGPoint, end: CGPoint) -> Bool {
+    origin.x - end.x >= 96 && origin.x - end.x > max(0, origin.y - end.y)
+  }
   static func shouldSend(origin: CGPoint, end: CGPoint) -> Bool {
-    origin.y - end.y >= 64 && abs(origin.x - end.x) <= 96
+    origin.y - end.y >= 64 && !shouldCancel(origin: origin, end: end)
+  }
+
+  /// Eased 0...1 follow amount for a linear send progress (0 when cancel is the dominant direction).
+  static func followAmount(sendProgress: CGFloat) -> CGFloat {
+    let t = max(0, min(1, sendProgress))
+    return 1 - (1 - t) * (1 - t)
+  }
+  /// Translation (in `view.superview` space) that moves the send cue from rest toward the finger.
+  /// `fingerInWindow` is in window coordinates; keep the enlarged cue inside the visible safe area.
+  static func followTranslation(for view: UIView, fingerInWindow: CGPoint, sendProgress: CGFloat) -> CGPoint {
+    guard let superview = view.superview else { return .zero }
+    let finger = superview.convert(fingerInWindow, from: nil)
+    let amount = followAmount(sendProgress: sendProgress)
+    var target = CGPoint(x: view.center.x + (finger.x - view.center.x) * amount,
+                         y: view.center.y + (finger.y - view.center.y) * amount)
+    if let window = view.window {
+      let safe = window.bounds.inset(by: window.safeAreaInsets)
+      let scale = 1 + max(0, min(1, sendProgress))
+      // Convert the final scaled footprint, rather than the previous frame's transform.
+      let halfSize = CGSize(width: view.bounds.width * scale / 2, height: view.bounds.height * scale / 2)
+      var centre = superview.convert(target, to: window)
+      centre.x = max(safe.minX + halfSize.width, min(safe.maxX - halfSize.width, centre.x))
+      centre.y = max(safe.minY + halfSize.height, min(safe.maxY - halfSize.height, centre.y))
+      target = superview.convert(centre, from: window)
+    }
+    return CGPoint(x: target.x - view.center.x, y: target.y - view.center.y)
+  }
+  /// Lets a following cue draw outside clipping ancestors and above siblings. Returns the views whose clipping was disabled.
+  static func liftForFollow(_ view: UIView, already: [UIView]) -> [UIView] {
+    guard already.isEmpty else { return already }
+    var changed: [UIView] = []
+    var ancestor = view.superview
+    while let node = ancestor {
+      if node.clipsToBounds && !(node is UIScrollView) { node.clipsToBounds = false; changed.append(node) }
+      ancestor = node.superview
+    }
+    view.layer.zPosition = 100
+    return changed
+  }
+  static func restoreAfterFollow(_ view: UIView, lifted: [UIView]) {
+    lifted.forEach { $0.clipsToBounds = true }
+    view.layer.zPosition = 0
   }
 }

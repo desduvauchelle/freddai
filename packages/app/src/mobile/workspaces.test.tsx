@@ -32,3 +32,38 @@ it('saves workspace management through the paired client', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
   await waitFor(() => expect(saveWorkspaces).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ name: 'Personal', projects: [] })])));
 });
+
+it('switches workspace from the dashboard and scopes project cards', async () => {
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(data) }}/>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Dashboard' }));
+  expect(screen.getByRole('combobox', { name: 'Workspace filter' })).toBeTruthy();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: 'w' } });
+  expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Beta' })).toBeNull();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: '' } });
+  expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy();
+});
+
+it('edits project presentation and saved order from organization settings', async () => {
+  const updateProjectOrganization = vi.fn().mockResolvedValue(undefined);
+  const moveProject = vi.fn().mockResolvedValue(['b', 'a']);
+  const snapshot = { ...data, canReorderProjects: true, threadList: { projectOrder: ['b', 'a'] } };
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(snapshot), updateProjectOrganization, moveProject }}/>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+  const name = await screen.findByRole('textbox', { name: 'Project name for Alpha' });
+  fireEvent.change(name, { target: { value: 'Renamed' } });
+  const form = screen.getByRole('form', { name: 'Edit Alpha' });
+  fireEvent.submit(form);
+  await waitFor(() => expect(updateProjectOrganization).toHaveBeenCalledWith('a', 'Renamed', '#112233'));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Move Alpha up' }).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: 'Move Alpha up' }));
+  await waitFor(() => expect(moveProject).toHaveBeenCalledWith('a', 'b', false));
+});
+
+it('shows the call button on a new web companion thread before any message exists', async () => {
+  const snapshot = { ...data, projects: [{ ...data.projects[0], canStart: true }] };
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(snapshot), transcribeAudio: vi.fn() }}/>);
+  fireEvent.click(await screen.findByRole('button', { name: 'New thread' }));
+  const call = await screen.findByRole('button', { name: 'Start call' });
+  expect(call.hasAttribute('disabled')).toBe(false);
+});

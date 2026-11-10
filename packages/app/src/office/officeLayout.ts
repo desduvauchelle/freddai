@@ -28,7 +28,7 @@ export const LOBBY_MAX = 6;
 export const TRAY_MAX = 8;
 export const TRAY_COLS = 4;
 
-export type PlanProject = { id: string; name: string; color: string };
+export type PlanProject = { id: string; name: string; color: string; kind?: "commander" | null };
 export type Spot = Point & { node: string };
 export type DeskSpot = { slot: number; x: number; y: number; seat: Spot; stand: Spot };
 export type PlacedRoom = { project: PlanProject; index: number; x: number; y: number; w: number; h: number; floorY: number; doorX: number; desks: DeskSpot[] };
@@ -130,7 +130,7 @@ export function floorPlan(projects: readonly PlanProject[], cols: number): Layou
   }
   chain(bn);
   // Three compact rows of project-colored reserves, connected to the corridor above.
-  const projectWaiting = projects.map((project, i) => {
+  const projectWaiting = projects.filter(project => project.kind !== "commander").map((project, i) => {
     const x = lobby.x + 96 + Math.floor(i / 3) * 24;
     const y = by + 40 + (i % 3) * 27;
     const hub = node(`ready:hub:${i}`, x, corridors[last].line);

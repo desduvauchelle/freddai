@@ -3,16 +3,19 @@ import "./MessageQueue.css";
 import { CornerDownRight, Pencil, CornerUpLeft, Trash2 } from "lucide-react";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
 import type { ThreadQueue } from "./types";
+import { isBackgroundWake } from "../conversation/systemNotice";
 
-export function MessageQueue({ queue, active, disabled, canSteer, onAction }: {
+export function MessageQueue({ queue, active, disabled, canSteer, pendingIds, onAction }: {
   queue: ThreadQueue;
   active: boolean;
   disabled: boolean;
   canSteer: boolean;
+  pendingIds?: ReadonlySet<string>;
   onAction: (action: string, message?: string, prompt?: string) => Promise<unknown> | void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  queue = { ...queue, messages: queue.messages.filter(message => !isBackgroundWake(message)) };
   if (!queue.messages.length) return null;
   const state = queue.paused ? "Paused" : active ? "Waiting for current turn" : "Ready";
   return <section className="message-queue" aria-label="Message queue">
@@ -28,9 +31,9 @@ export function MessageQueue({ queue, active, disabled, canSteer, onAction }: {
         </form> : <p>{message.prompt}</p>}
       </div>
       <div className="message-queue-actions">
-        <button type="button" aria-label="Steer instead" title={canSteer && active ? "Send now: steer or interrupt and continue the current turn" : "Steering requires an active turn"} disabled={disabled || !active || !canSteer} onClick={() => void onAction("steer", message.id)}><CornerUpLeft size={13}/><span className="message-queue-action-label">Steer</span></button>
-        <button type="button" aria-label="Edit queued message" title="Edit queued message" disabled={disabled} onClick={() => { setEditing(message.id); setDraft(message.prompt); }}><Pencil size={13}/></button>
-        <button type="button" aria-label={`Delete queued message: ${message.prompt.slice(0, 60)}`} title="Delete queued message" disabled={disabled} onClick={() => onAction("delete", message.id)}><Trash2 size={13}/></button>
+        <button type="button" aria-label="Steer instead" title={canSteer && active ? "Send now: steer or interrupt and continue the current turn" : "Steering requires an active turn"} disabled={disabled || pendingIds?.has(message.id) || !active || !canSteer} onClick={() => void onAction("steer", message.id)}><CornerUpLeft size={13}/><span className="message-queue-action-label">Steer</span></button>
+        <button type="button" aria-label="Edit queued message" title="Edit queued message" disabled={disabled || pendingIds?.has(message.id)} onClick={() => { setEditing(message.id); setDraft(message.prompt); }}><Pencil size={13}/></button>
+        <button type="button" aria-label={`Delete queued message: ${message.prompt.slice(0, 60)}`} title="Delete queued message" disabled={disabled || pendingIds?.has(message.id)} onClick={() => onAction("delete", message.id)}><Trash2 size={13}/></button>
 
       </div>
     </li>)}</ol></ScrollArea>

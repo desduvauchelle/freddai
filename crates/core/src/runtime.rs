@@ -2297,7 +2297,10 @@ impl Runtime {
         let sid = session.id.clone();
         let rt = self.clone();
         std::thread::spawn(move || {
-            let result = rt.run_turn(&session, &a, &p, &root, &agent_prompt, rx);
+            // Every turn (new launch, resume, queued continue) refreshes Commander's generated instructions
+            // first. A failure fails the turn loudly rather than running with stale instructions.
+            let result = crate::commander_profile::before_launch(&rt, &p)
+                .and_then(|()| rt.run_turn(&session, &a, &p, &root, &agent_prompt, rx));
             if let Err(e) = result {
                 rt.update(&session.id, |s| {
                     s.status = "failed".into();
@@ -2419,18 +2422,29 @@ impl Runtime {
                 messages: vec![],
             });
         }
+        let background_wake = key.starts_with(crate::commander_autonomy::WAKE_ID_PREFIX)
+            || key.starts_with(crate::google::triggers::REQUEST_PREFIX);
         let queue = i.db.queues.iter_mut().find(|q| q.session == sid).unwrap();
         queue.messages.push(QueuedMessage {
             id: key,
             prompt,
             options,
         });
-        i.db.sessions
-            .iter_mut()
-            .find(|s| s.id == sid)
-            .unwrap()
-            .last_user_message_at = Some(now());
+        if !background_wake {
+            i.db.sessions
+                .iter_mut()
+                .find(|s| s.id == sid)
+                .unwrap()
+                .last_user_message_at = Some(now());
+        }
         write_db(&i)
+    }
+    /// `(paused, queued message ids)` for a thread's queue; `(false, [])` when it has none.
+    pub fn queue_state(&self, sid: &str) -> (bool, Vec<String>) {
+        let i = self.0.lock().unwrap();
+        i.db.queues.iter().find(|q| q.session == sid)
+            .map(|q| (q.paused, q.messages.iter().map(|m| m.id.clone()).collect()))
+            .unwrap_or((false, vec![]))
     }
     pub fn edit_queued_message(&self, sid: &str, key: &str, prompt: String) -> Result<()> {
         let _guard = QUEUE_LOCK.lock().unwrap();
@@ -2576,7 +2590,7 @@ impl Runtime {
             let running: Vec<_> = i.running.keys().cloned().collect();
             for q in &mut i.db.queues {
                 if let Some(s) = sessions.iter().find(|s| s.id == q.session) {
-                    q.messages.retain(|m| !s.requests.contains(&m.id));
+                    q.messages.retain(|m| !s.requests.contains(&m.id) && !crate::commander_autonomy::is_completion_card(&m.id));
                 }
             }
             let changed = before != serde_json::to_value(&i.db.queues).unwrap();
@@ -2597,7 +2611,7 @@ impl Runtime {
                 .filter_map(|q| {
                     Some((
                         sessions.iter().find(|s| s.id == q.session)?.clone(),
-                        q.messages.first()?.clone(),
+                        q.messages.iter().find(|m| !crate::commander_autonomy::is_completion_card(&m.id))?.clone(),
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -4905,6 +4919,34 @@ mod tests {
     }
 
     #[test]
+    fn completion_cards_never_launch_or_block_queued_user_messages() {
+        let root = std::env::temp_dir().join(id());
+        let rt = Runtime::open(root.clone()).unwrap();
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.sessions.push(serde_json::from_value(json!({"id":"thread","project":"missing","account":"missing","title":"Offline fixture","status":"done","updated":0,"provider_id":null,"messages":[],"pending":null,"error":null})).unwrap());
+            i.db.queues.push(ThreadQueue {
+                session: "thread".into(), paused: false, error: None,
+                messages: vec![QueuedMessage { id: "commander-completions-fixture-1".into(), prompt: "Completion".into(), options: LaunchOptions::default() }],
+            });
+        }
+        rt.queue_tick();
+        let q = rt.snapshot().queues[0].clone();
+        assert!(!q.paused);
+        assert!(q.error.is_none(), "passive cards must never reach launch validation");
+        assert_eq!(q.messages.len(), 0);
+        {
+            let mut i = rt.0.lock().unwrap();
+            i.db.queues[0].messages.push(QueuedMessage { id: "user-message".into(), prompt: "Hello".into(), options: LaunchOptions::default() });
+        }
+        rt.queue_tick();
+        let q = rt.snapshot().queues[0].clone();
+        assert_eq!(q.error.as_deref(), Some("Project not found"), "the user message behind the card reaches launch validation");
+        assert_eq!(q.messages.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn queue_failure_retains_message_and_pauses_without_provider_execution() {
         let root = std::env::temp_dir().join(id());
         let rt = Runtime::open(root.clone()).unwrap();
@@ -6403,8 +6445,8 @@ mod tests {
         let chief = Context { project: Some(commander.id.clone()), thread: Some("chief".into()) };
         let other = Context { project: Some(target.id.clone()), thread: None };
         // Tool visibility: only the Commander project sees the extra tools.
-        assert_eq!(tools_for(false).len(), 9);
-        assert_eq!(tools_for(true).len(), 19);
+        assert_eq!(tools_for(false).len(), 10);
+        assert_eq!(tools_for(true).len(), 22);
         assert!(!crate::mcp::is_commander_context(&rt, &other) && crate::mcp::is_commander_context(&rt, &chief));
         assert!(dispatch(&rt, "freddai_todo_list", json!({}), &other).unwrap_err().contains("Unknown"));
         // Internal tools run directly and the objective is visible to everyone.

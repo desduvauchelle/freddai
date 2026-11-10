@@ -36,3 +36,15 @@ it("retains unsaved edits on failure and lets Cancel restore the preview", async
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(onAction).toHaveBeenCalledTimes(1);
 });
+it("hides background wakes while preserving queued user messages", () => {
+  const messages = [
+    { id: "commander-heartbeat-1", prompt: "Heartbeat (scheduled check-in, not a user message). Review stuff.", options: {} },
+    { id: "commander-wake-1", prompt: "Delegated thread finished", options: {} },
+    { id: "commander-completions-1", prompt: "Legacy completion", options: {} },
+  ];
+  const { container, rerender } = render(<MessageQueue queue={{ ...queue, messages }} active disabled={false} canSteer onAction={vi.fn()}/>);
+  expect(container.textContent).toBe("");
+  rerender(<MessageQueue queue={{ ...queue, messages: [...messages, ...queue.messages] }} active disabled={false} canSteer onAction={vi.fn()}/>);
+  expect(screen.getByText("Change direction")).toBeTruthy();
+  expect(screen.getAllByRole("listitem")).toHaveLength(1);
+});

@@ -570,6 +570,26 @@ async fn commander_proposal_respond(h: State<'_, Host>, id: String, approve: boo
     rpc(h.inner().clone(), "commander_proposal_respond", json!({"id":id,"approve":approve,"prompt":prompt})).await
 }
 #[tauri::command]
+async fn commander_settings_get(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_settings_get", json!({})).await
+}
+#[tauri::command]
+async fn commander_settings_save(h: State<'_, Host>, settings: Value) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_settings_save", json!({"settings":settings})).await
+}
+#[tauri::command]
+async fn commander_profile(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_profile", json!({})).await
+}
+#[tauri::command]
+async fn commander_profile_save(h: State<'_, Host>, name: Option<String>, soul: Option<String>, user: Option<String>, reason: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_profile_save", json!({"name":name,"soul":soul,"user":user,"reason":reason})).await
+}
+#[tauri::command]
+async fn commander_revision_restore(h: State<'_, Host>, file: String, at: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "commander_revision_restore", json!({"file":file,"at":at})).await
+}
+#[tauri::command]
 async fn commander_memory(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "commander_memory", json!({})).await
 }
@@ -880,6 +900,47 @@ async fn schedule_action(
     .await
 }
 #[tauri::command]
+async fn google_capability(h: State<'_, Host>) -> Result<Value, String> {
+    let hello = rpc(h.inner().clone(), "hello", json!({})).await?;
+    Ok(crate::companion_operations::google_capability(&hello))
+}
+#[tauri::command]
+async fn google_config_get(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_config_get", json!({})).await
+}
+#[tauri::command]
+async fn google_config_set(h: State<'_, Host>, client_id: String, client_secret: Option<String>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_config_set", json!({"clientId":client_id,"clientSecret":client_secret})).await
+}
+#[tauri::command]
+async fn google_connect_start(h: State<'_, Host>, services: Option<Vec<String>>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_connect_start", json!({"services":services})).await
+}
+#[tauri::command]
+async fn google_connect_status(h: State<'_, Host>, flow_id: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_connect_status", json!({"flowId":flow_id})).await
+}
+#[tauri::command]
+async fn google_accounts(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_accounts", json!({})).await
+}
+#[tauri::command]
+async fn google_disconnect(h: State<'_, Host>, email: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_disconnect", json!({"email":email})).await
+}
+#[tauri::command]
+async fn google_triggers(h: State<'_, Host>) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_triggers", json!({})).await
+}
+#[tauri::command]
+async fn google_trigger_save(h: State<'_, Host>, trigger: Value) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_trigger_save", json!({"trigger":trigger})).await
+}
+#[tauri::command]
+async fn google_trigger_delete(h: State<'_, Host>, id: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "google_trigger_delete", json!({"id":id})).await
+}
+#[tauri::command]
 async fn stop_all(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "stop_all", json!({})).await
 }
@@ -938,10 +999,61 @@ async fn voice_stop_recording(h: State<'_, Host>) -> Result<crate::voice::Transc
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
+fn voice_recording_level() -> f32 {
+    crate::voice::recorder::level()
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
 async fn voice_cancel_recording() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(crate::voice::cancel_recording)
         .await
         .map_err(|e| e.to_string())
+}
+#[cfg(target_os = "macos")]
+fn voice_emitter(app: &tauri::AppHandle) -> crate::voice::call::Emit {
+    let app = app.clone();
+    std::sync::Arc::new(move |event: &str, payload: Value| {
+        if let Err(e) = tauri::Emitter::emit(&app, event, payload) {
+            eprintln!("voice.emit.failed event={event} error={e}");
+        }
+    })
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_call_start(app: tauri::AppHandle, h: State<'_, Host>, silence_ms: Option<u32>, min_speech_ms: Option<u32>) -> Result<(), String> {
+    let (root, emit) = (h.root.clone(), voice_emitter(&app));
+    tauri::async_runtime::spawn_blocking(move || crate::voice::call::start(&root, emit, silence_ms, min_speech_ms))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_call_stop() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(crate::voice::call::stop).await.map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_call_set_listening(listening: bool) -> Result<(), String> {
+    crate::voice::call::set_listening(listening)
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_speak(app: tauri::AppHandle, text: String, voice: Option<String>, rate: Option<u32>) -> Result<(), String> {
+    let emit = voice_emitter(&app);
+    tauri::async_runtime::spawn_blocking(move || crate::voice::tts::speak(&emit, &text, voice.as_deref(), rate))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_stop_speaking(app: tauri::AppHandle) -> Result<(), String> {
+    let emit = voice_emitter(&app);
+    tauri::async_runtime::spawn_blocking(move || crate::voice::tts::stop(&emit)).await.map_err(|e| e.to_string())
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn voice_list_voices() -> Result<Vec<crate::voice::tts::Voice>, String> {
+    tauri::async_runtime::spawn_blocking(crate::voice::tts::list_voices).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 fn startup_status() -> bool {
@@ -1014,7 +1126,7 @@ fn awake_set_settings(h: State<'_,Host>, while_working:bool, while_paired:bool) 
 }
 
 
-pub fn run() {
+pub fn run(context: tauri::Context<tauri::Wry>) {
     tauri::Builder::default().plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol(crate::local_preview::SCHEME, |_, request| crate::local_preview::respond(request.uri().path()))
         .plugin(tauri_plugin_dialog::init())
@@ -1046,6 +1158,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")] crate::satellite::satellite_mode,
+            #[cfg(target_os = "macos")] crate::satellite::satellite_set_mode,
             crate::browser::browser_view,
             platform,
             open_thread_window,
@@ -1101,6 +1215,11 @@ pub fn run() {
             commander_note_write,
             commander_proposals,
             commander_proposal_respond,
+            commander_profile,
+            commander_settings_get,
+            commander_settings_save,
+            commander_profile_save,
+            commander_revision_restore,
             commander_memory,
             commander_memory_save,
             project_objective_set,
@@ -1134,6 +1253,16 @@ pub fn run() {
             remove_worktree,
             save_schedule,
             schedule_action,
+            google_capability,
+            google_config_get,
+            google_config_set,
+            google_connect_start,
+            google_connect_status,
+            google_accounts,
+            google_disconnect,
+            google_triggers,
+            google_trigger_save,
+            google_trigger_delete,
             stop_all,
             restart_host_now,
             startup_status,
@@ -1158,9 +1287,22 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             voice_stop_recording,
             #[cfg(target_os = "macos")]
-            voice_cancel_recording
+            voice_cancel_recording,
+            voice_recording_level,
+            #[cfg(target_os = "macos")]
+            voice_call_start,
+            #[cfg(target_os = "macos")]
+            voice_call_stop,
+            #[cfg(target_os = "macos")]
+            voice_call_set_listening,
+            #[cfg(target_os = "macos")]
+            voice_speak,
+            #[cfg(target_os = "macos")]
+            voice_stop_speaking,
+            #[cfg(target_os = "macos")]
+            voice_list_voices
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error building Freddai")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {

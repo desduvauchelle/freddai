@@ -71,7 +71,7 @@ html[data-freddai-appearance="light"][data-freddai-theme="violet"] { --app-backg
 html[data-freddai-appearance="light"][data-freddai-theme="rose"] { --app-background: #fdf7f8; --app-surface: #f8eaf0; --app-accent: #f4dfe8; --app-primary: #a32150; }
 html[data-freddai-appearance="light"][data-freddai-theme="green"] { --app-background: #f5faf7; --app-surface: #e9f2ec; --app-accent: #dcece2; --app-primary: #166534; }
 html[data-freddai-appearance="light"] .native-workspace :is(.task-selected, .session-selected, .project-selected, .nav-row.active) { background: var(--accent) !important; box-shadow: inset 2px 0 var(--primary); }
-html[data-freddai-appearance="light"] .native-workspace .chat-composer-tools > .chat-send { background: var(--primary); color: var(--primary-foreground); }
+html[data-freddai-appearance="light"] .native-workspace .chat-composer-tools > .chat-send:not(:disabled) { background: var(--primary); color: var(--primary-foreground); }
 html[data-freddai-appearance="light"] :is(.native-workspace, .native-dialog) .error { background: #fff1f2; color: #9f1239; border-color: #fecdd3; }
 html[data-freddai-appearance="light"] .native-workspace .skip-link { background: var(--primary); color: var(--primary-foreground); }
 html[data-freddai-appearance="light"] :is(.companion-connection > span[data-connected="true"], .companion-state[data-status="running"]) { background: #28724c; }

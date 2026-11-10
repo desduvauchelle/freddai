@@ -4,6 +4,7 @@ Allows the Freddai webview to drive the native iPhone shell.
 
 #### This default permission set includes the following:
 
+- `allow-call-control`
 - `allow-ping`
 - `allow-set-mode`
 - `allow-set-connection`
@@ -49,6 +50,32 @@ Enables the append_composer_text command without any pre-configured scope.
 <td>
 
 Denies the append_composer_text command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-call-control`
+
+</td>
+<td>
+
+Enables the call_control command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-call-control`
+
+</td>
+<td>
+
+Denies the call_control command without any pre-configured scope.
 
 </td>
 </tr>

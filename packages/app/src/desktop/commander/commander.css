@@ -18,6 +18,7 @@
   background: var(--card); color: var(--foreground); border: 1px solid var(--border); box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
 button.commander-circle-button:hover:not(:disabled), .commander-circle .commander-circle-button:hover { background: var(--accent, var(--muted)); }
 button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
+.commander-circle .composer-mic:not(:disabled):not([data-state="recording"]), .commander-circle .composer-mic:hover:not(:disabled):not([data-state="recording"]) { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
 .commander-circle .composer-mic[data-state="recording"] { background: color-mix(in oklab, var(--destructive, #e5484d) 22%, var(--card)); color: var(--destructive, #e5484d); }
 .commander-name { margin: 0; font-size: 13px; font-weight: 600; }
 .commander-pill { display: inline-flex; gap: 10px; align-items: center; min-height: 28px; padding: 3px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--muted-foreground); font-size: 11px; cursor: pointer; }
@@ -46,13 +47,10 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-icon-btn:hover { background: var(--accent, var(--muted)); color: var(--foreground); }
 
 /* View: chat-first, messages scroll behind a translucent blurred header. */
-.commander-view { --commander-header-h: 190px; position: relative; flex: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; background: var(--adaptive-background, var(--background)); }
+.commander-view { --commander-header-h: 190px; --commander-bg: var(--adaptive-background, var(--background)); --commander-col: min(800px, calc(100% - 48px)); position: relative; flex: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; background: var(--commander-bg); }
 .commander-header { position: absolute; z-index: 10; inset: 0 0 auto 0; height: var(--commander-header-h); display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 14px; pointer-events: none; }
-/* Blur lives on a masked layer so it fades out softly (no divider, no hard edge). */
-.commander-header::before { content: ""; position: absolute; inset: 0; z-index: -1; background: color-mix(in oklab, var(--background) 58%, transparent);
-  -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 70%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0, #000 70%, transparent 100%); }
-@media (prefers-reduced-transparency: reduce) { .commander-header::before { background: var(--background); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+/* One continuous surface: the header only fades the page's own background over scrolled content (no tint, no blur edge). */
+.commander-header::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(to bottom, var(--commander-bg) 0, var(--commander-bg) 62%, transparent 100%); }
 .commander-header > * { pointer-events: auto; }
 .commander-header-center { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
 .commander-header-avatar { width: 128px; height: 128px; min-width: 44px; border-radius: 50%; padding: 2px; border: 1px solid var(--border); background: var(--card); cursor: pointer; display: grid; place-items: center; overflow: hidden; box-shadow: 0 6px 22px color-mix(in oklab, var(--foreground) 14%, transparent); }
@@ -73,26 +71,34 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-conversation .chat-transcript { padding-top: calc(var(--commander-header-h) + 8px); }
 .commander-empty-chat { flex: 1; display: grid; place-items: center; padding: var(--commander-header-h) 24px 24px; color: var(--muted-foreground); text-align: center; }
 .commander-fallback-composer { display: flex; flex-direction: column; gap: 6px; margin: 0 20px 18px; padding: 10px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); }
-.commander-approvals { position: absolute; z-index: 8; left: 20px; right: 20px; bottom: var(--commander-composer-h); max-height: 42%; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+/* Proposals flow inline in the transcript column, after the latest messages. */
+.commander-approvals { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.commander-conversation .commander-approvals, .commander-empty-chat .commander-approvals { width: 100%; max-width: 800px; margin-inline: auto; }
 
-.commander-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--popover, var(--card)); box-shadow: 0 6px 20px color-mix(in oklab, var(--foreground) 12%, transparent); }
+.commander-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--popover, var(--card)); box-shadow: none; }
 .commander-card[data-status="failed"] { border-color: var(--destructive, #e5484d); }
 .commander-card-summary { margin: 0; font-size: 13px; font-weight: 600; }
 .commander-card-meta { display: flex; gap: 6px; flex-wrap: wrap; }
 .commander-card-quote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--border); color: var(--muted-foreground); font-size: 12px; white-space: pre-wrap; }
 .commander-card-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.commander-card-result { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .commander-card-result p { margin: 0; display: flex; gap: 6px; align-items: center; font-size: 12px; }
 .commander-chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 11px; background: color-mix(in oklab, var(--card) 80%, transparent); }
 .commander-chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .commander-chip[data-muted] { color: var(--muted-foreground); }
 
-.commander-away { margin: calc(var(--commander-header-h) + 8px) 20px 0; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--card); display: grid; gap: 8px; }
+.commander-away { box-sizing: border-box; width: var(--commander-col); margin: calc(var(--commander-header-h) + 8px) auto 0; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--card); display: grid; gap: 8px; }
 .commander-away-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
 .commander-away-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .commander-away-card { display: flex; flex-direction: column; gap: 2px; text-align: left; min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); cursor: pointer; font-size: 12px; }
 .commander-away-card span { color: var(--muted-foreground); }
 .commander-away-card[data-kind="waiting"] { border-color: color-mix(in oklab, var(--primary) 60%, var(--border)); }
-.commander-away + .commander-conversation .chat-transcript, .commander-away ~ .commander-conversation .chat-transcript { padding-top: 8px; max-height: 38%; opacity: .75; }
+/* Everything shares one centered column: welcome card, transcript, proposals, queue and composer. */
+.commander-view .commander-conversation :is(.chat-composer, .message-queue, .conversation-usage), .commander-view .commander-fallback-composer { box-sizing: border-box; width: var(--commander-col); max-width: 800px; margin-inline: auto; }
+.commander-view .commander-conversation :is(.chat-surface, .thread-detail, .chat-transcript-viewport) { background: transparent; }
+.commander-away ~ .commander-conversation .chat-transcript { padding-top: 12px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px); mask-image: linear-gradient(to bottom, transparent 0, #000 18px); }
+/* The composer already has Stop; the duplicate square button on the Working row looked like a stray checkbox. */
+.commander-conversation .activity-stop { display: none; }
 
 /* Tools panel */
 .commander-tools { position: absolute; z-index: 15; top: calc(var(--commander-header-h) - 6px); right: 14px; width: min(520px, calc(100% - 28px)); max-height: calc(100% - var(--commander-header-h) - 16px); display: flex; flex-direction: column;
@@ -127,3 +133,29 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-editor textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .commander-memory { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 10px; }
 .commander-memory p { margin: 4px 0 0; font-size: 13px; }
+
+/* Personality & memory profile (quiet, developer-facing) */
+.commander-tools-foot { padding: 6px 14px 10px; border-top: 1px solid var(--border); }
+.commander-quiet { font-size: 11px; color: var(--muted-foreground); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.commander-quiet:hover { color: var(--foreground); }
+.commander-profile { display: flex; flex-direction: column; gap: 22px; }
+.commander-profile section { display: flex; flex-direction: column; gap: 8px; }
+.commander-profile h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.commander-profile input[type="text"], .commander-profile textarea, .commander-profile .commander-reason { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); padding: 7px 10px; font-size: 13px; font-family: inherit; }
+.commander-profile textarea { min-height: 160px; resize: vertical; }
+.commander-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.commander-preset { text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--foreground); cursor: pointer; font-size: 13px; }
+.commander-preset small { color: var(--muted-foreground); font-size: 11px; }
+.commander-preset[aria-pressed="true"] { border-color: var(--primary); }
+.commander-revisions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.commander-revisions li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.commander-dev summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.commander-dev pre { max-height: 320px; overflow: auto; margin: 8px 0; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--muted); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+
+.commander-budget { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.commander-budget label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.commander-budget input[type="number"], .commander-budget input[type="time"], .commander-budget select { border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); padding: 6px 10px; font-size: 13px; font-family: inherit; }
+.commander-budget input[type="number"] { width: 90px; }
+.commander-budget fieldset { flex: 1 1 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.commander-budget legend { font-size: 12px; color: var(--muted-foreground); padding: 0 4px; }
+.commander-check { flex-direction: row !important; align-items: center; gap: 8px !important; font-size: 13px !important; color: var(--foreground) !important; }

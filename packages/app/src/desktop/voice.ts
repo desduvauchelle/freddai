@@ -9,9 +9,9 @@ export type VoiceModel = {
   download: null | { downloadedBytes: number; totalBytes: number; error: string | null };
 };
 export type VoiceStatus = {
-  enabled: boolean; activeModel: string | null; shortcut: VoiceShortcut; language: string; ready: boolean; recording: boolean; models: VoiceModel[];
+  enabled: boolean; activeModel: string | null; shortcut: VoiceShortcut; language: string; removeFillerWords: boolean; ready: boolean; recording: boolean; models: VoiceModel[];
 };
-export type VoiceSettingsPatch = Partial<Pick<VoiceStatus, "enabled" | "activeModel" | "shortcut" | "language">>;
+export type VoiceSettingsPatch = Partial<Pick<VoiceStatus, "enabled" | "activeModel" | "shortcut" | "language" | "removeFillerWords">>;
 export type VoicePhase = "idle" | "recording" | "transcribing" | "error";
 export type VoiceSource = "hotkey" | "button";
 export type VoiceSnapshot = {

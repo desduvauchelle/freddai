@@ -5,6 +5,7 @@ import UIKit
 struct ThreadRowModel: Decodable, Equatable {
   let id: String
   let title: String
+  var scheduled: Bool?
   var pinned: Bool?
   let status: String
   let faded: Bool?
@@ -46,7 +47,152 @@ struct ThreadFiltersModel: Decodable, Equatable {
   var query: String = ""
 }
 
+struct ProductUsageModel: Decodable, Equatable {
+  let id: String
+  let name: String
+  let product: String
+  let remaining: Double?
+  let capacity: String
+  let reset: String
+  let stale: Bool
+  let details: String
+}
+
+/// A bounded footer: product identity, remaining capacity, then reset time.
+/// More than four products scroll within the footer rather than displacing threads.
+final class ProductUsageFooterView: UIView {
+  var onDetails: (() -> Void)?
+  private let backdrop = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+  private let backdropMask = CAGradientLayer()
+  private let grid = UIStackView()
+  private let scroll = UIScrollView()
+  private var scrollHeight: NSLayoutConstraint!
+  private var headerHeight: NSLayoutConstraint!
+  private var products: [ProductUsageModel] = []
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backdrop.isUserInteractionEnabled = false
+    backdropMask.colors = [UIColor.clear.cgColor, UIColor.black.withAlphaComponent(0.8).cgColor, UIColor.black.cgColor]
+    backdropMask.locations = [0, 0.3, 1]
+    backdrop.layer.mask = backdropMask
+    addSubview(backdrop)
+    let heading = UILabel()
+    heading.text = "Usage"
+    heading.font = .systemFont(ofSize: 12, weight: .medium)
+    heading.textColor = UIColor.label.withAlphaComponent(0.72)
+    heading.accessibilityTraits = .header
+    let details = UIButton(type: .system)
+    details.setTitle("Details ›", for: .normal)
+    details.titleLabel?.font = .systemFont(ofSize: 12)
+    details.setTitleColor(UIColor.label.withAlphaComponent(0.72), for: .normal)
+    details.accessibilityLabel = "Product usage details"
+    details.addAction(UIAction { [weak self] _ in self?.onDetails?() }, for: .touchUpInside)
+    let header = UIStackView(arrangedSubviews: [heading, details])
+    header.alignment = .center
+    header.distribution = .equalSpacing
+    headerHeight = header.heightAnchor.constraint(equalToConstant: 28)
+    grid.axis = .vertical
+    grid.spacing = 4
+    for child in [header, scroll, grid] { child.translatesAutoresizingMaskIntoConstraints = false }
+    addSubview(header)
+    addSubview(scroll)
+    scroll.addSubview(grid)
+    scrollHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
+    NSLayoutConstraint.activate([
+      header.topAnchor.constraint(equalTo: topAnchor),
+      header.leadingAnchor.constraint(equalTo: leadingAnchor),
+      header.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+      scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+      scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scroll.bottomAnchor.constraint(equalTo: bottomAnchor), scrollHeight, headerHeight,
+      grid.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+      grid.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+      grid.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+      grid.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+      grid.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+    ])
+    headerHeight.constant = 0
+    isHidden = true
+    accessibilityIdentifier = "product-usage-footer"
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    // Extend through the drawer margins and bottom safe area; fade in above the header.
+    backdrop.frame = bounds.inset(by: UIEdgeInsets(top: -12, left: -20, bottom: -48, right: -20))
+    backdropMask.frame = backdrop.bounds
+  }
+
+  func update(_ products: [ProductUsageModel]) {
+    guard self.products != products else { return }
+    self.products = products
+    grid.arrangedSubviews.forEach { grid.removeArrangedSubview($0); $0.removeFromSuperview() }
+    isHidden = products.isEmpty
+    headerHeight.constant = products.isEmpty ? 0 : 28
+    scrollHeight.constant = CGFloat(min(2, (products.count + 1) / 2)) * 36 + (products.count > 2 ? 4 : 0)
+    for start in stride(from: 0, to: products.count, by: 2) {
+      let row = UIStackView()
+      row.axis = .horizontal
+      row.spacing = 8
+      row.distribution = .fillEqually
+      for product in products[start..<min(start + 2, products.count)] { row.addArrangedSubview(makeCard(product)) }
+      if row.arrangedSubviews.count == 1 { row.addArrangedSubview(UIView()) }
+      grid.addArrangedSubview(row)
+    }
+  }
+
+  private func makeCard(_ product: ProductUsageModel) -> UIView {
+    let card = UIView()
+    card.isAccessibilityElement = true
+    card.accessibilityLabel = "\(product.product), \(product.name), \(product.capacity), \(product.reset)"
+    let identity = UILabel()
+    let text = NSMutableAttributedString(string: product.product, attributes: [.font: UIFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: UIColor.label.withAlphaComponent(0.72)])
+    if !product.name.isEmpty && product.name.lowercased() != product.product.lowercased() {
+      text.append(NSAttributedString(string: " · " + product.name, attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: UIColor.label.withAlphaComponent(0.72)]))
+    }
+    identity.attributedText = text
+    identity.lineBreakMode = .byTruncatingMiddle
+    let capacity = UILabel()
+    capacity.text = product.capacity
+    capacity.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+    capacity.setContentCompressionResistancePriority(.required, for: .horizontal)
+    capacity.textColor = product.remaining == nil ? UIColor.label.withAlphaComponent(0.72) : .label
+    let progress = UIProgressView(progressViewStyle: .bar)
+    progress.progress = Float((product.remaining ?? 0) / 100)
+    progress.progressTintColor = ((product.remaining ?? 100) < 20 ? UIColor.systemOrange : UIColor.label.withAlphaComponent(0.5))
+    progress.trackTintColor = .tertiarySystemFill
+    progress.layer.cornerRadius = 2
+    progress.clipsToBounds = true
+    let reset = UILabel()
+    reset.text = product.remaining == nil ? "" : product.stale ? "Last known" : product.reset.replacingOccurrences(of: "Resets in ", with: "Reset ")
+    reset.font = .systemFont(ofSize: 12)
+    reset.textColor = UIColor.label.withAlphaComponent(0.72)
+    let titleRow = UIStackView(arrangedSubviews: [capacity, reset])
+    titleRow.spacing = 6
+    titleRow.alignment = .firstBaseline
+    let content = UIStackView(arrangedSubviews: [identity, titleRow, progress])
+    content.axis = .vertical
+    content.spacing = 1
+    content.translatesAutoresizingMaskIntoConstraints = false
+    card.addSubview(content)
+    NSLayoutConstraint.activate([
+      card.heightAnchor.constraint(equalToConstant: 36),
+      content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+      content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+      content.topAnchor.constraint(equalTo: card.topAnchor, constant: 1),
+      content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -1),
+      progress.heightAnchor.constraint(equalToConstant: 2),
+    ])
+    return card
+  }
+}
+
 struct ThreadsModel: Decodable {
+  var productUsage: [ProductUsageModel]?
+
   let groups: [ThreadGroupModel]
   var canReorderProjects: Bool = false
   var selectedId: String = ""
@@ -78,6 +224,7 @@ private enum DrawerItem: Hashable {
 /// Native thread list: header (title, connection, dashboard), search + filter menu, per-project sections.
 final class ThreadDrawerViewController: UIViewController, UICollectionViewDelegate, UICollectionViewDragDelegate, UICollectionViewDropDelegate, UITextFieldDelegate {
   var onDashboard: (() -> Void)?
+  var onSettings: (() -> Void)?
   var onSelectThread: ((String) -> Void)?
   var onSearch: ((String) -> Void)?
   var onSetFilter: ((String, String, String?) -> Void)?
@@ -92,13 +239,13 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private var rows: [String: ThreadRowModel] = [:]
   private var groups: [String: ThreadGroupModel] = [:]
   private var recentRows: [String: ThreadRowModel] = [:]
-  private let viewControl = UISegmentedControl(items: ["Projects", "Recent"])
-  /// Set when the user flips the control, until JS echoes the same view back, so a stale model cannot flip it again.
+  /// Set when the user changes the view, until JS echoes the same view back, so a stale model cannot flip it again.
   private var pendingView: String?
   private var currentView: String { pendingView ?? model?.view ?? "projects" }
 
   private var collectionView: UICollectionView!
   private var dataSource: UICollectionViewDiffableDataSource<String, DrawerItem>!
+  private let usageFooter = ProductUsageFooterView()
   private let searchField = UISearchTextField()
   private let filterButton = UIButton(type: .system)
   private let connectionIcon = UIImageView(image: UIImage(systemName: "desktopcomputer"))
@@ -116,7 +263,13 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     var layout = UICollectionLayoutListConfiguration(appearance: .sidebar)
     layout.showsSeparators = false
     layout.backgroundColor = .clear
-    collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: layout))
+    let fullWidthLayout = UICollectionViewCompositionalLayout { _, environment in
+      let section = NSCollectionLayoutSection.list(using: layout, layoutEnvironment: environment)
+      section.contentInsets.leading = 0
+      section.contentInsets.trailing = 0
+      return section
+    }
+    collectionView = UICollectionView(frame: .zero, collectionViewLayout: fullWidthLayout)
     collectionView.translatesAutoresizingMaskIntoConstraints = false
     collectionView.backgroundColor = .clear
     collectionView.delegate = self
@@ -128,6 +281,17 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     collectionView.accessibilityIdentifier = "thread-drawer-list"
     view.addSubview(collectionView)
     configureDataSource()
+    usageFooter.translatesAutoresizingMaskIntoConstraints = false
+    usageFooter.accessibilityIdentifier = "product-usage-footer"
+    view.addSubview(usageFooter)
+    usageFooter.onDetails = { [weak self] in
+      guard let self = self else { return }
+      let details = (self.model?.productUsage ?? []).map { $0.details }.joined(separator: "\n\n────────\n\n")
+      let alert = UIAlertController(title: "Product usage", message: details, preferredStyle: .alert)
+      alert.addAction(UIAlertAction(title: "Done", style: .cancel))
+      self.present(alert, animated: true)
+    }
+
 
     NSLayoutConstraint.activate([
       header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -136,7 +300,10 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       collectionView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
       collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      collectionView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+      collectionView.bottomAnchor.constraint(equalTo: usageFooter.topAnchor, constant: 0),
+      usageFooter.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+      usageFooter.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+      usageFooter.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
     ])
     if let model = model { apply(model) }
 
@@ -160,7 +327,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       fab.widthAnchor.constraint(equalToConstant: 56),
       fab.heightAnchor.constraint(equalToConstant: 56),
       fab.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-      fab.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -16),
+      fab.bottomAnchor.constraint(equalTo: usageFooter.topAnchor, constant: -16),
     ])
     collectionView.contentInset.bottom = 56 + 16
     collectionView.verticalScrollIndicatorInsets.bottom = 56 + 16
@@ -171,7 +338,8 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private func makeHeader() -> UIView {
     let title = UILabel()
     title.text = "Freddai"
-    title.font = .systemFont(ofSize: 22, weight: .bold)
+    title.font = UIFont.preferredFont(forTextStyle: .title2).bold()
+    title.adjustsFontForContentSizeCategory = true
     title.accessibilityTraits = .header
 
     connectionIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
@@ -200,6 +368,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     filterButton.setImage(UIImage(systemName: "line.3.horizontal.decrease.circle"), for: .normal)
     filterButton.showsMenuAsPrimaryAction = true
     filterButton.accessibilityLabel = "Filter threads"
+    filterButton.tintColor = .secondaryLabel
     filterButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
     filterButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
     filterButton.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .regular), forImageIn: .normal)
@@ -210,25 +379,37 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     searchRow.spacing = 6
 
     var dashboardConfig = UIButton.Configuration.plain()
-    dashboardConfig.title = "Dashboard"
-    dashboardConfig.image = UIImage(systemName: "square.grid.2x2")
-    dashboardConfig.imagePadding = 10
+        dashboardConfig.image = UIImage(systemName: "square.grid.2x2")
+    dashboardConfig.baseForegroundColor = .secondaryLabel
+    dashboardConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
     let dashboard = UIButton(configuration: dashboardConfig)
-    dashboard.contentHorizontalAlignment = .leading
+    dashboard.accessibilityLabel = "Dashboard"
+    dashboard.widthAnchor.constraint(equalToConstant: 44).isActive = true
+    dashboard.heightAnchor.constraint(equalToConstant: 44).isActive = true
+    titleRow.addArrangedSubview(dashboard)
     dashboard.accessibilityIdentifier = "companion-dashboard"
     dashboard.addAction(UIAction { [weak self] _ in self?.onDashboard?() }, for: .touchUpInside)
-    viewControl.selectedSegmentIndex = 0
-    viewControl.accessibilityLabel = "Thread view"
-    viewControl.accessibilityIdentifier = "thread-view-toggle"
-    viewControl.addTarget(self, action: #selector(viewChanged), for: .valueChanged)
-    let column = UIStackView(arrangedSubviews: [titleRow, viewControl, dashboard, searchRow])
+    var settingsConfig = UIButton.Configuration.plain()
+    settingsConfig.image = UIImage(systemName: "gearshape")
+    settingsConfig.baseForegroundColor = .secondaryLabel
+    settingsConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
+    settingsConfig.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0)
+    let settings = UIButton(configuration: settingsConfig)
+    settings.accessibilityLabel = "Settings"
+    settings.widthAnchor.constraint(equalToConstant: 44).isActive = true
+    settings.accessibilityIdentifier = "companion-settings"
+    settings.accessibilityHint = "Organize projects and workspaces"
+    settings.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .touchUpInside)
+    titleRow.insertArrangedSubview(settings, at: titleRow.arrangedSubviews.count - 1)
+    let column = UIStackView(arrangedSubviews: [titleRow, searchRow])
     column.axis = .vertical
     column.spacing = 10
     return column
   }
 
-  @objc private func viewChanged() {
-    let view = viewControl.selectedSegmentIndex == 1 ? "recent" : "projects"
+  private func setView(_ view: String) {
+    guard currentView != view else { return }
     pendingView = view
     onSetView?(view)
     if let model = model { apply(model) }
@@ -255,6 +436,11 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   func dismissKeyboard() { view.endEditing(true) }
 
   private func rebuildFilterMenu(_ model: ThreadsModel) {
+    let views = [("Projects", "projects"), ("Recent", "recent")].map { title, value in
+      UIAction(title: title, state: value == currentView ? .on : .off) { [weak self] _ in
+        self?.setView(value)
+      }
+    }
     let projects = model.projectOptions.map { option in
       UIAction(title: option.label, state: option.id == model.filters.project ? .on : .off) { [weak self] _ in
         self?.onSetFilter?(option.id, model.filters.status, nil)
@@ -270,7 +456,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
         self?.onSetFilter?("", "all", option.id)
       }
     }
-    var menus: [UIMenuElement] = []
+    var menus: [UIMenuElement] = [UIMenu(title: "Thread view", options: .displayInline, children: views)]
     if workspaces.count > 1 { menus.append(UIMenu(title: "Workspace", options: .displayInline, children: workspaces)) }
     filterButton.menu = UIMenu(children: menus + [
       UIMenu(title: "Project", options: .displayInline, children: projects),
@@ -278,7 +464,8 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     ])
     let active = !(model.filters.workspace ?? "").isEmpty || !model.filters.project.isEmpty || model.filters.status != "all"
     filterButton.setImage(UIImage(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"), for: .normal)
-    filterButton.accessibilityValue = active ? "Filters on" : nil
+    filterButton.tintColor = active ? .tintColor : .secondaryLabel
+    filterButton.accessibilityValue = (currentView == "recent" ? "Recent" : "Projects") + (active ? ", filters on" : "")
   }
 
   // Only project headers initiate a local drag. Dropping moves the entire group through JS.
@@ -370,9 +557,9 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     // Recent rows come from the Recent view, or from the bottom section of the Projects view; never both at once.
     let recentSource = recentMode ? new.recent : new.recentSection
     recentRows = Dictionary(recentSource.threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-    viewControl.selectedSegmentIndex = recentMode ? 1 : 0
     guard isViewLoaded, dataSource != nil else { return }
 
+    usageFooter.update(new.productUsage ?? [])
     var snapshot = NSDiffableDataSourceSnapshot<String, DrawerItem>()
     var seen = Set<DrawerItem>()
     var sections = Set<String>()
@@ -510,6 +697,16 @@ final class ProjectHeaderCell: UICollectionViewListCell {
     label.textColor = .secondaryLabel
     label.accessibilityTraits = .header
     label.lineBreakMode = .byTruncatingTail
+    // The title yields before navigation controls, including during self-sizing.
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    chevron.contentMode = .scaleAspectFit
+    for (view, width) in [(chevron, CGFloat(14)), (icon, CGFloat(18))] {
+      let slot = view.widthAnchor.constraint(equalToConstant: width)
+      // UIStackView adds a required zero width when Commander hides the chevron.
+      slot.priority = UILayoutPriority(999)
+      slot.isActive = true
+      view.setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
     var config = UIButton.Configuration.plain()
     config.image = UIImage(systemName: "plus")
     config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
@@ -528,14 +725,25 @@ final class ProjectHeaderCell: UICollectionViewListCell {
     NSLayoutConstraint.activate([
       stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
       stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2),
-      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
-      stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+      stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -22),
     ])
     var background = UIBackgroundConfiguration.clear()
     background.backgroundColor = .clear
     backgroundConfiguration = background
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+    let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
+    // List rows self-size vertically; intrinsic project names must not widen them.
+    let size = contentView.systemLayoutSizeFitting(
+      CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height),
+      withHorizontalFittingPriority: .required,
+      verticalFittingPriority: .fittingSizeLevel)
+    attributes.size = CGSize(width: layoutAttributes.size.width, height: ceil(size.height))
+    return attributes
+  }
 
   override func layoutSubviews() {
     super.layoutSubviews()
@@ -545,6 +753,7 @@ final class ProjectHeaderCell: UICollectionViewListCell {
   func configure(group: ThreadGroupModel, collapsed: Bool, onAdd: @escaping () -> Void) {
     self.onAdd = onAdd
     let commander = group.kind == "commander"
+    icon.backgroundColor = commander ? UIColor(red: 234.0 / 255, green: 229.0 / 255, blue: 215.0 / 255, alpha: 1) : .clear
     icon.clipsToBounds = commander
     icon.layer.cornerRadius = commander ? min(icon.bounds.width, icon.bounds.height) / 2 : 0
     chevron.isHidden = commander
@@ -574,7 +783,8 @@ final class ProjectHeaderCell: UICollectionViewListCell {
     label.text = group.label
     let projectColor = color(fromHex: group.color) ?? .secondaryLabel
     icon.tintColor = projectColor
-    label.textColor = projectColor
+    label.textColor = .secondaryLabel
+    addButton.tintColor = .secondaryLabel
     addButton.isEnabled = group.canStart
     addButton.accessibilityLabel = "New thread in \(group.label)"
   }
@@ -654,8 +864,13 @@ final class StatusIndicatorView: UIView {
 
 final class ThreadCell: UICollectionViewListCell {
   private let indicator = StatusIndicatorView()
+  private let scheduleIcon = UIImageView(image: UIImage(systemName: "calendar.badge.clock"))
+  private var scheduleWidth: NSLayoutConstraint!
+  private let pinIcon = UIImageView(image: UIImage(systemName: "pin.fill"))
+  private var pinWidth: NSLayoutConstraint!
   private let titleLabel = UILabel()
   private let projectLabel = UILabel()
+  private var pointerInside = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -676,46 +891,81 @@ final class ThreadCell: UICollectionViewListCell {
     indicator.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(indicator)
     contentView.addSubview(textStack)
+    scheduleIcon.tintColor = .secondaryLabel
+    scheduleIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 14)
+    scheduleIcon.contentMode = .scaleAspectFit
+    scheduleIcon.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(scheduleIcon)
+    scheduleWidth = scheduleIcon.widthAnchor.constraint(equalToConstant: 0)
+    pinIcon.tintColor = .secondaryLabel
+    pinIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 14)
+    pinIcon.contentMode = .scaleAspectFit
+    pinIcon.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(pinIcon)
+    pinWidth = pinIcon.widthAnchor.constraint(equalToConstant: 0)
     // Titles are a single truncated line, so the indicator slot is simply centred on the title.
     NSLayoutConstraint.activate([
-      indicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0),
+      indicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
       indicator.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
       indicator.heightAnchor.constraint(equalToConstant: 20),
       textStack.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 6),
-      textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+      textStack.trailingAnchor.constraint(equalTo: pinIcon.leadingAnchor, constant: -6),
+      pinIcon.trailingAnchor.constraint(equalTo: scheduleIcon.leadingAnchor),
+      pinIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+      pinIcon.heightAnchor.constraint(equalToConstant: 20),
+      pinWidth,
+      scheduleIcon.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -28),
+      scheduleIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+      scheduleIcon.heightAnchor.constraint(equalToConstant: 20),
+      scheduleWidth,
       textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
       textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 9),
       textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -9),
       contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
     ])
     isAccessibilityElement = true
+    addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(pointerChanged(_:))))
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+  @objc private func pointerChanged(_ gesture: UIHoverGestureRecognizer) {
+    pointerInside = gesture.state == .began || gesture.state == .changed
+    setNeedsUpdateConfiguration()
+  }
+
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    pointerInside = false
+  }
+
   override func updateConfiguration(using state: UICellConfigurationState) {
-    // Subtle Settings/Files-style selection: small radius, horizontal inset, quiet fill (not a pill).
+    // Selection and pointer hover fill the drawer width; text keeps its inset.
     var background = UIBackgroundConfiguration.clear()
-    if state.isSelected || state.isHighlighted {
+    if state.isSelected || state.isHighlighted || pointerInside {
       background.backgroundColor = state.isSelected ? .tertiarySystemFill : .quaternarySystemFill
-      background.cornerRadius = 9
+      background.cornerRadius = 0
     }
-    background.backgroundInsets = NSDirectionalEdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4)
+    background.backgroundInsets = NSDirectionalEdgeInsets.zero
     backgroundConfiguration = background
   }
 
   func configure(_ row: ThreadRowModel, showProject: Bool = false) {
+    scheduleIcon.isHidden = row.scheduled != true
+    scheduleWidth.constant = row.scheduled == true ? 20 : 0
     let project = showProject ? (row.projectLabel ?? "") : ""
     projectLabel.text = project
     projectLabel.textColor = color(fromHex: row.projectColor ?? "") ?? .secondaryLabel
     projectLabel.isHidden = project.isEmpty
     contentView.alpha = row.faded == true ? 0.65 : 1
-    titleLabel.text = (row.pinned == true ? "📌 " : "") + row.title
+    pinIcon.isHidden = row.pinned != true
+    pinWidth.constant = row.pinned == true ? 20 : 0
+    titleLabel.text = row.title
     let body = UIFont.preferredFont(forTextStyle: .body)
     let font = row.unread ? body.bold() : body
     titleLabel.font = font
     let spoken = indicator.configure(status: row.status, unread: row.unread)
     accessibilityLabel = (row.pinned == true ? "Pinned, " : "") + row.title + (project.isEmpty ? "" : ", \(project)")
-    accessibilityValue = spoken.isEmpty ? nil : spoken
+    accessibilityValue = [spoken, row.scheduled == true ? "Scheduled task" : ""].filter { !$0.isEmpty }.joined(separator: ", ")
     accessibilityTraits = .button
   }
 }

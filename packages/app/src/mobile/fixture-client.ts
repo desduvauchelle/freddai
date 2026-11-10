@@ -2,6 +2,7 @@ import type { Message } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
 import type { CompanionClient, CompanionSnapshot, CompanionThread, CommanderClient } from './companion';
 import type { Proposal, Todo, NoteSummary } from '../desktop/commander/api';
+import { createMockGoogleHost, mockAccounts, mockTriggers } from '../desktop/google-mocks';
 
 /**
  * Offline fake Mac for simulator screenshots and UI work. Never imported by device builds:
@@ -166,8 +167,10 @@ export function createFixtureClient(options: { many?: boolean; stallReplies?: bo
     fn(th); th.updated = Date.now(); th.last_user_message_at = th.updated;
   };
   const commander = createCommanderFixture(() => state.threads);
+  const google = createMockGoogleHost({ accounts: mockAccounts, triggers: mockTriggers.map(t => ({ ...t, project: 'freddai', account: 'claude-personal' })) });
   return {
     commander,
+    googleCommand: google.command,
     moveProject: async (project, target, after) => {
       const order = (state.threadList?.projectOrder || state.projects.map(p => p.id)).filter(id => id !== project);
       order.splice(order.indexOf(target) + (after ? 1 : 0), 0, project);

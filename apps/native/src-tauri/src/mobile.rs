@@ -13,11 +13,14 @@ struct Device {id:String,key:String,mailbox:String}
 struct Credential {#[serde(default)] provision:Option<Provision>,device:Device,relay:Option<String>,#[serde(default)] wake:Option<crate::wake::WakeInfo>}
 struct Pending {id:String,claim:String,connection:Connection}
 struct Companion {#[cfg(target_os = "android")] app:tauri::AppHandle,internet:reqwest::Client,connection:Mutex<Option<Connection>>,credential:Mutex<Option<Credential>>,pending:Mutex<Option<Pending>>,storage_error:Option<String>,relay_active:AtomicBool}
+#[cfg(any(target_os = "ios", target_os = "macos"))]
 #[cfg(target_os = "ios")]
 const SERVICE:&str="com.freddai.companion.pairing.v1";
+#[cfg(target_os = "macos")]
+const SERVICE:&str="com.freddai.desktop.satellite.pairing.v1";
 fn save(h:&Companion,c:Credential)->Result<(),String> {
     let data=serde_json::to_vec(&c).map_err(|e|e.to_string())?;
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     security_framework::passwords::set_generic_password(SERVICE,"device",&data).map_err(|_|"Cannot save paired device in Keychain")?;
     #[cfg(target_os = "android")]
     tauri_plugin_native_shell::write_credential(&h.app, std::str::from_utf8(&data).map_err(|_|"Invalid credential encoding")?)?;
@@ -188,7 +191,7 @@ const UPLOAD_LIMIT:u64=25*1024*1024;
 #[tauri::command]
 async fn companion_upload_path(h:State<'_,Companion>,path:String,name:String,mime:Option<String>)->Result<Value,String> {
     let _=mime; // The Mac derives the MIME type from the finished upload.
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     let cache=std::env::temp_dir();
     #[cfg(target_os = "android")]
     let cache={use tauri::Manager; h.app.path().app_cache_dir().map_err(|_|"Cannot locate attachment folder")?};
@@ -210,7 +213,7 @@ const DICTATION_LIMIT:u64=10*1024*1024;
 /// Same chunk flow as `companion_upload_path`, but ends with `transcribe` instead of `finish`.
 #[tauri::command]
 async fn companion_transcribe_path(h:State<'_,Companion>,path:String)->Result<Value,String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     let cache=std::env::temp_dir();
     #[cfg(target_os = "android")]
     let cache={use tauri::Manager; h.app.path().app_cache_dir().map_err(|_|"Cannot locate recording folder")?};
@@ -234,6 +237,13 @@ async fn transcribe_file_upload(h:&Companion,file:&std::path::Path)->Result<Valu
         upload(json!({"action":"chunk","id":id,"offset":index*24*1024,"data":hex::encode(chunk)})).await?;
     }
     call_slow(h,"/v1/composer",json!({"operation":"transcribe","input":{"id":id,"size":bytes.len()}}),Some(Duration::from_secs(150)),150).await
+}
+/// Opens a Mac `localhost:<port>` page through the preview tunnel (docs/preview-tunnel.md). Errors are named `preview_*` strings.
+#[tauri::command]
+async fn preview_open(app:tauri::AppHandle,h:State<'_,Companion>,thread_id:String,url:String)->Result<Value,String> {
+    let auth=||{let c=credential(&h)?;Ok(crate::preview_device::TunnelAuth{relay:c.relay.clone(),token:c.device.mailbox.clone(),key:c.device.key.clone()})};
+    let rpc=|input:Value|call(&h,"/v1/composer",json!({"operation":"preview_open","input":input}));
+    crate::preview_device::open(app,thread_id,url,auth,rpc).await
 }
 #[tauri::command]
 async fn companion_action(h:State<'_,Companion>,thread:String,action:String)->Result<Value,String> {call(&h,"/v1/action",json!({"thread":thread,"action":action})).await}
@@ -262,21 +272,24 @@ fn companion_wake(h:State<'_,Companion>)->Result<usize,String> {
 fn legacy_provision()->Option<Provision> {
     #[cfg(target_os = "ios")]
     { serde_json::from_str(include_str!(concat!(env!("OUT_DIR"),"/companion-provision.json"))).ok() }
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "macos"))]
     { None }
 }
 fn saved_provision(h:&Companion)->Result<Option<Provision>,String> {
     Ok(h.credential.lock().map_err(|_|"Device storage busy")?.as_ref().and_then(|c|c.provision.clone()).or(legacy_provision()))
 }
-pub fn run() {
+pub fn run(context: tauri::Context<tauri::Wry>) {
     let internet=reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build().expect("Cannot create relay client");
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
     let (credential,storage_error)=match security_framework::passwords::get_generic_password(SERVICE,"device") {
         Ok(data)=>match serde_json::from_slice(&data){Ok(c)=>(Some(c),None),Err(_)=>(None,Some("Cannot read saved pairing credentials".into()))},
         Err(e) if e.code()==-25300=>(None,None),
         Err(_)=>(None,Some("Unlock your iPhone to read its pairing credentials".into())),
     };
-    tauri::Builder::default().plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_native_shell::init()).setup(move |app| {
+    let builder=tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let builder=builder.plugin(tauri_plugin_native_shell::init());
+    builder.setup(move |app| {
         use tauri::Manager;
         #[cfg(target_os = "android")]
         let (credential,storage_error)=match tauri_plugin_native_shell::read_credential(app.handle()) {
@@ -284,8 +297,17 @@ pub fn run() {
             Ok(None)=>(None,None), Err(error)=>(None,Some(error)),
         };
         app.manage(Companion{#[cfg(target_os = "android")] app:app.handle().clone(),internet,connection:Mutex::new(None),credential:Mutex::new(credential),pending:Mutex::new(None),storage_error,relay_active:AtomicBool::new(false)});
+        #[cfg(target_os = "macos")]
+        {
+            let config=app.config().app.windows.first().cloned().ok_or("Missing window configuration")?;
+            let window=tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?.build()?;
+            window.show()?;
+        }
         Ok(())
     })
-        .invoke_handler(tauri::generate_handler![platform,companion_wake_refresh,companion_wake_info,companion_wake,companion_pairing_status,companion_pair,companion_pair_claim,companion_snapshot,companion_start,companion_reply,companion_composer,companion_upload_path,companion_transcribe_path,companion_respond,companion_action,companion_mark_read,companion_merge_read])
-        .run(tauri::generate_context!()).expect("Cannot run mobile companion");
+        .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")] crate::satellite::satellite_mode,
+            #[cfg(target_os = "macos")] crate::satellite::satellite_set_mode,
+            platform,companion_wake_refresh,companion_wake_info,companion_wake,companion_pairing_status,companion_pair,companion_pair_claim,companion_snapshot,companion_start,companion_reply,companion_composer,companion_upload_path,companion_transcribe_path,companion_respond,preview_open,companion_action,companion_mark_read,companion_merge_read])
+        .run(context).expect("Cannot run mobile companion");
 }

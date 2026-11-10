@@ -1,16 +1,18 @@
+import { productUsageCards, type ProductUsageCard } from "./product-usage";
 import { OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
 import { COMPANION_RECENT_PAGING, asThreadNavView, selectRecentThreads, type ThreadNavView } from '../recentThreads';
 import { companionStatusRead, groupCompanionThreads, selectThreads, scopeCompanion } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
-export type NativeThread = { pinned?: boolean; id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
+export type NativeThread = { scheduled?: boolean; pinned?: boolean; id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
 export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; kind?: 'commander'; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
 /** A flat "Recent" row: the usual thread row plus the owning project's name/colour for the small tag. */
 export type NativeRecentThread = NativeThread & { projectLabel: string; projectColor: string };
 export type NativeRecent = { threads: NativeRecentThread[]; remaining: number; expanded: boolean };
 export type NativeOption = { id: string; label: string };
 export type NativeThreadsModel = {
+  productUsage?: ProductUsageCard[];
   groups: NativeThreadGroup[];
   canReorderProjects?: boolean;
   /** Which list the drawer shows; owned by JS (`freddai.companion.threadNavView`) and echoed back via `setView`. */
@@ -37,11 +39,12 @@ export function companionThreadFaded(thread: CompanionThread, read: Record<strin
   return threadListStatus(thread, read) === 'done' && !thread.pending && thread.queued === 0;
 }
 
-function nativeThread(thread: CompanionThread, read: Record<string, number>): NativeThread {
+export function nativeThread(thread: CompanionThread, read: Record<string, number>): NativeThread {
   const listStatus = threadListStatus(thread, read);
   return {
     id: thread.id,
     pinned: thread.pinned,
+    scheduled: thread.scheduled === true,
     title: thread.title,
     // A pending approval/input request needs the user even when the run reports another status.
     status: thread.pending && !['failed', 'interrupted'].includes(thread.status) ? 'waiting' : thread.status,
@@ -71,6 +74,7 @@ export function buildThreadsModel(input: {
     expanded: pick.expanded,
   });
   return {
+    productUsage: productUsageCards(input.data.productUsage),
     view: input.view ?? 'projects',
     recent: recentRows(selectRecentThreads(threads, input.recentPages ?? 0, COMPANION_RECENT_PAGING)),
     recentSection: recentRows(selectRecentThreads(threads, input.sectionPages ?? 0)),

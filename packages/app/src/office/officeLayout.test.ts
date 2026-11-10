@@ -130,3 +130,10 @@ it.each([1, 2, 9, 20, 40])("fits a compact reception and connected reserve for e
     expect(planRoute(l.nav, spot.node, room.desks[0].seat.node)).not.toBeNull();
   }
 });
+
+it('does not put the boss in the project task waiting line', () => {
+  const chief = { id: 'chief', name: 'Ada', color: '#aabbcc', kind: 'commander' as const };
+  const layout = floorPlan([chief, ...projects(2)], 3);
+  expect(layout.rooms[0].project.kind).toBe('commander');
+  expect(layout.projectWaiting.map(spot => spot.project.id)).toEqual(['p0', 'p1']);
+});

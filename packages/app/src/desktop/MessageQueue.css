@@ -19,3 +19,4 @@
 .message-queue button:hover { background: #ffffff0a; color: var(--adaptive-text, #dedbe8); }
 .message-queue button:focus-visible { outline: 2px solid #b59ae9; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .message-queue, .message-queue li { animation: none; } }
+.message-queue li.message-queue-system { min-height: 28px; opacity: .75; font-style: italic; color: var(--adaptive-muted, #9690a6); }

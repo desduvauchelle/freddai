@@ -30,7 +30,7 @@ it('lists the commander project first in the native drawer and marks its kind', 
 it('keeps the commander out of the native project cards and exposes its cluster model', () => {
   const model = buildDashboardModel(snapshot, true, '', {}, false);
   expect(model.projects.map(p => p.id)).toEqual(['a']);
-  expect(model.commander).toEqual({ id: 'c', name: 'Commander-in-Chief', needsYou: 1, running: 0, doneToday: 0 });
+  expect(model.commander).toEqual({ sending: false, id: 'c', name: 'Commander-in-Chief', needsYou: 1, running: 0, doneToday: 0 });
   expect(buildDashboardModel({ ...snapshot, projects: [snapshot.projects[0]] }, true, '', {}, false).commander).toBeNull();
 });
 

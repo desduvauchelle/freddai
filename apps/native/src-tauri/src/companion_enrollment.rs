@@ -18,7 +18,7 @@ impl Provision {
         reqwest::Certificate::from_pem(value.certificate.as_bytes()).map_err(|_| "Invalid Mac certificate")?;
         Ok(Self { endpoint: value.endpoint.trim_end_matches('/').to_owned(), ..value })
     }
-    #[cfg(any(target_os="ios", target_os="android", test))]
+    #[cfg(any(target_os="ios", target_os="android", target_os="macos", test))]
     pub fn client(&self) -> Result<reqwest::Client, String> {
         let cert = reqwest::Certificate::from_pem(self.certificate.as_bytes()).map_err(|_| "Invalid Mac certificate")?;
         reqwest::Client::builder().tls_built_in_root_certs(false).add_root_certificate(cert)

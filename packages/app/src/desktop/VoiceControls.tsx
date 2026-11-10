@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { Loader2, Mic } from "lucide-react";
+import { Loader2, Mic, Send, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import "./VoiceControls.css";
 import { Button } from "@freddai/ui/components/button";
 import { holdKeyAction, shortcutLabel, useVoice, voice } from "./voice";
 
@@ -41,40 +43,77 @@ export function useHoldToTalk({ canListen, onText }: { canListen: () => boolean;
   }, [ready, shortcut]);
 }
 
-/** Press-and-hold microphone button for a composer tools row. Renders nothing unless dictation is ready. */
-export function MicButton({ target, onText, className = "", label: idleLabel = "Dictate" }: { target: boolean; onText: (text: string, button: HTMLElement) => void; className?: string; label?: string }) {
-  const snap = useVoice(), held = useRef(false), [mine, setMine] = useState(false);
-  const status = snap.status;
-  if (!status?.ready) return null;
+/** Shared tap-to-record / hold-to-talk control for every desktop entry point. */
+export function MicButton({ target, onText, className = "", label: idleLabel = "Dictate", variant = "ghost", disabled = false, onListening }: { target: boolean; onText: (text: string, button: HTMLElement) => void; className?: string; label?: string; variant?: "default" | "ghost"; disabled?: boolean; onListening?: (listening: boolean) => void }) {
+  const snap = useVoice(), active = useRef(false), pressed = useRef<number | null>(null);
+  const [mine, setMine] = useState(false), [elapsed, setElapsed] = useState(0), [levels, setLevels] = useState<number[]>([]);
+  const button = useRef<HTMLButtonElement>(null);
   const here = mine || (snap.source === "hotkey" && target);
-  const mode = here && snap.phase === "recording" ? "recording" : here && snap.phase === "transcribing" ? "transcribing" : "idle";
-  const busyElsewhere = mode === "idle" && (snap.phase === "recording" || snap.phase === "transcribing");
+  const recording = here && snap.phase === "recording", transcribing = here && snap.phase === "transcribing";
+  const latestText = useRef(onText); latestText.current = onText;
+  const mode = recording ? "recording" : transcribing ? "transcribing" : "idle";
+  useEffect(() => { onListening?.(recording); return () => onListening?.(false); }, [recording, onListening]);
+  function abort() { pressed.current = null; if (active.current) { active.current = false; setMine(false); void voice.cancel(); } }
+  useEffect(() => {
+    const hide = () => { if (document.visibilityState === "hidden") abort(); };
+    const escape = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape" && active.current) { e.preventDefault(); abort(); } };
+    window.addEventListener("blur", abort); window.addEventListener("keydown", escape);
+    document.addEventListener("visibilitychange", hide);
+    return () => { window.removeEventListener("blur", abort); window.removeEventListener("keydown", escape); document.removeEventListener("visibilitychange", hide); if (active.current) void voice.cancel(); };
+  }, []);
+  useEffect(() => { if (disabled) abort(); }, [disabled]);
+  useEffect(() => {
+    if (!recording) return;
+    let alive = true, pending = false;
+    const started = Date.now(); setElapsed(0); setLevels([]);
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - started) / 1000));
+      if (pending) return;
+      pending = true;
+      void invoke<number>("voice_recording_level").then(level => { if (alive) setLevels(old => [...old.slice(-23), level]); }).catch(() => {}).finally(() => { pending = false; });
+    }, 100);
+    return () => { alive = false; clearInterval(timer); };
+  }, [recording]);
+  async function end() {
+    if (!active.current) return;
+    active.current = false; pressed.current = null;
+    const origin = button.current;
+    const text = await voice.stop(); setMine(false);
+    if (text && origin) latestText.current(text, origin);
+  }
   function begin() {
-    if (held.current) return;
-    held.current = true; setMine(true);
-    void voice.start("button").then(ok => { if (!ok && held.current) { held.current = false; setMine(false); } });
+    if (disabled || active.current || snap.phase === "recording" || snap.phase === "transcribing") return;
+    active.current = true; setMine(true);
+    void voice.start("button").then(ok => { if (!ok) { active.current = false; pressed.current = null; setMine(false); } });
   }
-  async function end(button: HTMLElement) {
-    if (!held.current) return;
-    held.current = false;
-    const text = await voice.stop();
-    setMine(false);
-    if (text) onText(text, button);
+  function release() {
+    const start = pressed.current; pressed.current = null;
+    if (start !== null && Date.now() - start >= 300) void end();
   }
-  function abort() { if (held.current) { held.current = false; setMine(false); void voice.cancel(); } }
-  const label = mode === "recording" ? "Recording — release to transcribe" : mode === "transcribing" ? "Transcribing…" : idleLabel;
-  return <Button
-    type="button" variant="ghost" size="icon" className={`composer-mic ${className}`} data-state={mode}
-    aria-label={label} title={`Hold to talk (${shortcutLabel(status.shortcut)})`} disabled={busyElsewhere}
-    onPointerDown={(e: PointerEvent<HTMLButtonElement>) => { if (e.button !== 0) return; e.currentTarget.setPointerCapture?.(e.pointerId); begin(); }}
-    onPointerUp={(e: PointerEvent<HTMLButtonElement>) => { void end(e.currentTarget); }}
-    onPointerCancel={abort}
-    onLostPointerCapture={abort}
-    onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!e.repeat) begin(); } }}
-    onKeyUp={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); void end(e.currentTarget); } }}
-    onBlur={abort}
-    onClick={e => e.preventDefault()}
-  >{mode === "transcribing" ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}</Button>;
+  if (!snap.status?.ready) return null;
+  return <span className="desktop-recording-control" data-state={mode}>
+    <Button ref={button} type="button" variant={variant} size="icon" className={`composer-mic ${className}`} data-state={mode}
+      aria-label={recording ? "Recording — tap Send or Cancel" : transcribing ? "Transcribing…" : idleLabel}
+      title={`Tap to record · Hold to talk (${shortcutLabel(snap.status.shortcut)})`}
+      disabled={disabled || transcribing || (!here && (snap.phase === "recording" || snap.phase === "transcribing"))}
+      onPointerDown={(e: PointerEvent<HTMLButtonElement>) => {
+        if (e.button !== 0 || active.current) return;
+        e.currentTarget.setPointerCapture?.(e.pointerId); pressed.current = Date.now(); begin();
+      }}
+      onPointerUp={release}
+      onPointerMove={e => { if (pressed.current === null) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX < r.left - 32 || e.clientX > r.right + 32 || e.clientY < r.top - 32 || e.clientY > r.bottom + 32) abort(); }}
+      onPointerCancel={abort} onLostPointerCapture={() => { if (pressed.current !== null) abort(); }}
+      onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!e.repeat) { if (active.current) void end(); else { pressed.current = Date.now(); begin(); } } } }}
+      onKeyUp={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); release(); } }}
+      onClick={e => { e.preventDefault(); if (e.detail === 0 && !active.current && !transcribing) begin(); }}
+    >{transcribing ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}</Button>
+    {mine && (recording || transcribing) && <span className="desktop-recording-pill" role="group" aria-label="Voice recording">
+      {recording && <button type="button" aria-label="Cancel recording" title="Cancel recording (Escape)" onClick={abort}><X size={16} /></button>}
+      <span className="desktop-recording-time" role="timer">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span>
+      <span className="desktop-recording-wave" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ height: `${3 + 21 * Math.min(1, (levels[i] ?? 0) * 4)}px` }} />)}</span>
+      {recording ? <button type="button" aria-label="Send recording" title="Send recording" onClick={() => void end()}><Send size={16} /></button> : <span role="status">Transcribing…</span>}
+    </span>}
+  </span>;
 }
 
 /** Inline listening / transcribing / error line shown inside the composer that dictation targets. */

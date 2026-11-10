@@ -1,9 +1,12 @@
+import { dashboardProjectGroups } from "../mobile/dashboard-projects";
+import { DashboardSelect } from "./DashboardSelect";
+import { Dot, labelStatus } from "./ThreadStatus";
 import { newThreadDraftKey, useDraft, setDraft } from "./drafts";
 import { agentDisplayName } from "./types";
 import { AgentControls } from "./AgentControls";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
-import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, GripVertical, Plus, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
 import { Permission } from "./AgentRequest";
@@ -13,25 +16,28 @@ import { MASCOT_PRIORITY, mascotState } from "./mascot-state";
 import { MicButton, VoiceNotice } from "./VoiceControls";
 import { ThreadList } from "./ThreadList";
 import { joinDictation } from "./voice";
-import { compareThreadRecency, type Account, type Project, type Session } from "./types";
+import { threadListStatus, compareThreadRecency, type Account, type Project, type Session, type Workspace } from "./types";
 import type { HomeLaunchPlan } from "./home-launch";
 import { homeRunState } from "./home-state";
-import { Office, type OfficeSchedule } from "../office/index";
+import { Office, type OfficeProposal, type OfficeSchedule } from "../office/index";
 import { CommanderCluster } from "./commander/CommanderCluster";
 import "./home.css";
+import { OfficeOrder } from "../office/OfficeOrder";
 
 export { homeRunState } from "./home-state";
 
 const isLive = (t: Session) => !t.archived && t.deleted_at == null && t.status !== "archived" && t.status !== "deleted";
 export const startOfLocalDay = (now: number) => { const d = new Date(now); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 
-export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string | null };
+export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string | null; recent: Session[] };
 
 /** All configured projects in saved order; activity updates change counters only. */
 export function homeProjects(sessions: readonly Session[], projects: readonly Project[], now: number): HomeProject[] {
   const midnight = startOfLocalDay(now), rows: HomeProject[] = [];
   for (const project of projects) {
+    if (project.kind === "commander") continue;
     const mine = sessions.filter(t => t.project === project.id && isLive(t));
+    const recent = [...mine].sort(compareThreadRecency).slice(0, 3);
     const today = mine.filter(t => t.updated >= midnight);
     rows.push({
       project,
@@ -40,7 +46,8 @@ export function homeProjects(sessions: readonly Session[], projects: readonly Pr
       failed: mine.filter(t => homeRunState(t) === "failed" && t.updated >= midnight).length,
       done: today.filter(t => t.status === "done" && !t.pending).length,
       lastActivity: Math.max(0, ...today.map(t => t.updated)),
-      latest: [...mine].sort(compareThreadRecency)[0]?.id ?? null,
+      latest: recent[0]?.id ?? null,
+      recent,
     });
   }
   return rows;
@@ -49,18 +56,25 @@ export function homeProjects(sessions: readonly Session[], projects: readonly Pr
 export const needsYou = (sessions: readonly Session[]) => sessions.filter(t => isLive(t) && !!t.pending).sort(compareThreadRecency);
 
 export type HomeViewProps = {
+  homeAccount?: string;
+  onHomeAccount?: (account: string) => void;
   native?: boolean;
   homeSelections?: Record<string, AgentSelection>;
   onHomeSelection?: (account: string, selection: AgentSelection) => void;
   sessions: Session[];
+  read?: Record<string, number>;
   projects: Project[];
+  workspaces?: Workspace[];
   accounts: Account[];
+  onMoveProject?: (id: string, target: string, after: boolean) => void;
   /** Injectable clock for tests; defaults to Date.now(). */
   now?: number;
   /** False in the browser preview or while a launch is already in flight. */
   canCreate: boolean;
   onOpenThread: (id: string) => void;
   onAddProject: () => void;
+  /** Opens the full project-scoped composer without starting a thread. */
+  onNewThread?: (projectId: string) => void;
   /** Creates and starts a thread through the same launch path as the New thread composer. */
   onCreateThread: (projectId: string, prompt: string) => Promise<string | void>;
   /** Resolves the agent a new thread in this project will use (shared with the launch itself). */
@@ -69,11 +83,11 @@ export type HomeViewProps = {
   /** Optional scheduled work, shown at the Office clock shrine. */
   schedules?: OfficeSchedule[];
   /** Commander-in-Chief presence above the project list; omitted when unavailable. */
-  commander?: { onOpen: () => void; onSend: (text: string) => Promise<void> };
+  commander?: { onOpen: () => void; onSend: (text: string) => Promise<void>; proposals?: readonly OfficeProposal[]; onProposalRespond?: (id: string, approve: boolean) => Promise<unknown> };
 };
 
-function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
-  entry: HomeProject; open: boolean; canCreate: boolean; plan: HomeLaunchPlan; onToggle: () => void; onCreate: (prompt: string) => Promise<string | void>; onOpen: () => void;
+function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpenThread, read }: {
+  read: Record<string, number>; entry: HomeProject; open: boolean; canCreate: boolean; plan: HomeLaunchPlan; onToggle: () => void; onCreate: (prompt: string) => Promise<string | void>; onOpen: () => void; onOpenThread: (id: string) => void;
 }) {
   const { project } = entry;
   const [started, setStarted] = useState("");
@@ -104,7 +118,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   return <article className="home-tile" aria-label={`Project ${project.name}`}>
     <header>
       <span className="home-project-dot" style={{ background: project.color }} aria-hidden="true" />
-      <button type="button" className="home-tile-open" title={entry.latest ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`} aria-label={entry.latest ? `Open latest thread in ${project.name}` : `Create first thread in ${project.name}`} onClick={onOpen}><strong>{project.name}</strong></button>
+      <button type="button" className="home-tile-open" title={entry.latest ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`} aria-label={entry.latest ? `Open latest thread in ${project.name}` : `Create first thread in ${project.name}`} onClick={onOpen}><strong style={{ color: project.color }}>{project.name}</strong></button>
       <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <MicButton target={false} onText={t => void dictate(t)} />
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
@@ -114,11 +128,20 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
       </div>
     </header>
     <ul className="home-counts" aria-label="Thread status">
-      <li data-kind="working"><Activity size={12} aria-hidden="true" />{entry.working} working</li>
-      <li data-kind="done"><Check size={12} aria-hidden="true" />{entry.done} done</li>
-      <li data-kind="needs" data-active={entry.needs > 0}><CircleAlert size={12} aria-hidden="true" />{entry.needs} needs you</li>
-      {entry.failed > 0 && <li data-kind="failed"><CircleAlert size={12} aria-hidden="true" />{entry.failed} failed</li>}
+      <li data-kind="working" data-active={entry.working > 0} aria-label={`${entry.working} working`} title={`${entry.working} working`}><Activity size={12} aria-hidden="true" />{entry.working}</li>
+      <li data-kind="done" data-active={entry.done > 0} aria-label={`${entry.done} done today`} title={`${entry.done} done today`}><Check size={12} aria-hidden="true" />{entry.done}</li>
+      <li data-kind="needs" data-active={entry.needs > 0} aria-label={`${entry.needs} needs you`} title={`${entry.needs} needs you`}><CircleAlert size={12} aria-hidden="true" />{entry.needs}</li>
+      {entry.failed > 0 && <li data-kind="failed" aria-label={`${entry.failed} failed today`} title={`${entry.failed} failed today`}><CircleAlert size={12} aria-hidden="true" />{entry.failed}</li>}
     </ul>
+    {entry.recent.length > 0 && <ul className="home-recent" aria-label={`Recent threads in ${project.name}`}>
+      {entry.recent.map(thread => {
+        const status = threadListStatus(thread, read);
+        return <li key={thread.id}><button type="button" onClick={() => onOpenThread(thread.id)} title={`${thread.title || "Untitled thread"} · ${labelStatus(status)}`}>
+          <Dot status={status} />
+          <span>{thread.title || "Untitled thread"}</span>
+        </button></li>;
+      })}
+    </ul>}
     {micUsed && <VoiceNotice target />}
     {dictating && <div className="voice-notice" role="status">Starting thread…</div>}
     {(open || armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
@@ -135,10 +158,18 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen }: {
   </article>;
 }
 
-export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenThread, onAddProject, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander }: HomeViewProps) {
+export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, onMoveProject, homeAccount = "", onHomeAccount }: HomeViewProps) {
+  const grid = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: string; target: string; after: boolean } | null>(null);
+  const [drop, setDrop] = useState<{ id: string; target: string; after: boolean } | null>(null);
+  const clearDrag = () => { drag.current = null; setDrop(null); };
   const clock = now ?? Date.now();
   const tiles = useMemo(() => homeProjects(sessions, projects, clock), [sessions, projects, clock]);
-  const launchAccounts = accounts.filter(account => projects.some(project => { const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
+  const entries = new Map(tiles.map(entry => [entry.project.id, entry]));
+  const groups = dashboardProjectGroups({ projects, workspaces });
+  const launchAccounts = accounts.filter(account => projects.some(project => { if (project.kind === "commander") return false; const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
+  const selectedAccount = accounts.find(account => account.id === homeAccount);
+  const modelAccounts = selectedAccount ? [selectedAccount] : launchAccounts.slice(0, 1);
   const waiting = useMemo(() => needsYou(sessions), [sessions]);
   const [openProject, setOpenProject] = useState<string | null>(null);
   const live = sessions.filter(isLive);
@@ -156,24 +187,63 @@ export function HomeView({ sessions, projects, accounts, now, canCreate, onOpenT
       </div>
     </div>
 
-    <Office variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
-
     {commander && <CommanderCluster onOpen={commander.onOpen} onSend={commander.onSend} />}
 
+    <Office proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
+      onSend={text => onCreateThread(project, text)} renderMic={(onText, disabled) => <><MicButton target={false} disabled={disabled} onListening={onListening} label={`Give an order to ${projectName(project)}`} onText={onText} /><VoiceNotice target /></>} />} variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
+
     <section className="home-section" aria-label="Projects">
+      <div className="dashboard-project-toolbar">
       <div className="home-section-title"><span>Projects</span>
-        <div className="home-header-actions">
-          {onHomeSelection && launchAccounts.map(account => <div key={account.id} className="home-model" aria-label={`Model for ${agentDisplayName(account)}`} title={`Agent for Home microphones and new threads · ${agentDisplayName(account)}`}>
-            {launchAccounts.length > 1 && <span>{agentDisplayName(account)}</span>}
-            <AgentControls account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="Home microphones and new threads" />
-          </div>)}
         <Button type="button" variant="ghost" size="sm" onClick={onAddProject}><FolderPlus size={13} aria-hidden="true" />Add project</Button>
-        </div>
       </div>
-      {tiles.length ? <div className="home-tiles">
-        {tiles.map(entry => <Tile key={entry.project.id} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
-          onToggle={() => setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
-          onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => { if (entry.latest) onOpenThread(entry.latest); else setOpenProject(entry.project.id); }} />)}
+      <div className="dashboard-launch-controls" role="group" aria-label="Dashboard task defaults">
+          {onHomeAccount && <DashboardSelect label="Agent provider for dashboard threads" displayValue={modelAccounts[0] ? agentDisplayName(modelAccounts[0]) : 'Choose provider'} value={selectedAccount?.id || ''} disabled={!canCreate || !accounts.length}
+            onChange={onHomeAccount} options={[{ value: '', label: 'Project defaults' }, ...accounts.map(account => ({ value: account.id, label: agentDisplayName(account) }))]} />}
+          {onHomeSelection && modelAccounts.map(account => <AgentControls key={account.id} inline account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="all new dashboard tasks" />)}
+      </div>
+      </div>
+      {tiles.length ? <div ref={grid}>
+        {groups.map(group => <section key={group.id} className="home-workspace-group" aria-label={group.name ?? undefined}>
+        {group.name && <h3 className="home-workspace-heading">{group.name}</h3>}
+        <div className="home-tiles">
+        {group.projects.map((project, index) => { const entry = entries.get(project.id)!; return <div key={entry.project.id} className="home-project-card" data-home-project={entry.project.id}
+          data-drop={drop?.target === entry.project.id && drop.id !== entry.project.id ? (drop.after ? "after" : "before") : undefined}>
+          {onMoveProject && <button type="button" className="project-drag-handle home-project-reorder" aria-label={`Reorder ${entry.project.name}`}
+            title="Drag to reorder · Alt+↑/↓ to move"
+            onKeyDown={e => {
+              if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+              e.preventDefault();
+              const offset = e.key === "ArrowUp" ? -1 : 1;
+              const target = group.projects[index + offset];
+              if (target) onMoveProject(entry.project.id, target.id, offset > 0);
+            }}
+            onPointerDown={e => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              drag.current = { id: entry.project.id, target: entry.project.id, after: false };
+            }}
+            onPointerMove={e => {
+              if (!e.currentTarget.hasPointerCapture(e.pointerId) || !drag.current) return;
+              const card = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-home-project]");
+              if (!card || !grid.current?.contains(card)) return;
+              const bounds = card.getBoundingClientRect();
+              const next = { id: entry.project.id, target: card.dataset.homeProject!, after: e.clientX > bounds.left + bounds.width / 2 };
+              drag.current = next; setDrop(next);
+              card.scrollIntoView?.({ block: "nearest" });
+            }}
+            onPointerUp={e => {
+              if (drag.current && grid.current?.contains(document.elementFromPoint(e.clientX, e.clientY))) {
+                onMoveProject(drag.current.id, drag.current.target, drag.current.after);
+              }
+              clearDrag();
+            }}
+            onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}><GripVertical size={13} /></button>}
+          <Tile read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
+          onToggle={() => onNewThread ? onNewThread(entry.project.id) : setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
+          onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => { if (entry.latest) onOpenThread(entry.latest); else if (onNewThread) onNewThread(entry.project.id); else setOpenProject(entry.project.id); }} /></div>; })}
+        </div></section>)}
       </div> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
     </section>
 

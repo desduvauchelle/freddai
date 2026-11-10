@@ -9,6 +9,9 @@ import remarkGfm from "remark-gfm";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
 import { GeneratedFile, InlineImage, LocalPageContext, isGeneratedFile, isHtmlFile, isImageFile } from "./GeneratedFile";
 import { splitMarkdownBlocks } from "./markdown-blocks";
+import { ThreadChip, threadLinkId } from "./ThreadChip";
+import { renderSpoken } from "./voiceCallMarkup";
+import { LocalhostPreviewChips } from "./localhostPreview";
 
 // Hoisted so every message and block shares one stable plugin list and component map.
 const remarkPlugins = [remarkGfm];
@@ -19,11 +22,13 @@ const components: Components = {
   img: ({src, alt}) => typeof src === "string" && isGeneratedFile(src) ? (isImageFile(src) ? <InlineImage href={src} alt={alt || ""} /> : <GeneratedFile href={src}>{alt || "Preview file"}</GeneratedFile>) : <img src={src} alt={alt} style={{maxWidth:"100%"}} />,
 };
 
-/** Web URLs open externally; local file paths open a preview/actions dialog; other schemes stay plain text. */
+/** `freddai://thread/<id>` opens that thread as a live chip. Web URLs open externally; local file paths open a preview/actions dialog; other schemes stay plain text. */
 function MessageLink({ children, href, title }: React.ComponentProps<"a">) {
   const [error, setError] = useState(false);
   const openBrowser = useContext(BrowserContext);
   const resolvePage = useContext(LocalPageContext);
+  const threadId = href ? threadLinkId(href) : undefined;
+  if (threadId) return <ThreadChip threadId={threadId} title={title}>{children}</ThreadChip>;
   if (href && isGeneratedFile(href)) {
     if (isImageFile(href)) return <InlineImage href={href} alt={typeof children === "string" ? children : ""} />;
     if (isHtmlFile(href) && openBrowser && resolvePage && isTauri()) return <LocalPageLink href={href} openBrowser={openBrowser} resolve={resolvePage}>{children}</LocalPageLink>;
@@ -65,10 +70,10 @@ function LocalPageLink({ href, openBrowser, resolve, children }: { href: string;
 
 // A block re-parses only when its own text changes, so streaming re-renders just the last block.
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
-  return <Markdown urlTransform={url => isGeneratedFile(url) ? url : defaultUrlTransform(url)} remarkPlugins={remarkPlugins} components={components}>{text}</Markdown>;
+  return <Markdown urlTransform={url => isGeneratedFile(url) || threadLinkId(url) ? url : defaultUrlTransform(url)} remarkPlugins={remarkPlugins} components={components}>{text}</Markdown>;
 });
 
 export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: string }) {
-  const blocks = useMemo(() => splitMarkdownBlocks(text), [text]);
-  return <>{blocks.map((block, index) => <MarkdownBlock key={index} text={block} />)}</>;
+  const blocks = useMemo(() => splitMarkdownBlocks(renderSpoken(text)), [text]);
+  return <>{blocks.map((block, index) => <MarkdownBlock key={index} text={block} />)}<LocalhostPreviewChips text={text} /></>;
 });

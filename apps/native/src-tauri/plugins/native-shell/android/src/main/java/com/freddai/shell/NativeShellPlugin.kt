@@ -54,12 +54,64 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private lateinit var connection: Button
     private lateinit var list: LinearLayout
     private lateinit var search: EditText
-    private lateinit var viewProjects: Button
-    private lateinit var viewRecent: Button
+    private lateinit var viewFilter: Button
     private lateinit var chips: LinearLayout
     private val collapsedProjects = mutableSetOf<String>()
     private var model = JSONObject()
     private var meta = JSONObject()
+    private var threadSheet: com.google.android.material.bottomsheet.BottomSheetDialog? = null
+    private var sheetParent: ViewGroup? = null
+    private var sheetIndex = 0
+    private var sheetParams: ViewGroup.LayoutParams? = null
+    private var sheetBackdrop: View? = null
+    private var sheetDestinationReady = false
+
+    private fun openThreadSheet() {
+        if (threadSheet != null) return
+        val parent = drawer.parent as? ViewGroup ?: return
+        sheetDestinationReady = false
+        sheetParent = parent; sheetIndex = parent.indexOfChild(drawer); sheetParams = drawer.layoutParams
+        val bitmap = android.graphics.Bitmap.createBitmap(drawer.width.coerceAtLeast(1), drawer.height.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+        drawer.draw(android.graphics.Canvas(bitmap))
+        val backdrop = ImageView(host).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.FIT_XY }
+        parent.addView(backdrop, sheetIndex, sheetParams); sheetBackdrop = backdrop
+        parent.removeView(drawer)
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(host)
+        threadSheet = dialog
+        dialog.setContentView(drawer)
+        dialog.behavior.apply {
+            skipCollapsed = true
+            isFitToContents = false
+            expandedOffset = (parent.height * 0.1f).toInt()
+            state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        }
+        var cancelledByUser = false
+        dialog.setOnCancelListener { cancelledByUser = true }
+        dialog.setOnDismissListener {
+            (drawer.parent as? ViewGroup)?.removeView(drawer)
+            parent.addView(drawer, sheetIndex.coerceAtMost(parent.childCount), sheetParams)
+            sheetBackdrop?.bringToFront()
+            threadSheet = null; sheetParent = null
+            if (cancelledByUser) event("navBack")
+            revealSheetDestination()
+        }
+        dialog.show()
+        dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
+    }
+
+    private fun revealSheetDestination() {
+        if (threadSheet != null || !sheetDestinationReady) return
+        val backdrop = sheetBackdrop ?: return
+        contentWebView.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                if (threadSheet == null && sheetBackdrop === backdrop) {
+                    (backdrop.parent as? ViewGroup)?.removeView(backdrop)
+                    sheetBackdrop = null
+                }
+            }
+        })
+    }
+
     private var mode = "other"
     @Volatile private var installed = false
     private var installAttempts = 0
@@ -194,6 +246,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             navigation.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
             connection = button("Mac") { event("connectionTap") }
             navigation.addView(connection)
+            navigation.addView(button("Start call") { event("threadAction", JSONObject().put("action", "call")) }.apply { tag = "start-call"; text = "☎"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
             navigation.addView(button("More") { showActions() }.apply { text = "⋮"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
             content.addView(navigation)
             contentWebView = webView
@@ -212,27 +265,64 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             }
             composer.addView(editor, LinearLayout.LayoutParams(-1, -2))
-            row.addView(button("Send") { sendComposer() })
+            row.addView(button("Send") { sendComposer() }.apply { primaryAction() })
             voiceStatus = RecordingStatusView(host).apply { textSize = 13f; gravity = Gravity.BOTTOM or Gravity.RIGHT; setPadding(0, 0, dp(56), dp(14)); visibility = View.GONE }
-            val transcriptionStatus = TextView(host).apply { textSize = 13f; text = "Transcribing…"; visibility = View.GONE }
+            val transcriptionStatus = TextView(host).apply {
+                textSize = 14f; text = "Transcribing…"; visibility = View.GONE
+                gravity = Gravity.CENTER_VERTICAL or Gravity.LEFT
+                typeface = android.graphics.Typeface.MONOSPACE
+                val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                setTextColor(if (dark) android.graphics.Color.rgb(87, 214, 140) else android.graphics.Color.rgb(20, 122, 69))
+                setPadding(dp(20), 0, dp(48), 0)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(22).toFloat(); setColor(if (dark) android.graphics.Color.rgb(49, 50, 57) else android.graphics.Color.rgb(250, 250, 252))
+                }
+                contentDescription = "Transcribing"
+            }
             composer.clipChildren = false
             composer.clipToPadding = false
             content.clipChildren = false
-            val microphone = button("Dictate") {}.apply { text = ""; setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_btn_speak_now, 0, 0, 0); contentDescription = "Dictate message. Hold and release to send. Tap to record until Send or Cancel." }
+            val microphone = button("Dictate") {}.apply { primaryAction(); text = ""; setCompoundDrawablesWithIntrinsicBounds(android.R.drawable.ic_btn_speak_now, 0, 0, 0); contentDescription = "Dictate message. Hold and release to send. Tap to record until Send or Cancel." }
             composerRecorder?.dispose()
             val recordingRow = FrameLayout(host).apply { clipChildren = false; clipToPadding = false }
             val recordingCancel = button("Cancel recording") { composerRecorder?.cancel() }.apply { text = "×"; visibility = View.GONE }
-            val recordingSend = button("Send recording") { composerRecorder?.send() }.apply { text = "↑"; visibility = View.GONE }
+            val recordingSend = button("Send recording") { composerRecorder?.send() }.apply { primaryAction(); text = "↑"; visibility = View.GONE }
+            val cancelColors = recordingCancel.textColors
             composerRecorder = ComposerRecorder(host as AppCompatActivity, microphone, { status ->
                 voiceStatus.showWaveform = status.isNotEmpty() && status != "Transcribing…"
                 recordingCancel.visibility = if (voiceStatus.showWaveform) View.VISIBLE else View.GONE
                 recordingSend.visibility = recordingCancel.visibility
                 recordingRow.layoutParams = LinearLayout.LayoutParams(-1, dp(if (voiceStatus.showWaveform) 112 else 48))
                 voiceStatus.text = status; voiceStatus.invalidate(); voiceStatus.visibility = if (voiceStatus.showWaveform) View.VISIBLE else View.GONE
-                transcriptionStatus.visibility = if (status == "Transcribing…") View.VISIBLE else View.GONE
-            }, { path, duration -> event("voiceRecorded", JSONObject().put("path", path).put("durationMs", duration)) }, { message ->
+                val transcribing = status == "Transcribing…"
+                val wasTranscribing = transcriptionStatus.visibility == View.VISIBLE
+                transcriptionStatus.animate().cancel()
+                if (transcribing) {
+                    transcriptionStatus.alpha = 1f; transcriptionStatus.translationY = 0f
+                    transcriptionStatus.visibility = View.VISIBLE
+                } else if (wasTranscribing && status.isEmpty()) {
+                    val motion = android.os.Build.VERSION.SDK_INT < 26 || android.animation.ValueAnimator.areAnimatorsEnabled()
+                    transcriptionStatus.animate().alpha(0f).translationY(if (motion) -dp(22).toFloat() else 0f).setDuration(if (motion) 250L else 0L).withEndAction {
+                        transcriptionStatus.visibility = View.GONE
+                        transcriptionStatus.translationY = 0f
+                    }.start()
+                } else transcriptionStatus.visibility = View.GONE
+            }, { path, duration ->
+                val capturedText = editor.text.toString()
+                val capturedFiles = JSONArray(files)
+                editor.setText(""); files.clear(); renderChips()
+                event("voiceRecorded", JSONObject().put("path", path).put("durationMs", duration).put("text", capturedText).put("files", capturedFiles))
+            }, { message ->
                 event("voiceError", JSONObject().put("message", message))
-            }, { level -> voiceStatus.level = level; voiceStatus.invalidate() }, { progress -> voiceStatus.sendProgress = progress; voiceStatus.invalidate() })
+            }, { level -> voiceStatus.level = level; voiceStatus.invalidate() }, { progress ->
+                val sendAmount = progress.coerceIn(0f, 1f)
+                val cancelAmount = (-progress).coerceIn(0f, 1f)
+                recordingSend.scaleX = 1 + sendAmount; recordingSend.scaleY = 1 + sendAmount
+                recordingCancel.scaleX = 1 + 0.5f * cancelAmount; recordingCancel.scaleY = 1 + 0.5f * cancelAmount
+                recordingCancel.setTextColor(androidx.core.graphics.ColorUtils.blendARGB(cancelColors.defaultColor, android.graphics.Color.RED, cancelAmount))
+                voiceStatus.sendProgress = sendAmount; voiceStatus.invalidate()
+            })
+            composerRecorder?.sendTarget = recordingSend
             composerRecorder?.update(voiceEnabled, voiceBusy)
             row.addView(microphone, LinearLayout.LayoutParams(dp(48), dp(48)))
             fun setting(label: String, icon: Int, action: String) = ImageButton(host).apply {
@@ -250,7 +340,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             recordingRow.addView(recordingCancel, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin = dp(180); bottomMargin = dp(2) })
             recordingRow.addView(recordingSend, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin = dp(2); bottomMargin = dp(66) })
             composer.addView(recordingRow, LinearLayout.LayoutParams(-1, dp(48)))
-            composer.addView(transcriptionStatus)
+            recordingRow.addView(transcriptionStatus, 0, FrameLayout.LayoutParams(dp(224), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { bottomMargin = dp(2) })
             content.addView(composer)
             renderSettings()
             mainPanel.addView(content, LinearLayout.LayoutParams(0, -1, 1f))
@@ -267,17 +357,24 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
-            viewProjects = button("Projects") { setView("projects") }
-            viewRecent = button("Recent") { setView("recent") }
-            sidebar.addView(LinearLayout(host).apply { addView(viewProjects, LinearLayout.LayoutParams(0, -2, 1f)); addView(viewRecent, LinearLayout.LayoutParams(0, -2, 1f)) })
-            sidebar.addView(button("Dashboard") { event("dashboard"); closeDrawer() })
+            val navigation = LinearLayout(host)
+            navigation.addView(button("Settings") { closeDrawer(); event("threadAction", JSONObject().put("action", "organization")) }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            navigation.addView(button("Dashboard") { event("dashboard"); closeDrawer() }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            sidebar.addView(navigation)
             sidebar.addView(search)
             val filters = LinearLayout(host)
+            viewFilter = button("Projects") {
+                AlertDialog.Builder(host).setTitle("Thread view")
+                    .setSingleChoiceItems(arrayOf("Projects", "Recent"), if (currentView() == "recent") 1 else 0) { dialog, index ->
+                        setView(if (index == 1) "recent" else "projects"); dialog.dismiss()
+                    }.show()
+            }
+            filters.addView(viewFilter)
             filters.addView(button("Workspace") { filter("workspaceOptions", "workspace") })
             filters.addView(button("Project") { filter("projectOptions", "project") })
             filters.addView(button("Status") { filter("statusOptions", "status") })
             sidebar.addView(filters)
-            sidebar.addView(button("New thread") { event("newThread", JSONObject().put("project", "")); closeDrawer() })
+            sidebar.addView(button("New thread") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "")); closeDrawer() })
             list = column(); sidebar.addView(ScrollView(host).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
             // Keep the direct drawer child stable: ViewDragHelper retains it while settling.
             drawerSurface = FrameLayout(host).apply { addView(sidebar, FrameLayout.LayoutParams(-1, -1)) }
@@ -336,6 +433,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         if (mode != "dashboard" || dashboardModel.optBoolean("expanded")) dashboard.cancelRecording()
         dashboard.visibility = if (mode == "dashboard" && !dashboardModel.optBoolean("expanded")) View.VISIBLE else View.GONE
         resizeDashboardWeb()
+        navigation.findViewWithTag<View>("start-call")?.visibility = if (mode == "conversation" || mode == "new" || mode == "dashboard") View.VISIBLE else View.GONE
         navigation.visibility = if (visible) View.VISIBLE else View.GONE
         composer.visibility = if (mode == "conversation" || mode == "new") View.VISIBLE else View.GONE
         drawer.setDrawerLockMode(if (visible && !persistentSidebar) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
@@ -345,11 +443,19 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     @Command fun ping(invoke: Invoke) { host.runOnUiThread { ensureShell(); invoke.resolve(JSObject().put("installed", installed && drawer.isAttachedToWindow).put("nativeDashboardContent", true)) } }
     @Command fun setMode(invoke: Invoke) = ui(invoke) {
         val args = invoke.getArgs()
-        if (mode != args.optString("mode", "other") || title.text.toString() != args.optString("title", "Freddai")) composerRecorder?.cancel()
+        if (args.optString("mode", "other") !in listOf("new", "conversation", "commander")) composerRecorder?.cancel()
         // Commander is a conversation with its own web header; Android has no transparent-bar variant, so it uses the plain conversation chrome.
+        val nextMode = args.optString("mode", "other")
+        val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("conversation", "commander")
+        if (wantsSheet) openThreadSheet()
         mode = args.optString("mode", "other").let { if (it == "commander") "conversation" else it }
         title.text = args.optString("title", "Freddai"); editor.hint = args.optString("placeholder", "Message")
         applyMode()
+        if (!wantsSheet) {
+            sheetDestinationReady = true
+            threadSheet?.dismiss()
+            revealSheetDestination()
+        }
         if (mode != "other" && args.optBoolean("openDrawer")) {
             if (persistentSidebar) sidebarView.visibility = View.VISIBLE else drawer.openDrawer(Gravity.START)
         }
@@ -383,13 +489,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private var pendingView: String? = null
     private fun currentView() = pendingView ?: model.optString("view", "projects")
     private fun renderViewToggle() {
-        val recent = currentView() == "recent"
-        for ((button, selected) in listOf(viewProjects to !recent, viewRecent to recent)) {
-            button.setTypeface(null, if (selected) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            button.alpha = if (selected) 1f else 0.6f
-            button.isSelected = selected
-            button.contentDescription = button.text.toString() + if (selected) ", selected" else ""
-        }
+        viewFilter.text = if (currentView() == "recent") "Recent" else "Projects"
+        viewFilter.contentDescription = "Thread view: ${viewFilter.text}"
     }
     private fun setView(view: String) {
         if (currentView() == view) return
@@ -421,26 +522,14 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         val spoken = when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (thread.optBoolean("unread")) "Unread reply" else "" }
         val row = LinearLayout(host).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); isClickable = true; isFocusable = true
-            contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), tag ?: "", spoken).filter { it.isNotEmpty() }.joinToString(", ")
+            contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), tag ?: "", spoken, if (thread.optBoolean("scheduled")) "Scheduled task" else "").filter { it.isNotEmpty() }.joinToString(", ")
             alpha = if (thread.optBoolean("faded")) 0.65f else 1f
             isSelected = id == model.optString("selectedId")
             val highlight = android.util.TypedValue(); host.theme.resolveAttribute(if (isSelected) android.R.attr.colorControlHighlight else android.R.attr.selectableItemBackground, highlight, true)
             if (isSelected) setBackgroundColor(highlight.data) else setBackgroundResource(highlight.resourceId)
             setOnClickListener { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", id)); closeDrawer() }
         }
-        val dot = TextView(host).apply {
-            text = if (spoken.isEmpty()) "" else "●"; textSize = 12f; gravity = Gravity.CENTER
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setTextColor(when (status) { "running", "starting" -> 0xffafb3bc.toInt(); "waiting", "interrupted" -> 0xffff9500.toInt(); "failed", "error" -> 0xffff3b30.toInt(); else -> 0xff007aff.toInt() })
-        }
-        if (status == "running" || status == "starting") dot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            private var pulse: android.animation.ObjectAnimator? = null
-            override fun onViewAttachedToWindow(view: View) {
-                if (android.provider.Settings.Global.getFloat(host.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return
-                pulse = android.animation.ObjectAnimator.ofFloat(view, "alpha", 1f, 0.4f).apply { duration = 900; repeatCount = android.animation.ValueAnimator.INFINITE; repeatMode = android.animation.ValueAnimator.REVERSE; start() }
-            }
-            override fun onViewDetachedFromWindow(view: View) { pulse?.cancel(); pulse = null }
-        })
+        val dot = threadStatusIndicator(host, status, thread.optBoolean("unread"))
         row.addView(dot, LinearLayout.LayoutParams(dp(20), dp(48)))
         val titles = column().apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         titles.addView(TextView(host).apply {
@@ -454,16 +543,79 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
         row.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
-        list.addView(row)
+        if (thread.optBoolean("scheduled")) row.addView(android.widget.ImageView(host).apply {
+            setImageResource(android.R.drawable.ic_menu_recent_history)
+            imageTintList = android.content.res.ColorStateList.valueOf(0xff8e8e93.toInt())
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginStart = dp(8); marginEnd = dp(8) })
+        list.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
     private fun renderThreads() {
         list.removeAllViews()
         if (pendingView != null && pendingView == model.optString("view", "projects")) pendingView = null
         renderViewToggle()
-        if (currentView() == "recent") { renderRecent(); return }
-        renderGroups()
-        renderRecent("recentSection", bottom = true)
+        if (currentView() == "recent") { renderRecent() } else {
+            renderGroups()
+            renderRecent("recentSection", bottom = true)
+        }
+        renderProductUsage()
     }
+    private fun renderProductUsage() {
+        val usage = model.optJSONArray("productUsage") ?: JSONArray()
+        if (usage.length() == 0) return
+        val dark = (host.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val surface = if (dark) 0xC018181C.toInt() else 0xC0F5F5F7.toInt()
+        val footer = LinearLayout(host).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(android.graphics.Color.TRANSPARENT, surface)
+            )
+        }
+        list.addView(footer)
+        val heading = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+        heading.addView(TextView(host).apply { text = "Usage"; textSize = 12f }, LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(button("Details ›") {
+            val details = (0 until usage.length()).joinToString("\n\n────────\n\n") { usage.getJSONObject(it).optString("details") }
+            AlertDialog.Builder(host).setTitle("Product usage").setMessage(details).setPositiveButton("Done", null).show()
+        }.apply { textSize = 12f; minHeight = dp(28); minimumHeight = dp(28); setPadding(dp(8), 0, dp(8), 0) })
+        footer.addView(heading)
+        val secondary = if (dark) android.graphics.Color.rgb(185, 185, 193) else android.graphics.Color.rgb(88, 88, 96)
+        for (i in 0 until usage.length() step 2) {
+            val row = LinearLayout(host).apply { setPadding(dp(12), 0, dp(12), dp(4)) }
+            for (j in i until minOf(i + 2, usage.length())) {
+                val product = usage.getJSONObject(j)
+                val card = LinearLayout(host).apply {
+                    orientation = LinearLayout.VERTICAL
+                    contentDescription = product.optString("product") + ", " + product.optString("name") + ", " + product.optString("capacity") + ", " + product.optString("reset")
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                }
+                val top = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
+                card.addView(TextView(host).apply {
+                    text = product.optString("product") + " · " + product.optString("name"); textSize = 12f
+                    setTextColor(secondary); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                })
+                top.addView(TextView(host).apply {
+                    text = product.optString("capacity"); textSize = 12f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                    if (product.isNull("remaining")) setTextColor(secondary)
+                })
+                top.addView(TextView(host).apply {
+                    text = if (product.isNull("remaining")) "" else if (product.optBoolean("stale")) "Last known" else product.optString("reset").replace("Resets in ", "Reset ")
+                    textSize = 12f; setTextColor(secondary); gravity = Gravity.END
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                card.addView(top)
+                card.addView(ProgressBar(host, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100; progress = product.optDouble("remaining", 0.0).toInt()
+                    progressTintList = android.content.res.ColorStateList.valueOf(if (!product.isNull("remaining") && progress < 20) android.graphics.Color.rgb(222, 150, 36) else secondary)
+                }, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(3); bottomMargin = dp(3) })
+                row.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply { if (j > i) leftMargin = dp(8) })
+            }
+            if (i + 1 == usage.length()) row.addView(View(host), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+            footer.addView(row)
+        }
+    }
+
     private fun renderGroups() {
         val groups = model.optJSONArray("groups") ?: JSONArray()
         for (i in 0 until groups.length()) {
@@ -526,6 +678,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private fun showActions() {
         val options = mutableListOf("New thread" to "new")
         if (meta.optBoolean("canPin")) options.add(if (meta.optBoolean("pinned")) "Unpin thread" to "unpin" else "Pin thread" to "pin")
+        options.add("Start call" to "call")
         listOf("canStop" to ("Stop" to "stop"), "canReview" to ("Review" to "review"), "canArchive" to ("Archive" to "archive"), "canDelete" to ("Delete" to "delete")).forEach { (flag, option) -> if (meta.optBoolean(flag)) options.add(option) }
         AlertDialog.Builder(host).setTitle(meta.optString("project", "Thread"))
             .setItems(options.map { it.first }.toTypedArray()) { _, index ->
@@ -638,6 +791,31 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         }
     }
     // Only the Rust plugin handle invokes these; no WebView command grants access.
+    private var preview: PreviewDialog? = null
+    @Command fun presentPreview(invoke: Invoke) {
+        val args = invoke.getArgs()
+        val url = args.optString("url"); val title = args.optString("title")
+        val uri = android.net.Uri.parse(url)
+        if (uri.scheme != "http" || uri.host !in listOf("127.0.0.1", "localhost")) { invoke.reject("Preview URL must be http on 127.0.0.1: $url"); return }
+        host.runOnUiThread {
+            try {
+                val open = preview
+                if (open != null && open.isShowing) { open.update(url, title); invoke.resolve(); return@runOnUiThread }
+                lateinit var dialog: PreviewDialog
+                dialog = PreviewDialog(host, url, title) {
+                    if (preview === dialog) preview = null
+                    trigger("previewDismissed", JSObject())
+                }
+                preview = dialog
+                dialog.show()
+                invoke.resolve()
+            } catch (e: Exception) { invoke.reject("Could not present preview: ${e.message}") }
+        }
+    }
+    @Command fun previewStatus(invoke: Invoke) {
+        val args = invoke.getArgs()
+        host.runOnUiThread { preview?.setStatus(args.optString("message"), args.optBoolean("error")); invoke.resolve() }
+    }
     @Command fun readCredential(invoke: Invoke) {
         try { invoke.resolve(JSObject().apply { put("value", store.read() ?: JSONObject.NULL) }) }
         catch (_: Exception) { invoke.reject("Cannot read Android pairing credentials") }

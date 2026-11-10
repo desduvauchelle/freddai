@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(
 import { VoiceSettings } from "./VoiceSettings";
 
 const model = (over: object) => ({ id: "m", name: "Base", description: "Fast", languageLabel: "Multilingual", sizeBytes: 574_000_000, recommended: false, installed: false, download: null, ...over });
-const status = (over: object = {}) => ({ enabled: false, activeModel: null, shortcut: "AltRight", language: "auto", ready: false, recording: false, models: [model({})], ...over });
+const status = (over: object = {}) => ({ enabled: false, activeModel: null, shortcut: "AltRight", language: "auto", removeFillerWords: true, ready: false, recording: false, models: [model({})], ...over });
 beforeEach(() => { invoke.mockReset(); vi.spyOn(console, "error").mockImplementation(() => {}); vi.spyOn(console, "info").mockImplementation(() => {}); });
 afterEach(cleanup);
 
@@ -20,7 +20,7 @@ it("disables the toggle with a hint until a model is installed", async () => {
   invoke.mockResolvedValue(status());
   render(<VoiceSettings native />);
   await screen.findByText("Base");
-  expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("switch", { name: "Enable voice dictation" }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.getByText("Download a model first")).toBeTruthy();
   expect(screen.getByText("574 MB", { exact: false })).toBeTruthy();
 });
@@ -53,4 +53,14 @@ it("shows invoke errors and download errors with Retry", async () => {
   expect(await screen.findByText("Download failed: checksum mismatch")).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.getByText("network down")).toBeTruthy());
+});
+
+it("defaults filler removal on and saves the opt-out", async () => {
+  invoke.mockImplementation(async (command: string) => status({ removeFillerWords: command !== "voice_update_settings" }));
+  render(<VoiceSettings native />);
+  await screen.findByText("Base");
+  expect(screen.getByRole("switch", { name: "Remove filler words" }).getAttribute("aria-checked")).toBe("true");
+  await userEvent.click(screen.getByRole("switch", { name: "Remove filler words" }));
+  expect(invoke).toHaveBeenCalledWith("voice_update_settings", { settings: { removeFillerWords: false } });
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Remove filler words" }).getAttribute("aria-checked")).toBe("false"));
 });

@@ -12,12 +12,13 @@ try {
  await page.getByRole('button',{name:/Send latency/}).click();
  await page.getByRole('textbox',{name:'Reply',exact:true}).fill('Immediate synthetic message');
  await page.getByRole('button',{name:/^(Send reply|Queue message)$/,exact:true}).click();
- await page.locator('article[data-role=user]').filter({hasText:'Immediate synthetic message'}).waitFor({timeout:700});
+ await page.getByRole('region',{name:'Message queue'}).getByText('Immediate synthetic message',{exact:true}).waitFor({timeout:700});
+ assert.equal(await page.locator('article[data-role=user]').count(),0,'busy message goes straight into queue');
  assert.equal(await page.getByRole('textbox',{name:'Reply',exact:true}).inputValue(),'','composer clears before server acknowledgement');
  await page.evaluate(()=>window.acknowledgeSend());
  await page.waitForTimeout(100);
  assert.equal(await page.getByRole('textbox',{name:'Reply',exact:true}).inputValue(),'');
- assert.equal(await page.locator('article[data-role=user]').count(),1,'acknowledged queue entry survives stale snapshots');
+ assert.equal(await page.getByRole('region',{name:'Message queue'}).getByRole('listitem').count(),1,'acknowledged queue entry survives stale snapshots');
  await page.evaluate(()=>window.publishSend());
  await refreshConnection(page);
  await page.waitForTimeout(100);
@@ -35,11 +36,13 @@ try {
   await page.getByRole('textbox',{name:'Reply',exact:true}).fill('');
   await page.waitForTimeout(100);
  }
- assert.equal(await page.locator('article[data-role=user]').count(),3,'identical queued prompts each retain a preview');
+ assert.equal(await page.locator('article[data-role=user]').count(),1,'queued prompts stay out of transcript');
+ assert.equal(await page.getByRole('region',{name:'Message queue'}).getByRole('listitem').count(),2,'identical queued prompts each retain a queue row');
  await page.evaluate(()=>window.publishSend());
  await refreshConnection(page);
  await page.waitForTimeout(100);
- assert.equal(await page.locator('article[data-role=user]').count(),3,'first identical prompt reconciles only one preview');
+ assert.equal(await page.locator('article[data-role=user]').count(),2,'first identical prompt reconciles only one queue row');
+ assert.equal(await page.getByRole('region',{name:'Message queue'}).getByRole('listitem').count(),1);
  await page.evaluate(()=>window.publishSend());
  await refreshConnection(page);
  await page.waitForTimeout(100);

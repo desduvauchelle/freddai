@@ -1,5 +1,9 @@
+import { dashboardAssistantFor, dashboardControlKey } from './native-dashboard';
+import { DashboardSelect } from "../desktop/DashboardSelect";
+import { dashboardProjectGroups } from './dashboard-projects';
 import { companionStatusRead } from "./companion";
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { OfficeOrder } from '../office/OfficeOrder';
 import { Office } from '../office/index';
 import { DaySummaries } from '../desktop/DaySummaries';
 import { AgentControls } from '../desktop/AgentControls';
@@ -9,14 +13,17 @@ import { CommanderCluster } from './commander/CommanderCluster';
 import { useCommanderData } from './commander/useCommanderData';
 import type { CompanionClient, CompanionProject, CompanionSnapshot } from './companion';
 import { Button } from '@freddai/ui/components/button';
-import { compareThreadRecency } from '../desktop/types';
+import { labelStatus } from '../desktop/ThreadStatus';
+import { compareThreadRecency, threadListStatus } from '../desktop/types';
 import { assistantLabel } from './native-home';
 import { companionThreadFaded, nativeRunState } from './native-threads';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@freddai/ui/components/sheet';
 
 type Props = {
+  sendingProjects?: string[];
   nativeCards?: boolean;
   nativeContent?: boolean;
+  onOfficeHeightChange?: (height: number) => void;
   onOfficeExpandedChange?: (expanded: boolean) => void;
   read?: Record<string, number>;
   client?: CompanionClient; onDictation?: (project: string, text: string, assistant?: string) => void;
@@ -32,36 +39,24 @@ type Props = {
 };
 
 function ProjectCard({ project, snapshot, now, onProject, ...props }: Props & { project: CompanionProject; now: number; onProject: () => void }) {
-  const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
-  const threads = snapshot.threads.filter(t => t.project === project.id);
-  const working = threads.filter(t => nativeRunState(t) === 'running').length;
-  const needs = threads.filter(t => nativeRunState(t) === 'waiting').length;
-  const done = threads.filter(t => t.status === 'done' && !t.pending && t.updated >= midnight.getTime()).length;
-  const failed = threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight.getTime()).length;
   return <article className="companion-project-card" aria-label={`Project ${project.name}`}>
     <button className="companion-project-open" onClick={onProject} aria-label={`Open project ${project.name}`}>
-      <span className="companion-state" style={{ background: project.color }} /><h3>{project.name}</h3>
-      <p>{working} working · {needs} need you · {done} done today · {failed} failed today</p>
+      <span className="companion-state" style={{ background: project.color }} /><h3 style={{ color: project.color }} aria-live="polite">{props.sendingProjects?.includes(project.id) ? 'Sending message…' : project.name}</h3>
     </button>
-    <ProjectActions {...props} project={project} snapshot={snapshot} />
+    <ProjectActions {...props} compact project={project} snapshot={snapshot} />
+    {snapshot.threads.filter(t => t.project === project.id && !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).slice(0, 3).map(thread =>
+      <button key={thread.id} className="companion-project-recent" onClick={() => props.onOpen(thread.id)}><span className="companion-project-title">{thread.title}</span><span className="companion-state" data-status={threadListStatus(thread, companionStatusRead(snapshot, props.read ?? {}))} role="img" aria-label={labelStatus(threadListStatus(thread, companionStatusRead(snapshot, props.read ?? {})))} /></button>)}
   </article>;
 }
 
 function ProjectActions({ project, connected, client, onNew, onDictation,
-  assistantSelections, controls, onSelectionChange }: Props & { project: CompanionProject }) {
-  const [localSelections, setLocalSelections] = useState<Record<string, AgentSelection>>({});
+  assistantSelections, controls, onSelectionChange, compact = false }: Props & { project: CompanionProject; compact?: boolean }) {
   const assistant = project.assistants?.find(a => a.id === assistantSelections?.[project.id])
     ?? project.assistants?.find(a => a.id === project.defaultAssistant) ?? project.assistants?.[0];
-  const provider = assistant?.provider ?? project.provider;
-  const controlKey = `new:${project.id}:${assistant?.id || ''}:${provider || ''}`;
-  const selection = controls?.[controlKey]?.selection ?? localSelections[controlKey] ?? defaultSelection;
-  const loadModels = useCallback(() => client!.models!({ project: project.id, assistant: assistant?.id }), [client, project.id, assistant?.id]);
   const disabled = !connected || !project.canStart || (!!project.assistants && !assistant);
   return <div className="companion-project-actions">
-    <Button disabled={disabled} onClick={() => onNew(project.id, assistant?.id)} aria-label={`New thread in ${project.name}`}>New thread</Button>
+    <Button variant={compact ? "ghost" : "default"} disabled={disabled} onClick={() => onNew(project.id, assistant?.id)} aria-label={`New thread in ${project.name}`}><span aria-hidden={compact || undefined}>{compact ? '+' : 'New thread'}</span></Button>
     <div className="companion-project-controls">
-      {provider && <AgentControls key={controlKey} native={!!client?.models} provider={provider} loadModels={client?.models ? loadModels : undefined} value={selection}
-        onChange={value => { setLocalSelections(old => ({ ...old, [controlKey]: value })); onSelectionChange?.(controlKey, value); }} disabled={disabled} context={`New threads in ${project.name}`} />}
       {client && onDictation && <DashboardMic client={client} project={project.name} disabled={disabled} onText={text => onDictation(project.id, text, assistant?.id)} />}
     </div>
   </div>;
@@ -81,41 +76,83 @@ function ProjectPanel(props: Props & { project: CompanionProject }) {
 /** Overview uses the same privacy-limited snapshot as the companion's thread menu. */
 export function CompanionDashboard(props: Props) {
   const { snapshot, connected, onOpen, client, now = Date.now() } = props;
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const card = root.current?.querySelector('.office-mini');
+    if (!props.nativeContent || !card || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      // A retained dashboard is hidden during the sheet; keep its last visible size.
+      const height = Math.ceil(card.getBoundingClientRect().height);
+      if (height > 0) props.onOfficeHeightChange?.(height);
+    });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [props.nativeContent, props.onOfficeHeightChange]);
   const [openProject, setOpenProject] = useState<string | null>(null);
   const [localGlobalAssistant, setLocalGlobalAssistant] = useState('');
   const globalAssistant = props.globalAssistant ?? localGlobalAssistant;
+  const [globalSelections, setGlobalSelections] = useState<Record<string, AgentSelection>>({});
   const assistants = [...new Map(snapshot.projects.flatMap(p => p.assistants ?? []).map(a => [a.id, a])).values()];
   const selections = Object.fromEntries(snapshot.projects.map(p => [p.id,
-    p.assistants?.find(a => a.id === globalAssistant)?.id ?? p.defaultAssistant ?? '']));
+    dashboardAssistantFor(p, globalAssistant)?.id ?? '']));
+  const controlProject = snapshot.projects.find(p => p.kind !== 'commander' && (!globalAssistant || p.assistants?.some(a => a.id === globalAssistant)));
+  const controlAssistant = controlProject ? dashboardAssistantFor(controlProject, globalAssistant) : undefined;
+  const controlProvider = controlAssistant?.provider ?? controlProject?.provider;
+  const controlKey = controlProject ? dashboardControlKey(controlProject, globalAssistant) : '';
+  const globalSelection = globalSelections[globalAssistant] ?? props.controls?.[controlKey]?.selection ?? defaultSelection;
+  const loadDashboardModels = useCallback(() => client!.models!({ project: controlProject!.id, assistant: controlAssistant?.id }), [client, controlProject?.id, controlAssistant?.id]);
   const activeProject = snapshot.projects.find(p => p.id === openProject);
   const attention = snapshot.threads.filter(t => !!t.pending).sort(compareThreadRecency);
   const commanderProject = snapshot.projects.find(p => p.kind === 'commander');
   const showCommander = !props.nativeCards && !!commanderProject && !!client?.commander && !!props.onOpenCommander && !!props.onSendCommander;
   const commander = useCommanderData(client, showCommander && connected);
-  return <div className="companion-dashboard" data-native-content={props.nativeContent || undefined}>
-    <Office variant="mini" onExpand={() => props.onOfficeExpandedChange?.(true)} onClose={() => props.onOfficeExpandedChange?.(false)} now={now} onOpenThread={onOpen}
+  return <div ref={root} className="companion-dashboard" data-native-content={props.nativeContent || undefined}>
+    {showCommander && <CommanderCluster client={client!} name={commanderProject!.name} status={commander.state?.status ?? null} error={commander.error} connected={connected}
+      onOpen={props.onOpenCommander!} onSend={props.onSendCommander!} />}
+    <Office proposals={showCommander ? commander.proposals : undefined} onProposalRespond={showCommander && client?.commander ? async (id, approve) => { await client.commander!.respond({ id, approve }); await commander.refresh(); } : undefined} onOpenCommander={props.onOpenCommander} renderTaskControls={client ? (projectId, onListening) => {
+      const project = snapshot.projects.find(p => p.id === projectId)!;
+      const assistant = project.assistants?.find(a => a.id === selections[projectId]) ?? project.assistants?.[0];
+      const controlKey = `new:${projectId}:${assistant?.id || ''}:${assistant?.provider || project.provider || ''}`;
+      const selection = props.controls?.[controlKey]?.selection ?? defaultSelection;
+      return <OfficeOrder key={projectId} disabled={!connected || !project.canStart || (!!project.assistants && !assistant)}
+        onSend={(prompt, requestId) => client.start({ project: projectId, assistant: assistant?.id, prompt, requestId,
+          options: { model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, permission_mode: 'bypass', update_agent_controls: true } })}
+        renderMic={(onText, disabled) => <DashboardMic client={client} project={project.name} disabled={disabled} onText={onText} onListening={onListening} />} />;
+    } : undefined} variant="mini" onExpand={() => props.onOfficeExpandedChange?.(true)} onClose={() => props.onOfficeExpandedChange?.(false)} now={now} onOpenThread={onOpen}
       projects={snapshot.projects.map(p => ({ ...p, path: '', policy: 'inherit', account: null, last: null }))}
       sessions={snapshot.threads.map(t => ({ ...t, account: '', provider_id: null, pending: t.pending ?? null }))}
       queuedThreadIds={new Set(snapshot.threads.filter(t => t.queued > 0).map(t => t.id))} />
-    {showCommander && <CommanderCluster client={client!} name={commanderProject!.name} status={commander.state?.status ?? null} error={commander.error} connected={connected}
-      onOpen={props.onOpenCommander!} onSend={props.onSendCommander!} />}
     {!props.nativeCards && <>
-    <div className="companion-dashboard-heading"><h2>Your projects</h2>
-      {!!assistants.length && <label className="companion-project-agent">Coding agent
-        <select aria-label="Coding agent" value={globalAssistant} disabled={!connected} onChange={e => {
-          const value = e.target.value; setLocalGlobalAssistant(value); props.onGlobalAssistantChange?.(value);
+    <div className="dashboard-project-toolbar">
+    <div className="companion-dashboard-heading"><h2>Your projects</h2></div>
+    <div className="dashboard-launch-controls" role="group" aria-label="Dashboard task defaults">
+      {!!assistants.length && <DashboardSelect label="Coding agent" displayValue={controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider'} value={globalAssistant} disabled={!connected}
+        options={[{ value: '', label: 'Project defaults' }, ...assistants.map(a => ({ value: a.id, label: assistantLabel(a) }))]}
+        onChange={value => {
+          setLocalGlobalAssistant(value); props.onGlobalAssistantChange?.(value);
           for (const project of snapshot.projects) {
             const assistant = project.assistants?.find(a => a.id === value);
             props.onAssistantChange?.(project.id, assistant?.id ?? project.defaultAssistant ?? project.assistants?.[0]?.id ?? '');
           }
-        }}><option value="">Project defaults</option>{assistants.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}</select>
-      </label>}
+        }} />}
+      {controlProvider && <AgentControls inline provider={controlProvider} native={!!client?.models} loadModels={client?.models ? loadDashboardModels : undefined}
+        value={globalSelection} disabled={!connected} context="all new dashboard tasks" onChange={selection => {
+          setGlobalSelections(old => ({ ...old, [globalAssistant]: selection }));
+          for (const project of snapshot.projects) {
+            const assistant = project.assistants?.find(a => a.id === selections[project.id]);
+            if ((assistant?.provider ?? project.provider) === controlProvider) props.onSelectionChange?.(`new:${project.id}:${assistant?.id || ''}:${controlProvider}`, selection);
+          }
+        }} />}
+    </div>
     </div>
     {!connected && <p>Connect to your Mac to refresh project activity.</p>}
     {!!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
       {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{snapshot.projects.find(p => p.id === t.project)?.name} · Review decision</small></span></button>)}
     </section>}
-    <div className="companion-project-grid">{snapshot.projects.filter(p => p.kind !== 'commander').map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => setOpenProject(project.id)} />)}</div>
+    {dashboardProjectGroups(snapshot).map(group => <section key={group.id} aria-label={group.name ?? undefined}>
+      {group.name && <h3 className="companion-workspace-heading">{group.name}</h3>}
+      <div className="companion-project-grid">{group.projects.map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => setOpenProject(project.id)} />)}</div>
+    </section>)}
     <Sheet open={!!activeProject} onOpenChange={open => { if (!open) setOpenProject(null); }}>
       <SheetContent className="companion-project-panel">
         <SheetHeader><SheetTitle>{activeProject?.name}</SheetTitle><SheetDescription>Project threads and new tasks</SheetDescription></SheetHeader>

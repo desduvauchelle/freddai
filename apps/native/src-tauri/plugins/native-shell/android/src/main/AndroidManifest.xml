@@ -2,5 +2,5 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <queries><intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent></queries>
-    <application android:allowBackup="false" />
+    <application android:allowBackup="false" android:networkSecurityConfig="@xml/freddai_preview_network_security_config" />
 </manifest>

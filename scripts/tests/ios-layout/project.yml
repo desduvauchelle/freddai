@@ -16,6 +16,7 @@ targets:
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/MascotImage.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/ThreadDrawerViewController.swift
       - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/DrawerContainerViewController.swift
+      - path: ${FREDDAI_REPO_ROOT}/apps/native/src-tauri/plugins/native-shell/ios/Sources/PreviewViewController.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.freddai.layout-tests

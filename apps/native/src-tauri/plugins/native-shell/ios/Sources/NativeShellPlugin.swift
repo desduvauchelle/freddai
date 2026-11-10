@@ -8,6 +8,7 @@ struct SetModeArgs: Decodable {
   var title: String?
   var placeholder: String?
   var openDrawer: Bool?
+  var threadSheet: Bool?
 }
 
 struct SetDashboardArgs: Decodable { let model: DashboardModel }
@@ -65,16 +66,96 @@ struct AppendComposerTextArgs: Decodable {
   var submit: Bool?
 }
 
-struct VoiceRecordedPayload: Encodable { let path: String; let durationMs: Int }
+struct VoiceRecordedPayload: Encodable { let path: String; let durationMs: Int; let text: String; let files: [AttachedFile] }
 struct VoiceErrorPayload: Encodable { let message: String }
 
 struct EmptyPayload: Encodable {}
 
-class NativeShellPlugin: Plugin {
+struct PresentPreviewArgs: Decodable { let url: String; let title: String }
+struct PreviewStatusArgs: Decodable { let message: String; let error: Bool }
+
+struct CallControlArgs: Decodable { let action: String; var text: String? }
+
+class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
+  private weak var sheetRoot: UIViewController?
+  private var dashboardBackdrop: UIView?
+  private var threadSheetOpen = false
+  private var sheetDestinationReady = false
+  private weak var shellWebView: WKWebView?
+
+  private func attachShell(_ container: UIViewController, to root: UIViewController) {
+    root.addChild(container)
+    container.view.translatesAutoresizingMaskIntoConstraints = true
+    container.view.frame = root.view.bounds
+    container.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    root.view.addSubview(container.view)
+    container.didMove(toParent: root)
+  }
+
+  private func openThreadSheet() {
+    guard !threadSheetOpen, let container = container, let root = container.parent, root.presentedViewController == nil else { return }
+    sheetDestinationReady = false
+    sheetRoot = root
+    dashboardBackdrop = root.view.snapshotView(afterScreenUpdates: false)
+    dashboardBackdrop?.frame = root.view.bounds
+    dashboardBackdrop?.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    if let backdrop = dashboardBackdrop { root.view.addSubview(backdrop) }
+    container.willMove(toParent: nil)
+    container.view.removeFromSuperview()
+    container.removeFromParent()
+    container.modalPresentationStyle = .pageSheet
+    if let sheet = container.sheetPresentationController {
+      sheet.detents = [.custom(identifier: .init("thread")) { $0.maximumDetentValue * 0.9 }]
+      sheet.prefersEdgeAttachedInCompactHeight = true
+      sheet.prefersGrabberVisible = true
+      sheet.preferredCornerRadius = 24
+      sheet.delegate = self
+    }
+    threadSheetOpen = true
+    root.present(container, animated: true)
+  }
+
+  private func restoreShell() {
+    guard threadSheetOpen, let container = container, let root = sheetRoot else { return }
+    threadSheetOpen = false
+    attachShell(container, to: root)
+    root.view.layoutIfNeeded()
+    if let backdrop = dashboardBackdrop { root.view.bringSubviewToFront(backdrop) }
+    revealSheetDestination()
+  }
+
+  private func revealSheetDestination() {
+    guard !threadSheetOpen, sheetDestinationReady, let backdrop = dashboardBackdrop else { return }
+    // Wait for WebKit's restored dashboard frame before uncovering the native shell.
+    shellWebView?.takeSnapshot(with: nil) { [weak self, weak backdrop] _, _ in
+      guard let self, let backdrop, !self.threadSheetOpen, self.dashboardBackdrop === backdrop else { return }
+      backdrop.removeFromSuperview()
+      self.dashboardBackdrop = nil
+    }
+  }
+
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+    restoreShell()
+    try? trigger("navBack", data: ProjectPayload(project: ""))
+  }
+
+  private let voiceCall = CompanionVoiceCall()
+  @objc func callControl(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(CallControlArgs.self)
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { invoke.reject("Companion unavailable"); return }
+      self.voiceCall.emit = { [weak self] event in try? self?.trigger("callEvent", data: event) }
+      self.voiceCall.control(args.action, text: args.text) { error in
+        if let error = error { invoke.reject(error) } else { invoke.resolve() }
+      }
+    }
+  }
+
   private var shell: ShellViewController?
   private var container: DrawerContainerViewController?
   private var drawer: ThreadDrawerViewController?
   private var attempts = 0
+  private var preview: PreviewViewController?
 
   @objc public override func load(webview: WKWebView) {
     DispatchQueue.main.async { [weak self] in self?.install(webview) }
@@ -90,6 +171,7 @@ class NativeShellPlugin: Plugin {
       }
       return
     }
+    shellWebView = webview
     let shell = ShellViewController(webView: webview)
     shell.onDashboardAction = { [weak self] action in
       try? self?.trigger("dashboardAction", data: action)
@@ -97,8 +179,8 @@ class NativeShellPlugin: Plugin {
     shell.onSend = { [weak self] text, files in
       try? self?.trigger("composerSend", data: ComposerSendPayload(text: text, files: files))
     }
-    shell.onVoiceRecorded = { [weak self] path, durationMs in
-      try? self?.trigger("voiceRecorded", data: VoiceRecordedPayload(path: path, durationMs: durationMs))
+    shell.onVoiceRecorded = { [weak self] path, durationMs, text, files in
+      try? self?.trigger("voiceRecorded", data: VoiceRecordedPayload(path: path, durationMs: durationMs, text: text, files: files))
     }
     shell.onVoiceError = { [weak self] message in
       try? self?.trigger("voiceError", data: VoiceErrorPayload(message: message))
@@ -135,6 +217,11 @@ class NativeShellPlugin: Plugin {
       drawer?.dismissKeyboard()
       try? self?.trigger("dashboard", data: ProjectPayload(project: ""))
       container?.setOpen(false, animated: true)
+    }
+    drawer.onSettings = { [weak self, weak container, weak drawer] in
+      drawer?.dismissKeyboard()
+      container?.setOpen(false, animated: true)
+      try? self?.trigger("threadAction", data: ThreadActionPayload(action: "organization"))
     }
     drawer.onSelectThread = { [weak self, weak container, weak drawer] id in
       drawer?.dismissKeyboard()
@@ -185,7 +272,7 @@ class NativeShellPlugin: Plugin {
 
   @objc func ping(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
-      invoke.resolve(["installed": self?.shell != nil, "nativeDashboardContent": true])
+      invoke.resolve(["installed": self?.shell != nil, "nativeDashboardContent": true, "nativeVoiceCall": true])
     }
   }
 
@@ -193,7 +280,15 @@ class NativeShellPlugin: Plugin {
     let args = try invoke.parseArgs(SetModeArgs.self)
     DispatchQueue.main.async { [weak self] in
       let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "dashboard" ? .dashboard : .other
+      if args.threadSheet == true && (mode == .conversation || mode == .commander) { self?.openThreadSheet() }
+      else if self?.threadSheetOpen == true, let container = self?.container {
+        container.dismiss(animated: true) { [weak self] in self?.restoreShell() }
+      }
       self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder)
+      if args.threadSheet != true {
+        self?.sheetDestinationReady = true
+        self?.revealSheetDestination()
+      }
       self?.container?.drawerEnabled = mode != .other
       if mode != .other, args.openDrawer == true {
         self?.drawer?.refreshTimes()
@@ -266,6 +361,39 @@ class NativeShellPlugin: Plugin {
   }
 
   /// Resolves `{picked, id}` after the user chooses (or dismisses) the action sheet.
+  @objc func presentPreview(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PresentPreviewArgs.self)
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { invoke.reject("The native shell is not ready."); return }
+      guard let url = URL(string: args.url), let host = url.host?.lowercased(), url.scheme?.lowercased() == "http", host == "127.0.0.1" || host == "localhost" else {
+        invoke.reject("Preview URL must be http on 127.0.0.1: \(args.url)")
+        return
+      }
+      if let preview = self.preview, preview.presentingViewController != nil {
+        preview.update(url: url, title: args.title)
+        invoke.resolve()
+        return
+      }
+      guard var top = self.manager.viewController else { invoke.reject("The native shell is not ready."); return }
+      while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
+      let preview = PreviewViewController(url: url, title: args.title)
+      preview.onDismissed = { [weak self, weak preview] in
+        if self?.preview === preview { self?.preview = nil }
+        try? self?.trigger("previewDismissed", data: [String: String]())
+      }
+      self.preview = preview
+      top.present(preview, animated: true) { invoke.resolve() }
+    }
+  }
+
+  @objc func previewStatus(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PreviewStatusArgs.self)
+    DispatchQueue.main.async { [weak self] in
+      self?.preview?.setStatus(message: args.message, error: args.error)
+      invoke.resolve()
+    }
+  }
+
   @objc func pickOption(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(PickOptionArgs.self)
     DispatchQueue.main.async { [weak self] in

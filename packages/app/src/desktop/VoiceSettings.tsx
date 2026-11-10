@@ -28,6 +28,13 @@ export function VoiceSettings({ native }: { native: boolean }) {
       </FieldContent>
       <Switch id="voice-enabled" checked={!!status?.enabled} disabled={!status || (!anyInstalled && !status.enabled)} onCheckedChange={next => void voice.updateSettings({ enabled: next })} />
     </Field>
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldLabel htmlFor="voice-remove-fillers">Remove filler words</FieldLabel>
+        <FieldDescription>Remove hesitation sounds like “um”, “uh”, and “erm” from Mac and phone dictation. On by default; turn off to keep the original transcript.</FieldDescription>
+      </FieldContent>
+      <Switch id="voice-remove-fillers" checked={status?.removeFillerWords ?? true} disabled={!status} onCheckedChange={next => void voice.updateSettings({ removeFillerWords: next })} />
+    </Field>
     <div>
       <h3>Speech models</h3>
       {!status && !statusError && <p className="capture-help">Loading…</p>}

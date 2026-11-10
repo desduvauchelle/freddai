@@ -19,6 +19,6 @@ test('thread list and every outer detail branch keep stable identities when swit
 });
 
 test('desktop restores a local layout and saves only explicit user resizing', () => {
-  assert.match(source, /useDefaultLayout\(\{\s*id: "freddai.thread-panes",\s*onlySaveAfterUserInteractions: true/);
+  assert.match(source, /useDefaultLayout\(\{\s*id: windowThread \? "freddai.thread-window-panes" : "freddai.thread-panes",\s*onlySaveAfterUserInteractions: true/);
   assert.match(source, /ResizablePanelGroup orientation="horizontal" defaultLayout=\{threadPaneLayout.defaultLayout\} onLayoutChanged=\{threadPaneLayout.onLayoutChanged\}/);
 });

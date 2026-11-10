@@ -24,6 +24,16 @@ pub fn is_recording() -> bool {
     SESSION.lock().unwrap_or_else(|p| p.into_inner()).is_some()
 }
 
+/// RMS of the most recent 50 ms, without copying or exposing recorded audio.
+pub fn level() -> f32 {
+    let guard = SESSION.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(session) = guard.as_ref() else { return 0.0; };
+    let samples = session.samples.lock().unwrap_or_else(|p| p.into_inner());
+    let count = (session.rate as usize * session.channels as usize / 20).min(samples.len());
+    if count == 0 { return 0.0; }
+    (samples[samples.len() - count..].iter().map(|s| s * s).sum::<f32>() / count as f32).sqrt().clamp(0.0, 1.0)
+}
+
 fn map_err(context: &str, e: impl std::fmt::Display) -> String {
     let text = e.to_string();
     let lower = text.to_lowercase();

@@ -239,3 +239,14 @@ it('keeps Commander and its delegated work out of grouped, recent and flat navig
     if (grouped) expect(model.groups.find(g => g.kind === 'commander')?.threads).toEqual([]);
   }
 });
+
+it('preserves scheduled markers in project and recent navigation without marking ordinary threads', () => {
+  const model = buildThreadsModel({ ...base, data: snapshot([
+    thread('scheduled', 'a', 'done', 20, { scheduled: true }),
+    thread('ordinary', 'a', 'done', 19),
+  ]) });
+  for (const rows of [model.groups[0].threads, model.recent.threads, model.recentSection.threads]) {
+    expect(rows.find(row => row.id === 'scheduled')?.scheduled).toBe(true);
+    expect(rows.find(row => row.id === 'ordinary')?.scheduled).toBe(false);
+  }
+});

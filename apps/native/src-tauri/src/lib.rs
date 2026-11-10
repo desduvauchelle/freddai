@@ -4,13 +4,18 @@ mod browser;
 mod local_preview;
 #[cfg(target_os = "macos")]
 mod routine_notifications;
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos", test))]
 mod companion_operations;
 #[cfg(target_os = "macos")]
 mod writing_tools;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod window_state;
 mod companion_crypto;
+// Shared with the future phone side, so compiled everywhere.
+#[allow(dead_code)]
+mod preview_tunnel;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod preview_host;
 mod companion_enrollment;
 mod wake;
 #[cfg(target_os = "macos")]
@@ -42,15 +47,23 @@ mod companion_server;
 mod voice;
 #[cfg_attr(not(any(target_os = "ios", target_os = "android")), allow(dead_code))]
 mod client_diag;
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
 mod mobile;
+#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
+mod preview_device;
+#[cfg(target_os = "macos")]
+mod satellite;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // generate_context! must be expanded exactly once per crate (it embeds the Info.plist symbol).
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "macos")]
+    if satellite::enabled() { mobile::run(context); return; }
     #[cfg(any(target_os = "ios", target_os = "android"))]
-    mobile::run();
+    mobile::run(context);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    desktop::run();
+    desktop::run(context);
 }
 
 /// Starts the keep-awake monitor; called by the long-lived `--host` process.

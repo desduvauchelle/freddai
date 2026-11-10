@@ -16,6 +16,7 @@ vi.mock("../voice", () => ({ useVoice: () => ({ status: { ready: true }, phase: 
 
 import { CommanderCluster } from "./CommanderCluster";
 import { CommanderView } from "./CommanderView";
+import { CommanderTrailingContext } from "./TrailingContext";
 import { ApprovalCard } from "./ApprovalCard";
 import { CommanderTools, groupTodos } from "./CommanderTools";
 import { ProjectObjective } from "./ProjectObjective";
@@ -152,4 +153,20 @@ it("objective save calls project_objective_set and reports failure", async () =>
   fireEvent.change(screen.getByLabelText("Objective"), { target: { value: "x" } });
   fireEvent.click(screen.getByRole("button", { name: "Save objective" }));
   expect((await screen.findByRole("alert")).textContent).toContain("readonly");
+});
+
+it("approved JSON results read as a human line, never raw JSON", async () => {
+  api.proposalRespond.mockResolvedValueOnce(proposal({ status: "approved", result: '{"thread":"cb3cb075-309e-4054-8c4a-08463112d8dc"}', thread: "cb3cb075" }));
+  render(<ApprovalCard proposal={proposal()} onOpenThread={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+  expect((await screen.findByRole("status")).textContent).toBe("Started");
+  expect(screen.queryByText(/cb3cb075-309e/)).toBeNull();
+});
+
+it("view hands proposal cards to the conversation to render inline after the messages", async () => {
+  api.state.mockResolvedValue({ ...state(), thread_id: "t1" });
+  api.proposals.mockResolvedValue([proposal()]);
+  render(<CommanderView projects={projects} renderConversation={() => <div data-testid="conv"><CommanderTrailingContext.Consumer>{t => t}</CommanderTrailingContext.Consumer></div>} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onCreateThread={vi.fn(async () => {})} />);
+  const card = await screen.findByRole("article", { name: "Proposal: Start the pricing page" });
+  expect(within(screen.getByTestId("conv")).getByRole("article", { name: "Proposal: Start the pricing page" })).toBe(card);
 });

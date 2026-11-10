@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { ArrowLeft, Bot, ChartNoAxesCombined, FolderGit2, Download, Keyboard, ListFilter, CalendarClock, Power, Palette, Smartphone, Mic, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Bot, ChartNoAxesCombined, FolderGit2, Download, Keyboard, ListFilter, CalendarClock, Power, Palette, Smartphone, Mic, UserRound, SlidersHorizontal, Link2 } from "lucide-react";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@freddai/ui/components/breadcrumb";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
 import { Separator } from "@freddai/ui/components/separator";
@@ -12,12 +12,14 @@ const sections = [
   { id: "usage", label: "Accounts & usage", icon: ChartNoAxesCombined },
   { id: "projects", label: "Projects", icon: FolderGit2 },
   { id: "import", label: "Import sessions", icon: Download },
-  { id: "companion", label: "Phone pairing", icon: Smartphone },
+  { id: "companion", label: "Devices & satellite", icon: Smartphone },
   { id: "voice", label: "Voice", icon: Mic },
   { id: "agentconfig", label: "Agent config", icon: SlidersHorizontal },
+  { id: "commander", label: "Commander", icon: UserRound },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "threads", label: "Thread display", icon: ListFilter },
   { id: "schedules", label: "Schedules", icon: CalendarClock },
+  { id: "google", label: "Connected accounts", icon: Link2 },
   { id: "background", label: "Background work", icon: Power },
   { id: "help", label: "Keyboard shortcuts", icon: Keyboard },
 ] as const;

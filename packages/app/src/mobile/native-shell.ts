@@ -9,6 +9,8 @@ import type { NativeThreadsModel } from './native-threads';
 const PLUGIN = 'native-shell';
 let available = false;
 let dashboardContent = false;
+let nativeVoiceCall = false;
+export const hasNativeVoiceCall = () => nativeVoiceCall;
 export function hasNativeDashboardContent(): boolean { return dashboardContent; }
 let probe: Promise<boolean> | null = null;
 
@@ -26,8 +28,8 @@ export function probeNativeShell(): Promise<boolean> {
     try {
       // The native plugin may still be waiting for Tauri's root controller to attach.
       for (let attempt = 0; attempt < 50; attempt++) {
-        const result = await invoke<{ installed?: boolean; nativeDashboardContent?: boolean }>(`plugin:${PLUGIN}|ping`);
-        if (result?.installed) { dashboardContent = !!result.nativeDashboardContent; return (available = true); }
+        const result = await invoke<{ installed?: boolean; nativeDashboardContent?: boolean; nativeVoiceCall?: boolean }>(`plugin:${PLUGIN}|ping`);
+        if (result?.installed) { dashboardContent = !!result.nativeDashboardContent; nativeVoiceCall = !!result.nativeVoiceCall; return (available = true); }
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     } catch { /* Desktop builds have no native-shell plugin. */ }
@@ -48,9 +50,9 @@ export function useNativeShell(): boolean {
 
 export type NativeMode = 'conversation' | 'commander' | 'new' | 'dashboard' | 'other';
 /** 'conversation', 'commander' and 'new' show the native bar and drawer ('commander' is a conversation whose web header draws under a transparent bar); 'other' (pairing, loading) shows neither. */
-export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean } = {}): Promise<void> {
+export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean; threadSheet?: boolean } = {}): Promise<void> {
   if (!available) return Promise.resolve();
-  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null });
+  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null, threadSheet: options.threadSheet ?? false });
 }
 
 /** Pushes the thread list model to the native drawer. Callers should wrap this in `createChangeSender`. */
@@ -116,7 +118,11 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 /** Subscribes to native composer sends (text plus attachment file paths). Resolves to an unsubscribe function. */
 export const onComposerSend = (handler: (text: string, files: NativeFile[]) => void) => listen<{ text: string; files?: NativeFile[] }>('composerSend', payload => handler(payload.text, Array.isArray(payload.files) ? payload.files : []));
 /** Subscribes to finished dictation recordings (a tmp file path and its length). */
-export const onVoiceRecorded = (handler: (path: string, durationMs: number) => void) => listen<{ path: string; durationMs?: number }>('voiceRecorded', payload => { if (typeof payload?.path === 'string') handler(payload.path, Number(payload.durationMs) || 0); });
+export type RecordedDraft = { text: string; files: NativeFile[] };
+export const onVoiceRecorded = (handler: (path: string, durationMs: number, draft?: RecordedDraft) => void) => listen<{ path: string; durationMs?: number; text?: string; files?: NativeFile[] }>('voiceRecorded', payload => {
+  if (typeof payload?.path === 'string') handler(payload.path, Number(payload.durationMs) || 0,
+    typeof payload.text === 'string' ? { text: payload.text, files: Array.isArray(payload.files) ? payload.files : [] } : undefined);
+});
 /** Subscribes to native dictation errors such as denied microphone access. */
 export const onVoiceError = (handler: (message: string) => void) => listen<{ message?: string }>('voiceError', payload => handler(typeof payload?.message === 'string' && payload.message ? payload.message : 'Dictation failed.'));
 /** Subscribes to the native navigation bar back button. Resolves to an unsubscribe function. */

@@ -37,8 +37,12 @@ pub mod import;
 mod computer_use;
 mod agent_mcp;
 pub mod mcp;
+pub mod preview_grants;
 pub mod commander;
+pub mod commander_autonomy;
+pub mod commander_profile;
 
+pub mod google;
 pub mod platform;
 #[cfg(windows)]
 pub mod windows_process;

@@ -14,24 +14,32 @@ final class ComposerView: UIView, UITextViewDelegate {
   private let sendButton = UIButton(type: .system)
   private var hasModel = false
   private var hasAccess = false
-  private let modelButton = UIButton(type: .system)
-  private let accessButton = UIButton(type: .system)
+  private let modelButton = ComposerIconButton(type: .system)
+  private let accessButton = ComposerIconButton(type: .system)
   var onSetting: ((String) -> Void)?
-  private let attachButton = UIButton(type: .system)
+  private let attachButton = ComposerIconButton(type: .system)
+  private let controlRow = UILayoutGuide()
   private let picker = AttachmentPicker()
   private let micButton = UIButton(type: .system)
   private let voiceStatusLabel = RecordingStatusLabel()
   private let recordingSendCue = UIButton(type: .system)
+  private var followLifted: [UIView] = []
+  private var fingerInWindow: CGPoint?
   private let recordingCancelButton = UIButton(type: .system)
   private var micDownAt: TimeInterval = 0
   private var recordingPresented = false
   private let voiceSpinner = UIActivityIndicatorView(style: .medium)
+  private let transcriptionBadge = UIView()
+  private let transcriptionText = UILabel()
+  private var transcriptionPresented = false
   private let recorder = VoiceRecorder()
   private let recordingFeedback = UIImpactFeedbackGenerator(style: .medium)
   private var voiceEnabled = false
   private var voiceState = "idle"
   private var micPressing = false
   private var micOrigin = CGPoint.zero
+  private var cancelArmed = false
+  private var cancelProgress: CGFloat = 0
   private var sendArmed = false
   private var sendProgress: CGFloat = 0
   private var permissionGeneration = 0
@@ -43,7 +51,7 @@ final class ComposerView: UIView, UITextViewDelegate {
 
   weak var presenter: UIViewController?
   var onSend: ((String, [AttachedFile]) -> Void)?
-  var onVoiceRecorded: ((String, Int) -> Void)?
+  var onVoiceRecorded: ((String, Int, String, [AttachedFile]) -> Void)?
   var onVoiceError: ((String) -> Void)?
 
   var placeholder: String {
@@ -63,9 +71,9 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     field.translatesAutoresizingMaskIntoConstraints = false
     field.backgroundColor = surface
-    field.layer.borderWidth = 1
+    field.layer.borderWidth = 0.5
     field.layer.borderColor = border.resolvedColor(with: traitCollection).cgColor
-    field.layer.cornerRadius = 24
+    field.layer.cornerRadius = 22
     field.layer.cornerCurve = .continuous
     field.clipsToBounds = true
     addSubview(field)
@@ -86,7 +94,8 @@ final class ComposerView: UIView, UITextViewDelegate {
     textView.textColor = .label
     textView.adjustsFontForContentSizeCategory = true
     textView.backgroundColor = .clear
-    textView.textContainerInset = UIEdgeInsets(top: 16, left: 11, bottom: 8, right: 11)
+    textView.textContainerInset = UIEdgeInsets(top: 14, left: 16, bottom: 8, right: 16)
+    textView.textContainer.lineFragmentPadding = 0
     textView.isScrollEnabled = false
     textView.returnKeyType = .default
     textView.delegate = self
@@ -102,8 +111,8 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     var plus = UIButton.Configuration.plain()
     plus.image = UIImage(systemName: "plus")
-    plus.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20)
-    plus.baseForegroundColor = .label
+    plus.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+    plus.baseForegroundColor = .secondaryLabel
     plus.contentInsets = .zero
     attachButton.configuration = plus
     attachButton.translatesAutoresizingMaskIntoConstraints = false
@@ -116,7 +125,7 @@ final class ComposerView: UIView, UITextViewDelegate {
     for (button, symbol, action) in [(modelButton, "cpu", "model"), (accessButton, "checkmark.shield", "permissions")] {
       var setting = UIButton.Configuration.plain()
       setting.image = UIImage(systemName: symbol)
-      setting.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18)
+      setting.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
       setting.baseForegroundColor = .secondaryLabel
       setting.contentInsets = .zero
       button.configuration = setting
@@ -128,7 +137,8 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     var config = UIButton.Configuration.plain()
     config.image = UIImage(systemName: "arrow.up")
-    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 20)
+    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+    config.baseForegroundColor = .systemBackground
     config.contentInsets = .zero
     sendButton.configuration = config
     sendButton.translatesAutoresizingMaskIntoConstraints = false
@@ -138,15 +148,16 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     var mic = UIButton.Configuration.plain()
     mic.image = UIImage(systemName: "mic.fill")
-    mic.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18)
-    mic.baseForegroundColor = .secondaryLabel
+    mic.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+    mic.baseForegroundColor = .white
     mic.contentInsets = .zero
     micButton.configuration = mic
     micButton.translatesAutoresizingMaskIntoConstraints = false
     micButton.accessibilityLabel = "Dictate"
     micButton.accessibilityHint = "Hold and release to send. Tap to record until Send or Cancel."
     micButton.isHidden = true
-    micButton.layer.cornerRadius = 18
+    micButton.backgroundColor = tintColor
+    micButton.layer.cornerRadius = 17
     let hold = UILongPressGestureRecognizer(target: self, action: #selector(micHold(_:)))
     hold.minimumPressDuration = 0
     hold.allowableMovement = .greatestFiniteMagnitude
@@ -201,7 +212,26 @@ final class ComposerView: UIView, UITextViewDelegate {
     ])
     voiceSpinner.translatesAutoresizingMaskIntoConstraints = false
     voiceSpinner.hidesWhenStopped = true
-    field.addSubview(voiceSpinner)
+    transcriptionBadge.translatesAutoresizingMaskIntoConstraints = false
+    transcriptionBadge.accessibilityIdentifier = "transcription-badge"
+    transcriptionBadge.isAccessibilityElement = true
+    transcriptionBadge.accessibilityLabel = "Transcribing"
+    transcriptionBadge.backgroundColor = .secondarySystemGroupedBackground
+    transcriptionBadge.layer.cornerRadius = 22
+    transcriptionBadge.isHidden = true
+    transcriptionBadge.isUserInteractionEnabled = false
+    transcriptionText.translatesAutoresizingMaskIntoConstraints = false
+    transcriptionText.text = "Transcribing…"
+    transcriptionText.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .monospacedDigitSystemFont(ofSize: 14, weight: .medium))
+    transcriptionText.adjustsFontForContentSizeCategory = true
+    transcriptionText.textColor = RecordingStatusLabel.recordingGreen
+    transcriptionText.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    transcriptionText.adjustsFontSizeToFitWidth = true
+    transcriptionText.minimumScaleFactor = 0.85
+    voiceSpinner.color = RecordingStatusLabel.recordingGreen
+    transcriptionBadge.addSubview(voiceSpinner)
+    transcriptionBadge.addSubview(transcriptionText)
+    field.insertSubview(transcriptionBadge, belowSubview: micButton)
     recorder.onTick = { [weak self] seconds in self?.showElapsed(seconds) }
     recorder.onLimit = { [weak self] in self?.finishRecording() }
 
@@ -209,27 +239,35 @@ final class ComposerView: UIView, UITextViewDelegate {
     picker.onFiles = { [weak self] files in self?.add(files) }
     picker.onError = { [weak self] message in self?.alert(title: "Couldn’t attach", message: message) }
 
-    heightConstraint = textView.heightAnchor.constraint(equalToConstant: 36)
+    field.addLayoutGuide(controlRow)
+    heightConstraint = textView.heightAnchor.constraint(equalToConstant: 44)
     chipsHeight = chipsScroll.heightAnchor.constraint(equalToConstant: 0)
     NSLayoutConstraint.activate([
       field.topAnchor.constraint(equalTo: topAnchor, constant: 8),
       field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
       field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
-      attachButton.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 8),
-      attachButton.topAnchor.constraint(equalTo: textView.bottomAnchor, constant: 3),
-      attachButton.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: -6),
-      attachButton.widthAnchor.constraint(equalToConstant: 44),
-      attachButton.heightAnchor.constraint(equalToConstant: 44),
+      // One shared centre line: 34pt row, 10pt from the field bottom, directly under the text.
+      controlRow.topAnchor.constraint(equalTo: textView.bottomAnchor),
+      controlRow.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: -10),
+      controlRow.heightAnchor.constraint(equalToConstant: 34),
+      controlRow.leadingAnchor.constraint(equalTo: field.leadingAnchor),
+      controlRow.trailingAnchor.constraint(equalTo: field.trailingAnchor),
 
-      modelButton.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor),
-      modelButton.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
-      modelButton.widthAnchor.constraint(equalToConstant: 44),
-      modelButton.heightAnchor.constraint(equalToConstant: 44),
-      accessButton.leadingAnchor.constraint(equalTo: modelButton.trailingAnchor),
-      accessButton.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
-      accessButton.widthAnchor.constraint(equalToConstant: 44),
-      accessButton.heightAnchor.constraint(equalToConstant: 44),
+      // 32pt frames; the + glyph's optical left edge lands on the 16pt text edge.
+      attachButton.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: 8),
+      attachButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+      attachButton.widthAnchor.constraint(equalToConstant: 32),
+      attachButton.heightAnchor.constraint(equalToConstant: 32),
+
+      modelButton.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 6),
+      modelButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+      modelButton.widthAnchor.constraint(equalToConstant: 32),
+      modelButton.heightAnchor.constraint(equalToConstant: 32),
+      accessButton.leadingAnchor.constraint(equalTo: modelButton.trailingAnchor, constant: 6),
+      accessButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+      accessButton.widthAnchor.constraint(equalToConstant: 32),
+      accessButton.heightAnchor.constraint(equalToConstant: 32),
 
       chipsScroll.topAnchor.constraint(equalTo: field.topAnchor),
       chipsScroll.leadingAnchor.constraint(equalTo: field.leadingAnchor),
@@ -247,27 +285,37 @@ final class ComposerView: UIView, UITextViewDelegate {
       heightConstraint,
 
       placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 16),
-      placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -6),
-      placeholderLabel.centerYAnchor.constraint(equalTo: textView.topAnchor, constant: 26),
+      placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -16),
+      placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 14),
 
-      micButton.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -16),
+      micButton.centerXAnchor.constraint(equalTo: sendButton.centerXAnchor),
       micButton.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
-      micButton.widthAnchor.constraint(equalToConstant: 36),
-      micButton.heightAnchor.constraint(equalToConstant: 36),
-      voiceSpinner.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 4),
-      voiceSpinner.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
+      micButton.widthAnchor.constraint(equalToConstant: 34),
+      micButton.heightAnchor.constraint(equalToConstant: 34),
+      transcriptionBadge.leadingAnchor.constraint(equalTo: voiceStatusLabel.leadingAnchor),
+      transcriptionBadge.trailingAnchor.constraint(equalTo: voiceStatusLabel.trailingAnchor),
+      transcriptionBadge.topAnchor.constraint(equalTo: voiceStatusLabel.topAnchor),
+      transcriptionBadge.heightAnchor.constraint(equalTo: voiceStatusLabel.heightAnchor),
+      voiceSpinner.leadingAnchor.constraint(equalTo: transcriptionBadge.leadingAnchor, constant: 20),
+      voiceSpinner.centerYAnchor.constraint(equalTo: transcriptionBadge.centerYAnchor),
+      voiceSpinner.widthAnchor.constraint(equalToConstant: 12),
+      voiceSpinner.heightAnchor.constraint(equalToConstant: 12),
+      transcriptionText.leadingAnchor.constraint(equalTo: voiceSpinner.trailingAnchor, constant: 4),
+      transcriptionText.trailingAnchor.constraint(equalTo: transcriptionBadge.trailingAnchor, constant: -44),
+      transcriptionText.topAnchor.constraint(equalTo: transcriptionBadge.topAnchor, constant: 7),
+      transcriptionText.bottomAnchor.constraint(equalTo: transcriptionBadge.bottomAnchor, constant: -7),
       voiceStatusLabel.trailingAnchor.constraint(equalTo: micButton.trailingAnchor, constant: 4),
       voiceStatusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: field.leadingAnchor, constant: 8),
       voiceStatusLabel.widthAnchor.constraint(equalToConstant: 224),
       voiceStatusLabel.heightAnchor.constraint(equalToConstant: 44),
       voiceStatusLabel.centerYAnchor.constraint(equalTo: micButton.centerYAnchor),
 
-      sendButton.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -12),
-      sendButton.centerYAnchor.constraint(equalTo: attachButton.centerYAnchor),
-      sendButton.widthAnchor.constraint(equalToConstant: 36),
-      sendButton.heightAnchor.constraint(equalToConstant: 36),
+      sendButton.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -14),
+      sendButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+      sendButton.widthAnchor.constraint(equalToConstant: 34),
+      sendButton.heightAnchor.constraint(equalToConstant: 34),
     ])
-    sendButton.layer.cornerRadius = 18
+    sendButton.layer.cornerRadius = 17
     refresh()
   }
 
@@ -403,6 +451,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   private var lastWidth: CGFloat = 0
   override func layoutSubviews() {
     super.layoutSubviews()
+    transcriptionBadge.layer.cornerRadius = transcriptionBadge.bounds.height / 2
     if textView.bounds.width != lastWidth { lastWidth = textView.bounds.width; refresh() }
   }
 
@@ -445,12 +494,19 @@ final class ComposerView: UIView, UITextViewDelegate {
     updateVoiceUI()
   }
 
+  private func updatePrimaryAction() {
+    let hasText = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let showMic = voiceEnabled && (!hasText || recording || voiceState == "transcribing")
+    micButton.isHidden = !showMic
+    sendButton.isHidden = showMic
+  }
+
   private func updateVoiceUI() {
     let transcribing = voiceState == "transcribing"
     modelButton.isHidden = !hasModel || recording || transcribing
     accessButton.isHidden = !hasAccess || recording || transcribing
-    micButton.isHidden = !voiceEnabled
-    micButton.isEnabled = !transcribing
+    updatePrimaryAction()
+    micButton.isEnabled = voiceEnabled
     micButton.configuration?.image = UIImage(systemName: "mic.fill")
     if !recording { micButton.transform = .identity }
     if recording {
@@ -460,17 +516,48 @@ final class ComposerView: UIView, UITextViewDelegate {
       voiceStatusLabel.isHidden = false
       voiceSpinner.stopAnimating()
     } else {
-      micButton.backgroundColor = .clear
-      micButton.configuration?.baseForegroundColor = transcribing ? .tertiaryLabel : .secondaryLabel
+      micButton.backgroundColor = tintColor
+      micButton.configuration?.baseForegroundColor = .white
       voiceStatusLabel.textColor = .secondaryLabel
-      voiceStatusLabel.isHidden = !transcribing
-      if transcribing { voiceStatusLabel.text = "Transcribing…"; voiceSpinner.startAnimating() } else { voiceSpinner.stopAnimating() }
+      voiceStatusLabel.isHidden = true
     }
-    presentRecording(recording, armed: sendArmed, progress: sendProgress)
+    presentRecording(recording, armed: sendArmed, progress: sendProgress, cancelProgress: cancelProgress)
+    presentTranscription(transcribing && !recording && voiceEnabled, completed: !transcribing && !recording)
+    if transcribing && !recording { attachButton.alpha = 0; attachButton.isUserInteractionEnabled = false }
+  }
+
+
+  private func presentTranscription(_ active: Bool, completed: Bool) {
+    guard active != transcriptionPresented else { return }
+    transcriptionPresented = active
+    transcriptionBadge.layer.removeAllAnimations()
+    if active {
+      voiceSpinner.startAnimating()
+      transcriptionBadge.isHidden = false
+      transcriptionBadge.alpha = 1
+      transcriptionBadge.transform = .identity
+    } else if completed && window != nil && UIView.areAnimationsEnabled {
+      // Keep the capsule intact while it lifts toward the newly submitted message.
+      Motion.animate({
+        self.transcriptionBadge.alpha = 0
+        self.transcriptionBadge.transform = CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -22)
+      }, completion: { [weak self] _ in
+        guard let self = self, !self.transcriptionPresented else { return }
+        self.transcriptionBadge.isHidden = true
+        self.transcriptionBadge.transform = .identity
+        self.voiceSpinner.stopAnimating()
+      })
+    } else {
+      // A new recording takes over the row without a completion animation.
+      transcriptionBadge.isHidden = true
+      transcriptionBadge.alpha = 1
+      transcriptionBadge.transform = .identity
+      voiceSpinner.stopAnimating()
+    }
   }
 
   /// Presentation is independent of capture, so layout/motion can be verified without a microphone.
-  func presentRecording(_ active: Bool, armed: Bool, progress: CGFloat? = nil) {
+  func presentRecording(_ active: Bool, armed: Bool, progress: CGFloat? = nil, cancelProgress: CGFloat = 0, fingerInWindow finger: CGPoint? = nil) {
     if active { voiceStatusLabel.isHidden = false; micButton.configuration?.baseForegroundColor = .systemRed }
     recordingCancelButton.isHidden = !active
     recordingSendCue.isUserInteractionEnabled = active
@@ -482,12 +569,24 @@ final class ComposerView: UIView, UITextViewDelegate {
     attachButton.isUserInteractionEnabled = !active
     sendButton.isUserInteractionEnabled = !active
     let amount = max(0, min(1, progress ?? (armed ? 1 : 0)))
-    let base = UIColor.secondarySystemGroupedBackground.resolvedColor(with: traitCollection)
     let accent = tintColor.resolvedColor(with: traitCollection)
-    recordingSendCue.backgroundColor = base.mixed(with: accent, amount: amount)
-    recordingSendCue.tintColor = UIColor.label.resolvedColor(with: traitCollection).mixed(with: .white, amount: amount)
-    let scale = 1 + 0.18 * amount
-    recordingSendCue.transform = active ? CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -8 * amount).scaledBy(x: scale, y: scale) : CGAffineTransform(translationX: 0, y: 54)
+    recordingSendCue.backgroundColor = accent
+    recordingSendCue.tintColor = .white
+    let cancelAmount = active ? max(0, min(1, cancelProgress)) : 0
+    recordingCancelButton.tintColor = UIColor.label.resolvedColor(with: traitCollection).mixed(with: UIColor.systemRed.resolvedColor(with: traitCollection), amount: cancelAmount)
+    recordingCancelButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.15 * cancelAmount)
+    recordingCancelButton.layer.cornerRadius = 22
+    recordingCancelButton.transform = CGAffineTransform(scaleX: 1 + 0.5 * cancelAmount, y: 1 + 0.5 * cancelAmount)
+    let scale = 1 + amount
+    let following = active && !Motion.reduced && finger != nil && amount > 0 && cancelAmount == 0
+    if following, let finger = finger {
+      followLifted = RecordingSwipe.liftForFollow(recordingSendCue, already: followLifted)
+      let t = RecordingSwipe.followTranslation(for: recordingSendCue, fingerInWindow: finger, sendProgress: amount)
+      recordingSendCue.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: scale, y: scale)
+    } else {
+      if !followLifted.isEmpty { RecordingSwipe.restoreAfterFollow(recordingSendCue, lifted: followLifted); followLifted = [] }
+      recordingSendCue.transform = active ? CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -8 * amount).scaledBy(x: scale, y: scale) : CGAffineTransform(translationX: 0, y: 54)
+    }
     if recordingPresented != active {
       recordingPresented = active
       layoutIfNeeded()
@@ -528,6 +627,8 @@ final class ComposerView: UIView, UITextViewDelegate {
       recordingFeedback.prepare()
       micPressing = true
       sendArmed = false
+      cancelArmed = false
+      cancelProgress = 0
       sendProgress = 0
       micOrigin = gesture.location(in: self)
       permissionGeneration += 1
@@ -543,17 +644,24 @@ final class ComposerView: UIView, UITextViewDelegate {
       }
     case .changed:
       let point = gesture.location(in: self)
+      guard micPressing else { return }
+      let cancel = RecordingSwipe.shouldCancel(origin: micOrigin, end: point)
       let armed = RecordingSwipe.shouldSend(origin: micOrigin, end: point)
-      sendProgress = abs(point.x - micOrigin.x) <= 96 ? max(0, min(1, (micOrigin.y - point.y) / 64)) : 0
-      if recording { presentRecording(true, armed: armed, progress: sendProgress) }
-      if armed != sendArmed {
-        sendArmed = armed
-        updateVoiceUI()
-        if armed { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+      let left = max(0, micOrigin.x - point.x)
+      let up = max(0, micOrigin.y - point.y)
+      cancelProgress = left > up ? min(1, left / 96) : 0
+      sendProgress = left > up ? 0 : min(1, up / 64)
+      if (armed && !sendArmed) || (cancel && !cancelArmed) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
       }
+      sendArmed = armed
+      cancelArmed = cancel
+      if recording { presentRecording(true, armed: armed, progress: sendProgress, cancelProgress: cancelProgress, fingerInWindow: gesture.location(in: nil)) }
       if recording { showElapsed(recorder.elapsed) }
     case .ended:
       guard micPressing else { return }
+      if RecordingSwipe.shouldCancel(origin: micOrigin, end: gesture.location(in: self)) { cancelRecording(); return }
+      sendArmed = RecordingSwipe.shouldSend(origin: micOrigin, end: gesture.location(in: self))
       micPressing = false
       let held = RecordingSwipe.sendsOnRelease(duration: ProcessInfo.processInfo.systemUptime - micDownAt, armed: sendArmed)
       if held || sendArmed {
@@ -583,7 +691,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   }
 
   @objc private func accessibleStartRecording() -> Bool {
-    guard voiceEnabled, voiceState != "transcribing", !recording else { return false }
+    guard voiceEnabled, !recording else { return false }
     permissionGeneration += 1
     let generation = permissionGeneration
     micPressing = true
@@ -600,6 +708,8 @@ final class ComposerView: UIView, UITextViewDelegate {
     micPressing = false
     permissionGeneration += 1
     sendArmed = false
+    cancelArmed = false
+    cancelProgress = 0
     sendProgress = 0
     recorder.cancel()
     recording = false
@@ -628,12 +738,18 @@ final class ComposerView: UIView, UITextViewDelegate {
     micPressing = false
     permissionGeneration += 1
     sendArmed = false
+    cancelArmed = false
+    cancelProgress = 0
     sendProgress = 0
     let result = recorder.stop()
     updateVoiceUI()
     guard let result = result else { return } // too short: discarded silently
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    onVoiceRecorded?(result.url.path, result.durationMs)
+    let text = textView.text ?? ""
+    let capturedFiles = files
+    textView.text = ""
+    setFiles([])
+    onVoiceRecorded?(result.url.path, result.durationMs, text, capturedFiles)
   }
 
   override func resignFirstResponder() -> Bool { textView.resignFirstResponder() }
@@ -641,20 +757,21 @@ final class ComposerView: UIView, UITextViewDelegate {
   func textViewDidChange(_ textView: UITextView) { refresh(animated: true) }
 
   private func refresh(animated: Bool = false) {
+    updatePrimaryAction()
     placeholderLabel.isHidden = !textView.text.isEmpty
     let enabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     let styleSend = { [self] in
       sendButton.isEnabled = enabled
       let dark = traitCollection.userInterfaceStyle == .dark
       sendButton.backgroundColor = enabled
-        ? UIColor(rgb: dark ? 0xd5c9ee : 0x393947)
+        ? tintColor
         : UIColor(rgb: dark ? 0x393642 : 0xe9e9ef)
-      sendButton.configuration?.baseForegroundColor = UIColor(rgb: enabled ? (dark ? 0x302b3b : 0xffffff) : (dark ? 0x8f889e : 0x62626d))
+      sendButton.configuration?.baseForegroundColor = enabled ? .white : UIColor(rgb: dark ? 0x8f889e : 0x62626d)
     }
     if sendButton.isEnabled != enabled { Motion.crossfade(sendButton, styleSend) } else { styleSend() }
     let lineHeight = (textView.font?.lineHeight ?? 17)
     let insets = textView.textContainerInset.top + textView.textContainerInset.bottom
-    let minHeight = max(64, ceil(lineHeight + insets))
+    let minHeight = ceil(lineHeight + insets)
     let maxHeight = ceil(lineHeight * maxLines + insets)
     let fitting = textView.sizeThatFits(CGSize(width: max(textView.bounds.width, 200), height: .greatestFiniteMagnitude)).height
     let newHeight = min(max(fitting, minHeight), maxHeight)
@@ -697,12 +814,19 @@ final class RecordingStatusLabel: UILabel {
   }
 }
 
-private extension UIColor {
+extension UIColor {
   func mixed(with other: UIColor, amount: CGFloat) -> UIColor {
     var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
     var rr: CGFloat = 0, gg: CGFloat = 0, bb: CGFloat = 0, aa: CGFloat = 0
     getRed(&r, green: &g, blue: &b, alpha: &a)
     other.getRed(&rr, green: &gg, blue: &bb, alpha: &aa)
     return UIColor(red: r + (rr-r)*amount, green: g + (gg-g)*amount, blue: b + (bb-b)*amount, alpha: a + (aa-a)*amount)
+  }
+}
+
+/// 32pt icon button that keeps a 44pt touch target.
+final class ComposerIconButton: UIButton {
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    bounds.insetBy(dx: min(0, (bounds.width - 44) / 2), dy: min(0, (bounds.height - 44) / 2)).contains(point)
   }
 }

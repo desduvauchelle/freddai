@@ -36,7 +36,7 @@ const toggle = (name: string) => fireEvent.click(within(screen.getByRole("group"
 
 it("defaults to Projects and the Recent toggle shows the five newest threads across projects with project tags", async () => {
   render(<DesktopApp />);
-  await screen.findByText("Thread 19");
+  await within(screen.getByLabelText("Thread list")).findByText("Thread 19");
   const group = screen.getByRole("group", { name: "Thread view" });
   expect(within(group).getByRole("button", { name: "Projects view" }).getAttribute("aria-pressed")).toBe("true");
   toggle("Recent");
@@ -48,7 +48,7 @@ it("defaults to Projects and the Recent toggle shows the five newest threads acr
 
 it("Show more reveals ten more per click and Show less collapses back to five", async () => {
   render(<DesktopApp />);
-  await screen.findByText("Thread 19");
+  await within(screen.getByLabelText("Thread list")).findByText("Thread 19");
   toggle("Recent");
   fireEvent.click(screen.getByRole("button", { name: "Show more" }));
   expect(rows()).toHaveLength(15);
@@ -65,9 +65,9 @@ it("Show more reveals ten more per click and Show less collapses back to five", 
 it("restores the saved view and opens a thread from a Recent row", async () => {
   localStorage.setItem("freddai.threadNavView", '"recent"');
   render(<DesktopApp />);
-  await screen.findByText("Thread 19");
+  await within(screen.getByLabelText("Thread list")).findByText("Thread 19");
   expect(within(screen.getByRole("group", { name: "Thread view" })).getByRole("button", { name: "Recent view" }).getAttribute("aria-pressed")).toBe("true");
-  const row = screen.getByText("Thread 17").closest(".task-row")!;
+  const row = within(screen.getByLabelText("Thread list")).getByText("Thread 17").closest(".task-row")!;
   fireEvent.click(row);
   expect(row.getAttribute("aria-current")).toBe("true");
 });
@@ -82,12 +82,13 @@ it("shows an empty state when there are no recent threads", async () => {
 it('shows one Commander entry and hides its conversations and delegated work in Projects and Recent', async () => {
   fixture.commander = true;
   render(<DesktopApp />);
-  await screen.findByText('Thread 19');
-  expect(within(screen.getByRole('region', { name: 'Commander threads' })).getByRole('button', { name: 'Open Commander' })).toBeTruthy();
+  await within(screen.getByLabelText('Thread list')).findByText('Thread 19');
+  expect(screen.getByRole('button', { name: 'Dashboard' }).nextElementSibling).toBe(within(screen.getByLabelText('Threads')).getByRole('button', { name: 'Open Commander' }));
+  expect(screen.queryByRole('region', { name: 'Commander threads' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'New task in Commander' })).toBeNull();
   expect(screen.queryByText('Commander main chat')).toBeNull();
-  expect(screen.queryByText('Hidden delegated work')).toBeNull();
+  expect(within(screen.getByLabelText('Thread list')).queryByText('Hidden delegated work')).toBeNull();
   toggle('Recent');
   expect(screen.queryByText('Commander main chat')).toBeNull();
-  expect(screen.queryByText('Hidden delegated work')).toBeNull();
+  expect(within(screen.getByLabelText('Thread list')).queryByText('Hidden delegated work')).toBeNull();
 });

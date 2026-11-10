@@ -35,3 +35,17 @@ it('keeps setup available to correct after native validation rejects it', async 
   expect((screen.getByLabelText('Mac setup') as HTMLTextAreaElement).value).toBe('bad setup');
   expect(screen.queryByText('Conversations ready')).toBeNull();
 });
+
+it('Mac satellite pairs only after host approval and can reopen setup', async () => {
+  bridge.invoke.mockImplementation(async (command: string) => command === 'companion_pairing_status' || command === 'companion_pair_claim');
+  render(<Pairing deviceKind="Mac">{() => <p>Remote conversations</p>}</Pairing>);
+  await screen.findByText('Remote conversations');
+  fireEvent(window, new Event('freddai:satellite-pair'));
+  expect(screen.queryByText('Remote conversations')).toBeNull();
+  expect((screen.getByLabelText('Satellite Mac name') as HTMLInputElement).value).toBe('My satellite Mac');
+  fireEvent.change(screen.getByLabelText('Mac setup'), {target: {value: 'host setup'}});
+  fireEvent.change(screen.getByLabelText('Pairing code'), {target: {value: '123456'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Connect'}));
+  await screen.findByText('Remote conversations');
+  expect(bridge.invoke).toHaveBeenCalledWith('companion_pair', {code: '123456', name: 'My satellite Mac', setup: 'host setup'});
+});

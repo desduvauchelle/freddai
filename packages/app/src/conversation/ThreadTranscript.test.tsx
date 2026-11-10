@@ -162,3 +162,30 @@ describe("todo list", () => {
     expect(container.querySelector(".todo-panel")).toBeNull();
   });
 });
+
+describe("ThreadTranscript system notices", () => {
+  it.each(['comfortable', 'compact'] as const)("keeps internal check-ins out of the %s conversation", density => {
+    const messages = [
+      { id: 'hb', role: 'user', text: 'Heartbeat (scheduled check-in, not a user message). Review.' },
+      { id: 'due', role: 'user', text: 'Due notice (not a user message): review to-dos.' },
+      { id: 'wake', role: 'user', text: 'Delegated notice (not a user message): thread finished.' },
+      { id: 'old', role: 'user', text: 'Delegated thread Task (id) in project Project finished with status done. Do a light review.' },
+      { id: 'user', role: 'user', text: 'Continue' },
+      { id: 'reply', role: 'assistant', text: 'Your requested task is complete.' },
+    ];
+    const { container } = render(<ThreadTranscript messages={messages} density={density} />);
+    expect(container.querySelectorAll('article')).toHaveLength(2);
+    expect(screen.getByText('Continue')).toBeTruthy();
+    expect(screen.getByText('Your requested task is complete.')).toBeTruthy();
+    expect(container.textContent).not.toContain('Review');
+  });
+  it("hides historical completion notices without hiding user messages", () => {
+    const text = "Light notice (not a user message): these threads finished since the last notice.\n- Fix the thing (2d67414b-1111-4222-8333-444455556666) ended done";
+    const { container } = render(<ThreadTranscript messages={[{ id: "n1", role: "user", text }, { id: "u1", role: "user", text: "hello" }]} />);
+    const note = container.querySelector(".completion-card");
+    expect(note).toBeNull();
+    expect(container.textContent).not.toContain("Fix the thing");
+    expect(container.querySelectorAll(".chat-user")).toHaveLength(1);
+    expect(container.textContent).not.toContain("2d67414b");
+  });
+});

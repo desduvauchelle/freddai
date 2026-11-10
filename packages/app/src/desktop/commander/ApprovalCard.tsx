@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowUpRight, Check, CircleAlert, Pencil, X } from "lucide-react";
 import { commanderApi, type Proposal } from "./api";
+import { formatProposalResult } from "./formatResult";
 
 const promptOf = (p: Proposal) => typeof p.arguments?.prompt === "string" ? p.arguments.prompt : "";
 
@@ -42,7 +43,7 @@ export function ApprovalCard({ proposal, projectName, projectColor, onDecided, o
     </div>}
     {error && <p className="commander-error" role="alert"><CircleAlert size={13} aria-hidden="true" />{error}</p>}
     {!pending && <div className="commander-card-result" data-status={shown.status}>
-      {shown.status === "approved" && <p role="status"><Check size={13} aria-hidden="true" />{shown.result || "Approved."}</p>}
+      {shown.status === "approved" && <p role="status"><Check size={13} aria-hidden="true" />{formatProposalResult(shown.result)}</p>}
       {shown.status === "declined" && <p role="status"><X size={13} aria-hidden="true" />Declined.</p>}
       {shown.status === "failed" && <p className="commander-error" role="alert"><CircleAlert size={13} aria-hidden="true" />{failure}</p>}
       {shown.thread && onOpenThread && <button type="button" className="commander-link" onClick={() => onOpenThread(shown.thread!)}>Open thread<ArrowUpRight size={12} aria-hidden="true" /></button>}

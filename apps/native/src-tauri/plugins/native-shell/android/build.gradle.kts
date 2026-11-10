@@ -16,6 +16,7 @@ android {
 kotlin { compilerOptions { jvmTarget = JvmTarget.JVM_1_8 } }
 
 dependencies {
+    implementation("com.google.android.material:material:1.13.0")
     implementation(project(":tauri-android"))
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.drawerlayout:drawerlayout:1.2.0")

@@ -1,0 +1,35 @@
+.workspace-settings .workspace-card { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.workspace-settings .workspace-drop-ready { outline: 1px dashed var(--muted-foreground); outline-offset: 3px; }
+.workspace-settings .workspace-project-source, .workspace-settings .workspace-member { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+.workspace-settings .workspace-project-source { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.workspace-settings .workspace-project-source[data-dragging="true"] { opacity: .65; }
+.workspace-settings .workspace-drop-target { outline: 2px solid var(--ring); background: var(--accent); }
+.workspace-settings .project-drag-handle { display: inline-flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+.workspace-settings .project-reorder-before { box-shadow: 0 -2px 0 var(--foreground); }
+.workspace-settings .project-reorder-after { box-shadow: 0 2px 0 var(--foreground); }
+.workspace-settings .workspace-member { max-width: 100%; flex-wrap: wrap; }
+.workspace-settings .color-field { display: inline-flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.workspace-settings .color-field-controls { display: flex; align-items: center; gap: 6px; }
+.workspace-settings .color-field-controls > input { width: 100px; font-family: monospace; }
+.workspace-settings .color-field-preview { display: block; width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 4px; }
+.workspace-settings .color-field-palette { display: flex; flex-wrap: wrap; gap: 6px; max-width: 170px; }
+.workspace-settings .color-field-swatch { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 4px; }
+.workspace-settings .color-field-swatch[aria-pressed="true"] { outline: 2px solid var(--foreground); outline-offset: 2px; }
+.workspace-settings .color-field-swatch:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.workspace-settings .workspace-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.workspace-settings .workspace-header > input { flex: 1; min-width: 0; width: 0; }
+.workspace-settings .workspace-header > button, .workspace-settings .workspace-header > .color-field { flex-shrink: 0; }
+.workspace-settings .workspace-member .project-drag-handle { gap: 6px; min-width: 0; width: auto; height: auto; min-height: 24px; color: inherit; text-align: left; }
+.workspace-settings .workspace-member .project-drag-handle span { overflow-wrap: anywhere; }
+.workspace-settings .color-field-compact { position: relative; }
+.workspace-settings .color-field-compact .color-field-picker { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; display: grid; gap: 12px; width: 208px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); box-shadow: 0 8px 24px #0003; }
+.workspace-settings .color-field-compact .color-field-palette { max-width: none; }
+.workspace-settings .color-field-compact .color-field-picker > input { width: 100%; font-family: monospace; }
+@media (max-width: 480px) {
+  .workspace-settings .color-field-compact .color-field-picker { left: 0; right: auto; }
+  .workspace-settings .workspace-card { padding: 10px; }
+  .workspace-settings .workspace-header { gap: 6px; flex-wrap: wrap; }
+  .workspace-settings .workspace-header > input { flex-basis: calc(100% - 60px); }
+  .workspace-settings .workspace-header > .color-field { margin-left: auto; }
+  .workspace-settings .workspace-header > button { min-height: 44px; }
+}

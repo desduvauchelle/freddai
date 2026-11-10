@@ -3,6 +3,7 @@ import ScreenCaptureKit
 import ApplicationServices
 import CryptoKit
 import Darwin
+import IOKit.pwr_mgt
 
 struct Failure: Error, CustomStringConvertible {
     let description: String
@@ -153,14 +154,59 @@ let tools: [[String: Any]] = [
     func info(_ w: SCWindow) -> [String: Any] {
         ["window_id": w.windowID, "title": w.title ?? "", "app": w.owningApplication?.applicationName ?? "", "bundle_id": w.owningApplication?.bundleIdentifier ?? "", "pid": w.owningApplication?.processID ?? 0]
     }
+    /// ScreenCaptureKit cannot start any stream while the Mac has no active display (display asleep,
+    /// lid closed, or screen locked and powered off). The Screen Recording grant is still valid then,
+    /// so the raw SCStream -3811 error is misleading. Check the real cause first.
+    func activeDisplayCount() -> Int {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        return Int(count)
+    }
+    var wokeDisplay = false
+    /// Declares user activity (same effect as `caffeinate -u`) so macOS lights the display, then waits briefly.
+    func wakeDisplayIfAsleep() async -> Bool {
+        guard activeDisplayCount() == 0 else { return true }
+        var id: IOPMAssertionID = 0
+        IOPMAssertionDeclareUserActivity("Freddai Computer needs the display to capture a window" as CFString, kIOPMUserActiveLocal, &id)
+        for _ in 0..<30 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if activeDisplayCount() > 0 { wokeDisplay = true; return true }
+        }
+        return false
+    }
+    func captureFailure(_ error: Error) -> Failure {
+        if activeDisplayCount() == 0 {
+            return Failure("Screen capture failed because this Mac has no active display (display asleep, lid closed, or screen off). Screen Recording permission is fine. Wake the display or keep it awake (System Settings > Lock Screen, or run `caffeinate -d`), then observe again. Underlying error: \(error)")
+        }
+        let ns = error as NSError
+        if ns.domain == SCStreamErrorDomain && ns.code == -3811 {
+            return Failure("ScreenCaptureKit could not start a capture stream (-3811) although Screen Recording is granted and a display is active. The Screen Recording grant for Freddai Computer may be stale for this build: in System Settings > Privacy & Security > Screen & System Audio Recording, toggle Freddai Computer off and on (or remove and re-add it), then start a new thread. If that does not help, the macOS replayd service may be stuck; logging out and back in restarts it. Underlying error: \(error)")
+        }
+        return Failure("Screen capture failed: \(error)")
+    }
     func capture(_ w: SCWindow) async throws -> CGImage {
+        _ = await wakeDisplayIfAsleep()
         let filter = SCContentFilter(desktopIndependentWindow: w)
         let config = SCStreamConfiguration()
         config.width = Int(w.frame.width * CGFloat(filter.pointPixelScale))
         config.height = Int(w.frame.height * CGFloat(filter.pointPixelScale))
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
-        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        do { return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) }
+        catch { throw captureFailure(error) }
+    }
+    /// Real capture probe used by computer_status so a granted permission cannot mask a broken capture path.
+    func captureProbe() async -> [String: Any] {
+        var result: [String: Any] = ["display_active": activeDisplayCount() > 0]
+        guard CGPreflightScreenCaptureAccess() else { result["screen_capture_works"] = false; result["screen_capture_error"] = "Screen Recording permission missing"; return result }
+        do {
+            guard let w = try await windows().first else { result["screen_capture_works"] = false; result["screen_capture_error"] = "No visible windows to probe"; return result }
+            _ = try await capture(w)
+            result["screen_capture_works"] = true
+            if wokeDisplay { result["display_woken"] = true }
+        } catch { result["screen_capture_works"] = false; result["screen_capture_error"] = String(describing: error) }
+        result["display_active"] = activeDisplayCount() > 0
+        return result
     }
     func digest(_ image: CGImage) throws -> SHA256.Digest {
         guard let data = image.dataProvider?.data else { throw Failure("Screenshot pixels unavailable") }
@@ -248,6 +294,7 @@ let tools: [[String: Any]] = [
         let token = UUID().uuidString
         observation = Observation(token: token, window: w, date: Date(), width: image.width, height: image.height, elements: elements, elementStates: elements.map(elementState), windowState: elements.first.map(elementState) ?? Data(), digest: try digest(image))
         var metadata = info(w)
+        if wokeDisplay { metadata["display_woken"] = true }
         metadata.merge(["observation": token, "width": image.width, "height": image.height, "elements": rows, "accessibility_truncated": truncated, "expires_seconds": 30, "coordinates": "image pixels; origin top left", "verification": "Compare this evidence with the expected outcome; tool execution alone is not task success."]) { _, b in b }
         if let axError { metadata["accessibility_note"] = axError }
         guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { throw Failure("PNG encoding failed") }
@@ -486,7 +533,7 @@ let tools: [[String: Any]] = [
             let app = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
             return [text(["pid": app.processIdentifier, "bundle_id": bundle, "next": "List windows and observe the intended window."])]
         case "computer_open_url": return try await openURL(args)
-        case "computer_status": return [text(["screen_recording": CGPreflightScreenCaptureAccess(), "accessibility": AXIsProcessTrusted(), "mode": "background", "browser_navigation": "computer_open_url", "background_actions": ["hover", "click (AXPress)", "press", "set_value"], "foreground_requires_explicit_authorization": true, "foreground_protects_editing": false, "foreground_requires_idle_seconds": 2, "foreground_allows_idle_focused_editor": true, "foreground_restores_desktop": true, "minimum_macos": "14.0"])]
+        case "computer_status": return [text(await captureProbe().merging(["screen_recording": CGPreflightScreenCaptureAccess(), "accessibility": AXIsProcessTrusted(), "mode": "background", "browser_navigation": "computer_open_url", "background_actions": ["hover", "click (AXPress)", "press", "set_value"], "foreground_requires_explicit_authorization": true, "foreground_protects_editing": false, "foreground_requires_idle_seconds": 2, "foreground_allows_idle_focused_editor": true, "foreground_restores_desktop": true, "minimum_macos": "14.0"] as [String: Any]) { a, _ in a })]
         case "computer_windows": return [text(try await windows().map(info))]
         case "computer_observe":
             guard let id = args["window_id"] as? UInt32 else { throw Failure("window_id is required") }

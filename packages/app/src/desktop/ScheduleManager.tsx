@@ -1,5 +1,5 @@
 import { endDateShortcut, scheduleEnded, startedRuns, runLimitReached } from "./schedule-end";
-import { agentDisplayName } from "./types";
+import { DeliveryRouting, DeliveryTask, type DeliveryData } from "./DeliveryControls";
 import { X } from "lucide-react";
 import { ScheduleEntries } from "./ScheduleEntries";
 import { Switch } from "@freddai/ui/components/switch";
@@ -9,7 +9,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@freddai/ui/components/select";
 import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
-import { Textarea } from "@freddai/ui/components/textarea";
 import type { Database, Schedule, Session } from "./types";
 type ScheduleData = { projects: {id:string;name:string}[]; accounts: {id:string;name:string;provider:string}[]; schedules?: Schedule[]; sessions?: Session[] };
 export type ScheduleCommand = (command: "save_schedule" | "schedule_action", input: Record<string, unknown>) => Promise<unknown>;
@@ -21,7 +20,6 @@ export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,con
   async function act(fn:()=>Promise<unknown>){setBusy(true);setError("");try{await fn();await onRefresh();}catch(e){setError(String(e).includes("Use five cron fields") && form.cron.includes("\n") ? "The background host needs its update to save multiple schedules. Let active work finish so it can update, then save again." : String(e));}finally{setBusy(false);}}
   const [deleting,setDeleting]=useState("");
 
-  const reusableThreads=(db.sessions||[]).filter(t=>t.project===form.project&&!t.archived&&!t.deleted_at&&t.status!=="archived"&&!!t.provider_id);
   const progress = {...form,runs:db.schedules?.find(s=>s.id===form.id)?.runs||form.runs};
   const update=(p:Partial<Schedule>)=>setForm(f=>({...f,...p}));
   const pendingCreation = useRef<{ids:Set<string>;form:Schedule}|null>(null);
@@ -55,20 +53,7 @@ export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,con
     </>}{editing&&<form onSubmit={e=>{e.preventDefault();void act(()=>save());}}>
       <label>Name<Input required value={form.name} onChange={e=>update({name:e.target.value})}/></label>
       {form.new_chat!==false&&<p className="capture-help">New threads use this name as their title.</p>}
-      <label>Project<Select value={form.project} onValueChange={v=>update({project:v,...(form.new_chat===false?{thread:null}:{})})}><SelectTrigger aria-label="Schedule project"><SelectValue/></SelectTrigger><SelectContent className="dev-popup">{db.projects.map(p=><SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></label>
-      <label>Agent / account<Select disabled={form.new_chat===false} value={form.account||undefined} onValueChange={v=>update({account:v,routing:"fixed",...(!["codex","claude"].includes(db.accounts.find(a=>a.id===v)?.provider||"")?{options:{...form.options,permission_mode:"ask"}}:{})})}><SelectTrigger aria-label="Schedule account"><SelectValue placeholder="Choose an account"/></SelectTrigger><SelectContent className="dev-popup">{db.accounts.map(a=><SelectItem key={a.id} value={a.id}>{agentDisplayName(a)}</SelectItem>)}</SelectContent></Select></label>
-      <div className="schedule-switch-row"><label htmlFor="schedule-new-chat">Start each run in a new chat</label><Switch id="schedule-new-chat" checked={form.new_chat!==false} onCheckedChange={checked=>update({new_chat:checked,thread:null,...(!checked?{routing:"fixed"}:{})})}/></div>
-      {form.new_chat===false&&<>
-        <label>Runs in<Select value={form.thread||undefined} onValueChange={id=>{const thread=reusableThreads.find(t=>t.id===id);if(thread){update({thread:id,account:thread.account,routing:"fixed"});if(conversation)onSelect(id);}}}><SelectTrigger aria-label="Runs in"><SelectValue placeholder="Choose a thread"/></SelectTrigger><SelectContent className="dev-popup">
-          {form.thread&&!reusableThreads.some(t=>t.id===form.thread)&&<SelectItem value={form.thread} disabled>Thread unavailable</SelectItem>}
-          {reusableThreads.map(t=><SelectItem key={t.id} value={t.id}>{t.title}{["starting","running","waiting"].includes(t.status)?" (busy)":""}</SelectItem>)}
-        </SelectContent></Select></label>
-        <p className="capture-help">Uses this thread’s agent and working folder. Busy threads skip that occurrence.</p>
-      </>}
-      <div className="schedule-switch-row"><label htmlFor="schedule-full-access">Full access</label><Switch id="schedule-full-access" checked={form.options.permission_mode==="bypass"} disabled={!['codex','claude'].includes(db.accounts.find(a=>a.id===form.account)?.provider||'')&&form.options.permission_mode!=="bypass"} onCheckedChange={checked=>update({options:{...form.options,permission_mode:checked?"bypass":"ask"}})}/></div>
-      <p className="capture-help">Full access lets supported agents run tools without approval prompts. Applies when the next run starts, including in an existing thread.</p>
-      <label>Notifications<Select value={form.notifications||"off"} onValueChange={value=>update({notifications:value as Schedule["notifications"]})}><SelectTrigger aria-label="Notifications"><SelectValue/></SelectTrigger><SelectContent className="dev-popup"><SelectItem value="important">Important updates only</SelectItem><SelectItem value="all">Every completed run and issues</SelectItem><SelectItem value="off">Off</SelectItem></SelectContent></Select></label>
-      {form.notifications==="important"&&<p className="capture-help">Actionable findings, failures, and requests for approval. Quiet checks stay in the chat.</p>}
+      <DeliveryRouting form={form} update={update} db={db as DeliveryData} onThreadChosen={id=>{if(conversation)onSelect(id);}}/>
       <ScheduleEntries value={form.cron} onChange={cron=>update({cron})}/>
       <label>Timezone<Input required value={form.timezone} onChange={e=>update({timezone:e.target.value})}/></label>
       <label>Stops<Select value={form.max_runs!=null?"runs":form.end_date?"date":"never"} onValueChange={value=>{
@@ -87,8 +72,7 @@ export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,con
         </div>
         <p className="capture-help">Runs through {form.end_date} in {form.timezone}, then stops automatically. Runs already started can finish.</p>
       </div>}
-      <label>Task<Textarea required value={form.prompt} onChange={e=>update({prompt:e.target.value})}/></label>
-      {form.new_chat!==false&&<div className="schedule-switch-row"><label htmlFor="schedule-worktree">Separate worktree</label><Switch id="schedule-worktree" checked={!!form.options.worktree} onCheckedChange={checked=>update({options:{...form.options,worktree:checked}})}/></div>}
+      <DeliveryTask form={form} update={update}/>
       <div className="schedule-switch-row"><label htmlFor="schedule-enabled">Enabled</label><Switch id="schedule-enabled" checked={form.enabled} onCheckedChange={checked=>update({enabled:checked})}/></div>
       <div className="capture-controls"><Button type="button" variant="ghost" onClick={()=>setEditing(false)}>Cancel</Button><Button disabled={!native||busy||!form.account}>Save schedule</Button>{form.id&&deleteControls(form.id)}</div>
     </form>}

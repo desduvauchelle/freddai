@@ -1,0 +1,10 @@
+/* Connected accounts: forms reuse the schedule delivery controls, so labels stack like the schedule editor. */
+.google-trigger-form { display: flex; flex-direction: column; gap: 16px; }
+.google-trigger-form > label, .google-trigger-form > div > label:not([for]) { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.google-trigger-form .schedule-switch-row > label { display: block; margin: 0; }
+.google-trigger-form [data-slot="select-trigger"] { width: 100%; }
+.google-trigger-form textarea { min-height: 96px; }
+.google-trigger-form .capture-help { color: var(--muted-foreground); font-size: 12px; line-height: 1.6; margin: -8px 0 0; }
+.google-trigger-form .capture-controls { margin-top: 4px; flex-wrap: wrap; }
+.companion-google-dialog { max-width: min(720px, calc(100vw - 32px)); max-height: 88dvh; overflow-y: auto; }
+.companion-schedules .google-trigger-form.schedule-manager label { margin-block: 0; }

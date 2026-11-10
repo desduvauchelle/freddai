@@ -1,6 +1,6 @@
 import { isCommanderThread } from "../../commanderThreads";
 import type { Session } from "../types";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowLeft, CircleAlert, Phone, Send, Wrench, X } from "lucide-react";
 import { Dormouse } from "../Dormouse";
 import { MASCOT_PRIORITY } from "../mascot-state";
@@ -10,6 +10,7 @@ import type { Proposal } from "./api";
 import { AWAY_MS, awayCards, awayGreeting, recordVisit, type AwayCard } from "./away";
 import { CommanderTools, pendingProposals, type ToolsTab } from "./CommanderTools";
 import { statusText } from "./CommanderCluster";
+import { CommanderTrailingContext } from "./TrailingContext";
 import { useCommander } from "./useCommander";
 import "./commander.css";
 
@@ -33,7 +34,6 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
   const [decided, setDecided] = useState<Record<string, Proposal>>({});
   const [text, setText] = useState(""), [busy, setBusy] = useState(false), [sendError, setSendError] = useState("");
   const [away, setAway] = useState<{ gap: number; since: number } | null>(null), [dismissed, setDismissed] = useState(false);
-  const surface = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const now = Date.now(), gap = recordVisit(now);
@@ -41,25 +41,15 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
     return () => { recordVisit(); };
   }, []);
   useEffect(() => { if (threadId) onSelectThread(threadId); }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Pin approvals just above the host's reply composer, whatever its current height.
-  useEffect(() => {
-    const root = surface.current;
-    if (!root) return;
-    const measure = () => {
-      const composer = root.querySelector<HTMLElement>(".chat-composer, .commander-fallback-composer");
-      root.style.setProperty("--commander-composer-h", `${composer ? composer.offsetHeight + 28 : 24}px`);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure), mo = new MutationObserver(() => { measure(); const c = root.querySelector(".chat-composer"); if (c) ro.observe(c); });
-    ro.observe(root); mo.observe(root, { childList: true, subtree: true });
-    return () => { ro.disconnect(); mo.disconnect(); };
-  }, []);
-
   const pending = pendingProposals(proposals);
   const trayCards = [...pending, ...Object.values(decided).filter(d => !pending.some(p => p.id === d.id))];
   const proj = (id: string | null) => projects.find(p => p.id === id);
   const cards = away && !dismissed ? awayCards(todos, proposals, projects, away.since) : [];
+
+  const tray = trayCards.length > 0 ? <div className="commander-approvals" aria-label="Waiting on you">
+    {trayCards.map(p => <ApprovalCard key={p.id} proposal={decided[p.id] ?? p} projectName={proj(p.project)?.name} projectColor={proj(p.project)?.color}
+      onDecided={r => { setDecided(d => ({ ...d, [r.id]: r })); void data.refresh(); }} onOpenThread={onOpenThread} />)}
+  </div> : null;
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -99,7 +89,7 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
     {state?.model_notice && <p className="commander-banner" role="status"><CircleAlert size={14} aria-hidden="true" />{state.model_notice}</p>}
     {error && <p className="commander-banner commander-error" role="alert"><CircleAlert size={14} aria-hidden="true" />Couldn't refresh {name}: {error}</p>}
 
-    <div className="commander-surface" ref={surface}>
+    <div className="commander-surface">
       {cards.length > 0 && away && <aside className="commander-away" aria-label="While you were away">
         <div className="commander-away-head"><strong>{awayGreeting(away.gap)}</strong>
           <button type="button" className="commander-icon-btn" aria-label="Dismiss" onClick={() => setDismissed(true)}><X size={14} aria-hidden="true" /></button></div>
@@ -107,13 +97,8 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
           <strong>{c.title}</strong><span>{c.detail}</span></button>)}</div>
       </aside>}
       {threadId
-        ? <div className="commander-conversation">{renderConversation(threadId)}</div>
-        : <div className="commander-empty-chat"><p>{state ? `Say hello to ${name}. Your first message starts the conversation.` : "Loading…"}</p></div>}
-
-      {trayCards.length > 0 && <div className="commander-approvals" aria-label="Waiting on you">
-        {trayCards.map(p => <ApprovalCard key={p.id} proposal={decided[p.id] ?? p} projectName={proj(p.project)?.name} projectColor={proj(p.project)?.color}
-          onDecided={r => { setDecided(d => ({ ...d, [r.id]: r })); void data.refresh(); }} onOpenThread={onOpenThread} />)}
-      </div>}
+        ? <div className="commander-conversation"><CommanderTrailingContext.Provider value={tray}>{renderConversation(threadId)}</CommanderTrailingContext.Provider></div>
+        : <div className="commander-empty-chat"><p>{state ? `Say hello to ${name}. Your first message starts the conversation.` : "Loading…"}</p>{tray}</div>}
 
       {!threadId && state && <form className="commander-fallback-composer" onSubmit={e => void send(e)}>
         <textarea aria-label={`Message to ${name}`} placeholder={`Message ${name}`} rows={2} value={text} disabled={busy} onChange={e => setText(e.target.value)}

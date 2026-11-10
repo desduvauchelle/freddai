@@ -1,26 +1,18 @@
 import { SubThreads, type SubThread } from "./SubThreads";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { ArrowUpRight, Check, CircleAlert, CircleHelp, Pin, PinOff, Plus, X } from "lucide-react";
+import { ArrowUpRight, Check, CircleAlert, CircleHelp, Plus, X } from "lucide-react";
 import type { Project, Schedule } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
-import { commanderApi, type Memory, type NoteSummary, type Proposal, type Todo } from "./api";
+import { commanderApi, type NoteSummary, type Proposal, type Todo } from "./api";
 import type { CommanderData } from "./useCommander";
+import { MemoryTab, msg, useLoad } from "./CommanderMemory";
+import { CommanderProfile } from "./CommanderProfile";
 
 export type ToolsTab = "threads" | "waiting" | "todos" | "notes" | "memory" | "schedules" | "connections";
 const TABS: { id: ToolsTab; label: string }[] = [
   { id: "waiting", label: "Waiting on you" }, { id: "todos", label: "To-dos" }, { id: "notes", label: "Notes" },
   { id: "memory", label: "Memory" }, { id: "schedules", label: "Schedules" }, { id: "connections", label: "Connections" }, { id: "threads", label: "Sub-threads" },
 ];
-const msg = (e: unknown) => e instanceof Error ? e.message : String(e);
-
-/** Loads a list once on mount; exposes loud errors and a reload. */
-function useLoad<T>(load: () => Promise<T>, empty: T) {
-  const [value, setValue] = useState<T>(empty), [error, setError] = useState("");
-  const reload = useCallback(async () => { try { setValue(await load()); setError(""); } catch (e) { setError(msg(e)); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void reload(); }, [reload]);
-  return { value, error, reload };
-}
-
 export const pendingProposals = (proposals: readonly Proposal[]) => proposals.filter(p => p.status === "pending");
 export const reviewTodos = (todos: readonly Todo[]) => todos.filter(t => t.status === "needs_review");
 
@@ -140,27 +132,6 @@ function NotesTab() {
   </div>;
 }
 
-function MemoryTab() {
-  const mem = useLoad<Memory[]>(() => commanderApi.memory(), []);
-  const [error, setError] = useState("");
-  async function patch(m: Memory, p: Partial<Memory>) {
-    setError("");
-    try { await commanderApi.memorySave({ id: m.id, ...p }); await mem.reload(); } catch (e) { setError(`Couldn't update memory: ${msg(e)}`); }
-  }
-  const items = mem.value.filter(m => m.status !== "forgotten" && !m.superseded_by).sort((a, b) => Number(b.pinned) - Number(a.pinned));
-  return <div className="commander-stack">
-    {(error || mem.error) && <p className="commander-error" role="alert"><CircleAlert size={13} aria-hidden="true" />{error || mem.error}</p>}
-    {!items.length && !mem.error && <p className="commander-empty">Commander hasn't remembered anything yet.</p>}
-    <ul className="commander-list">{items.map(m => <li key={m.id} className="commander-memory" data-status={m.status}>
-      <div><span className="commander-chip" data-muted>{m.kind}</span>{m.status === "stale" && <span className="commander-chip" data-muted>stale</span>}<p>{m.text}</p></div>
-      <div className="commander-card-actions">
-        <button type="button" className="commander-btn" data-variant="ghost" aria-pressed={m.pinned} aria-label={`${m.pinned ? "Unpin" : "Pin"} memory: ${m.text}`} onClick={() => void patch(m, { pinned: !m.pinned })}>{m.pinned ? <PinOff size={13} aria-hidden="true" /> : <Pin size={13} aria-hidden="true" />}{m.pinned ? "Unpin" : "Pin"}</button>
-        <button type="button" className="commander-btn" data-variant="no" aria-label={`Forget memory: ${m.text}`} onClick={() => void patch(m, { status: "forgotten" })}>Forget</button>
-      </div>
-    </li>)}</ul>
-  </div>;
-}
-
 function SchedulesTab({ schedules, projectId, onManage }: { schedules: Schedule[]; projectId?: string; onManage?: () => void }) {
   const mine = schedules.filter(s => s.project === projectId);
   return <div className="commander-stack">
@@ -174,7 +145,7 @@ export function CommanderTools({ data, projects, schedules = [], threads = [], c
   data: CommanderData; projects: Project[]; schedules?: Schedule[]; threads?: readonly SubThread[]; commanderId?: string; initialTab?: ToolsTab;
   onOpenThread: (id: string) => void; onManageSchedules?: () => void; onClose: () => void;
 }) {
-  const [tab, setTab] = useState<ToolsTab>(initialTab);
+  const [tab, setTab] = useState<ToolsTab>(initialTab), [profile, setProfile] = useState(false), [profileDirty, setProfileDirty] = useState(false);
   const waiting = pendingProposals(data.proposals).length + reviewTodos(data.todos).length;
   return <section className="commander-tools" role="dialog" aria-label="Commander tools" onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }}>
     <header>
@@ -184,6 +155,10 @@ export function CommanderTools({ data, projects, schedules = [], threads = [], c
       </div>
       <button type="button" className="commander-icon-btn" aria-label="Close tools" onClick={onClose}><X size={16} aria-hidden="true" /></button>
     </header>
+    {profile ? <div className="commander-tools-body">
+      <button type="button" className="commander-link" onClick={() => { if (!profileDirty || window.confirm("Discard unsaved changes?")) { setProfile(false); setProfileDirty(false); } }}>Back to tools</button>
+      <CommanderProfile onSaved={() => void data.refresh()} onDirtyChange={setProfileDirty} />
+    </div> : <>
     <div id="cmd-tabpanel" role="tabpanel" aria-labelledby={`cmd-tab-${tab}`} className="commander-tools-body">
       {tab === "waiting" && <WaitingTab data={data} projects={projects} onOpenThread={onOpenThread} />}
       {tab === "todos" && <TodosTab data={data} projects={projects} commanderId={commanderId} onOpenThread={onOpenThread} />}
@@ -193,5 +168,7 @@ export function CommanderTools({ data, projects, schedules = [], threads = [], c
       {tab === "schedules" && <SchedulesTab schedules={schedules} projectId={commanderId} onManage={onManageSchedules} />}
       {tab === "connections" && <p className="commander-empty">Coming soon.</p>}
     </div>
+    <footer className="commander-tools-foot"><button type="button" className="commander-link commander-quiet" onClick={() => setProfile(true)}>Personality &amp; memory</button></footer>
+    </>}
   </section>;
 }

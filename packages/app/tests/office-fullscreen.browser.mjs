@@ -10,9 +10,20 @@ try {
     await page.setViewportSize({ width, height });
     await page.goto(`${process.env.FREDDAI_PREVIEW_URL || 'http://127.0.0.1:1420'}/@fs${fixture}`);
     await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+    await page.locator('.companion-header').waitFor({ state: 'visible' });
+    const zoom = page.getByRole('button', { name: 'Zoom in', exact: true });
+    assert.ok(await zoom.evaluate(el => !!el.closest('.office-bar')), 'zoom belongs to footer');
+    await zoom.click();
+    assert.equal(await page.getByRole('dialog', { name: 'Office', exact: true }).count(), 0, 'zoom does not expand office');
+    await page.getByRole('button', { name: 'Fit all', exact: true }).click();
     // A clipped/translated dashboard must not become the fullscreen containing block.
     await page.getByRole('button', { name: 'Expand office' }).click();
     await page.locator('.companion-dashboard').evaluate(el => { el.style.transform = 'translateZ(0)'; el.style.height = '1400px'; el.style.overflow = 'hidden'; });
+    assert.equal(await page.locator('.companion-header').count(), 0, 'fullscreen removes companion navigation');
+    const fullZoom = page.getByRole('dialog', { name: 'Office', exact: true }).getByRole('button', { name: 'Zoom in', exact: true });
+    assert.ok(await fullZoom.evaluate(el => !!el.closest('.office-bar')), 'fullscreen zoom belongs to footer');
+    const zb = await fullZoom.boundingBox();
+    assert.ok(zb.width >= 44 && zb.height >= 44 && zb.x >= 0 && zb.x + zb.width <= width, 'zoom fits viewport with touch target');
     const close = page.getByRole('button', { name: 'Close office' });
     const b = await close.boundingBox();
     console.log(width, height, b);
@@ -23,6 +34,7 @@ try {
     assert.ok(rotated.x >= 0 && rotated.y >= 0 && rotated.x + rotated.width <= height && rotated.y + rotated.height <= width, 'close stays visible after rotation');
     await close.click({ timeout: 1500 });
     await page.getByRole('dialog', { name: 'Office', exact: true }).waitFor({ state: 'detached' });
+    await page.locator('.companion-header').waitFor({ state: 'visible' });
   }
   console.log('PASS fullscreen: visible, touch-sized, clickable close across phone/tablet/desktop sizes');
 } finally { await browser.close(); }

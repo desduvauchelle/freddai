@@ -86,7 +86,7 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
     }
     Ok(match method {
         "hello" => {
-            json!({"version":VERSION,"schedule_end_dates":true,"schedule_run_limits":true,"schedule_delivery":true,"mcp_bridge":1,"build":std::env::current_exe().ok().map(|p|p.to_string_lossy().into_owned())})
+            json!({"version":VERSION,"schedule_end_dates":true,"schedule_run_limits":true,"schedule_delivery":true,"mcp_bridge":1,"google_accounts":1,"build":std::env::current_exe().ok().map(|p|p.to_string_lossy().into_owned())})
         }
         "upgrade_idle" => {
             rt.prepare_upgrade()?;
@@ -117,6 +117,8 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             thread: p["context"]["thread"].as_str().map(str::to_owned),
         })),
         m if crate::commander::is_host_command(m) => crate::commander::host_call(rt, m, &p)?,
+        m if crate::google::triggers::is_host_command(m) => crate::google::triggers::host_call(rt, m, &p)?,
+        m if crate::google::is_host_command(m) => crate::google::host_call(&rt.root_dir(), m, &p)?,
         "snapshot" => {
             let (db, wait, held) = rt.snapshot_timed();
             let t = std::time::Instant::now();
@@ -173,6 +175,15 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             serde_json::from_value(p["sessions"].clone())
                 .map_err(|e| format!("Invalid import request: {e}"))?
         )?),
+        "update_project_organization" => {
+            let name = text(&p, "name")?.trim().to_owned();
+            let color = text(&p, "color")?;
+            if name.is_empty() || name.len() > 200 || color.len() != 7 || !color.starts_with('#') || !color[1..].bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("Invalid project name or color".into());
+            }
+            rt.update_project(&text(&p, "project")?, |project| { project.name = name; project.color = color; })?;
+            Value::Null
+        }
         "save_project" => json!(
             rt.project(serde_json::from_value(p["project"].clone()).map_err(|e| e.to_string())?)?
         ),
@@ -409,8 +420,12 @@ pub fn serve(root: PathBuf) -> Result<(), String> {
     std::thread::spawn(move || loop {
         scheduler.scheduler_tick();
         scheduler.queue_tick();
+        crate::commander_autonomy::tick(&scheduler);
         std::thread::sleep(Duration::from_secs(2));
     });
+    // Google triggers poll on their own thread: blocking HTTP must never stall the tick above.
+    // (Also covers Windows: `windows_host::serve` below shares this start path.)
+    crate::google::triggers::spawn_poller(rt.clone());
     #[cfg(windows)]
     return windows_host::serve(&root, rt);
     #[cfg(unix)]

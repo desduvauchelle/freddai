@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Square } from 'lucide-react';
 import { Button } from '@freddai/ui/components/button';
+import { macCompatibleRecording } from './recording-audio';
 import type { CompanionClient } from './companion';
 
 /** Browser fallback. Native companions render their own hold control and recorder. */
-export function DashboardMic({ client, disabled, project, onText }: {
-  client: CompanionClient; disabled: boolean; project: string; onText: (text: string) => void;
+export function DashboardMic({ client, disabled, project, onText, onListening }: {
+  client: CompanionClient; disabled: boolean; project: string; onText: (text: string) => void; onListening?: (listening: boolean) => void;
 }) {
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -13,6 +14,7 @@ export function DashboardMic({ client, disabled, project, onText }: {
   const pointer = useRef<number | null>(null);
   const [state, setState] = useState<'idle' | 'starting' | 'recording' | 'transcribing'>('idle');
   const [error, setError] = useState('');
+  useEffect(() => { onListening?.(state === 'recording'); return () => onListening?.(false); }, [state, onListening]);
   function finish(cancel = false) {
     generation.current++; cancelled.current = cancel; pending.current = false; pointer.current = null;
     if (recorder.current?.state === 'recording') recorder.current.stop();
@@ -54,7 +56,9 @@ export function DashboardMic({ client, disabled, project, onText }: {
         if (cancelled.current) { setState('idle'); return; }
         setState('transcribing');
         try {
-          const result = await client.transcribeAudio!(new Blob(chunks, { type: capture.mimeType }));
+          const audio = await macCompatibleRecording(new Blob(chunks, { type: capture.mimeType }));
+          if (!alive.current || cancelled.current) return;
+          const result = await client.transcribeAudio!(audio);
           if (alive.current) { if (result.text.trim()) onText(result.text); else setError("Didn't catch anything. Try again."); }
         } catch (e) { if (alive.current) setError(String(e)); }
         finally { if (alive.current) setState('idle'); }
@@ -65,7 +69,7 @@ export function DashboardMic({ client, disabled, project, onText }: {
       if (alive.current && generation.current === token) { pending.current = false; setError(String(e)); setState('idle'); }
     }
   }
-  return <div><Button variant="outline" style={{ touchAction: 'none', userSelect: 'none' }}
+  return <div><Button variant="default" className="dashboard-mic" style={{ touchAction: 'none', userSelect: 'none' }}
     disabled={disabled || state === 'transcribing' || !client.transcribeAudio}
     aria-label={`${state === 'recording' ? 'Stop recording' : 'Dictate task'} in ${project}`}
     title="Hold to record, release to transcribe. Move away to cancel."

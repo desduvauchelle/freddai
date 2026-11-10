@@ -9,7 +9,7 @@ export type CommanderData = {
 };
 
 /** Polls commander state, proposals and to-dos every 3s while mounted. Failures set `error` (never swallowed) and clear on the next success. */
-export function useCommander({ todos: wantTodos = true, interval = POLL_MS }: { todos?: boolean; interval?: number } = {}): CommanderData {
+export function useCommander({ todos: wantTodos = true, interval = POLL_MS, enabled = true }: { todos?: boolean; interval?: number; enabled?: boolean } = {}): CommanderData {
   const [state, setState] = useState<CommanderState | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -30,9 +30,10 @@ export function useCommander({ todos: wantTodos = true, interval = POLL_MS }: { 
   }, [wantTodos]);
   useEffect(() => {
     alive.current = true;
+    if (!enabled) return () => { alive.current = false; };
     void refresh();
     const timer = setInterval(() => void refresh(), interval);
     return () => { alive.current = false; clearInterval(timer); };
-  }, [refresh, interval]);
+  }, [refresh, interval, enabled]);
   return { state, proposals, todos, error, loaded, refresh };
 }

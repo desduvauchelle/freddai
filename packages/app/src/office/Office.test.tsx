@@ -200,3 +200,78 @@ it("walks a new task from its project reserve, then to coffee for confirmation a
   act(() => { vi.advanceTimersByTime(60_000); });
   expect(at(/Title new/)).toBe(desk);
 });
+
+it('selects a room for orders in mini and expanded views without opening a thread', () => {
+  const controls = vi.fn((project: string) => <button>Mic for {project}</button>);
+  const open = mini({ renderTaskControls: controls });
+  fireEvent.click(screen.getByRole('button', { name: 'Give an order to Beta' }));
+  expect(screen.getByText('Mic for beta')).toBeTruthy();
+  expect(open).not.toHaveBeenCalled();
+  const dialog = screen.getByRole('dialog');
+  fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Give an order to Alpha' }), { key: 'Enter' });
+  expect(within(dialog).getByText('Mic for alpha')).toBeTruthy();
+});
+
+it('gives a renamed Commander one executive office and opens Commander instead of a task', () => {
+  const boss = { ...project('chief', 'Ada'), kind: 'commander' as const };
+  const open = vi.fn(), controls = vi.fn(() => <button>Task microphone</button>);
+  mini({ projects: [boss, ...projects], sessions: [thread('boss-1', { project: 'chief' }), thread('boss-2', { project: 'chief' }), ...sessions],
+    onOpenCommander: open, renderTaskControls: controls });
+  const office = screen.getByRole('button', { name: "Boss's office · Ada" });
+  expect(office.querySelectorAll('.office-executive-desk')).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: 'Give an order to Ada' })).toBeNull();
+  expect(screen.queryByLabelText('Ada · Ready for a task')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Ada · Title boss/ })).toBeNull();
+  fireEvent.keyDown(office, { key: 'Enter' });
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(controls).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Expand office' }));
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: "Boss's office · Ada" }));
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+const hold = (id: string, project: string | null, summary = `Task ${id}`) => ({ id, tool: 'freddai_start_task', summary, project, arguments: {}, status: 'pending' });
+
+it('puts a proposal card on an empty desk in the target room and wires Approve and Dismiss', async () => {
+  const respond = vi.fn(async () => ({}));
+  mini({ proposals: [hold('p1', 'beta', 'Fix login')], onProposalRespond: respond });
+  const room = screen.getByRole('group', { name: 'Beta room' });
+  expect(within(room).getByRole('group', { name: 'Proposed task: Fix login' })).toBeTruthy();
+  fireEvent.click(within(room).getByRole('button', { name: 'Approve: Fix login' }));
+  expect(respond).toHaveBeenCalledWith('p1', true);
+  await vi.waitFor(() => expect(within(room).getByRole('button', { name: 'Dismiss: Fix login' }).getAttribute('aria-disabled')).toBeNull());
+  fireEvent.click(within(room).getByRole('button', { name: 'Dismiss: Fix login' }));
+  expect(respond).toHaveBeenCalledWith('p1', false);
+});
+
+it('shows a loud error when answering a proposal fails, and sends unrouted cards to the lobby', async () => {
+  const respond = vi.fn(async () => { throw new Error('boom'); });
+  mini({ proposals: [hold('p2', null, 'Orphan task')], onProposalRespond: respond });
+  const lobby = screen.getByRole('group', { name: 'Lobby' });
+  fireEvent.click(within(lobby).getByRole('button', { name: 'Approve: Orphan task' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('boom');
+});
+
+it('renders cards view-only without a respond handler and marks the Commander desk working', () => {
+  const boss = { ...project('chief', 'Ada'), kind: 'commander' as const };
+  mini({ projects: [boss, ...projects], sessions: [thread('b1', { project: 'chief' }), ...sessions], proposals: [hold('p3', 'alpha', 'View only')], onOpenCommander: vi.fn() });
+  expect(screen.getByRole('group', { name: 'Proposed task: View only' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Approve: View only/ })).toBeNull();
+  expect(document.querySelector('.office-boss-suite')?.getAttribute('data-state')).toBe('working');
+});
+
+it("keeps zoom controls in the footer and out of the floor plan in both views", () => {
+  mini();
+  const zoom = screen.getByRole("button", { name: "Zoom in" });
+  expect(zoom.closest(".office-bar")).toBeTruthy();
+  fireEvent.click(zoom);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Fit all" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Expand office" }));
+  const dialog = screen.getByRole("dialog");
+  const fullZoom = within(dialog).getByRole("button", { name: "Zoom in" });
+  expect(fullZoom.closest(".office-bar")).toBeTruthy();
+  fireEvent.click(fullZoom);
+  expect(within(dialog).getByRole("button", { name: "Fit all" }).getAttribute("aria-pressed")).toBe("true");
+});

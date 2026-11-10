@@ -28,20 +28,34 @@ fn main() {
                         let (send, receive) = tokio::sync::oneshot::channel();
                         window.with_webview(move |webview| unsafe {
                             let view = &*(webview.inner() as *mut objc2::runtime::AnyObject);
-                            let supported: bool = objc2::msg_send![view, respondsToSelector: objc2::sel!(allowsWritingToolsAffordance)];
-                            let allows = supported && objc2::msg_send![view, allowsWritingToolsAffordance];
-                            let _ = send.send(allows);
+                            let replaced = view.class().name().to_bytes().starts_with(b"FreddaiNoWritingAffordance_");
+                            let _ = send.send(replaced);
                         }).map_err(|e| e.to_string())?;
-                        if receive.await.map_err(|e| e.to_string())? { return Err("Native Wry window still allows Siri affordance".into()); }
+                        if receive.await.map_err(|e| e.to_string())? { return Err("Native Wry window runtime class was replaced".into()); }
                     }
                     let url = window.url().map_err(|e| e.to_string())?;
                     if !url.query_pairs().any(|(key, value)| key == "thread" && value == "native-window-regression") { return Err(format!("Wrong route: {url}")); }
                     thread_windows::open(probe.clone(), base, "native-window-regression".into(), "Window regression").await?;
                     if probe.webview_windows().len() != 1 { return Err("Repeated open duplicated the window".into()); }
+                    // Keep the event loop alive through NSWindow/WebKit teardown.
+                    for cycle in 0..10 {
+                        let window = probe.webview_windows().into_values().next().ok_or("Missing window before close")?;
+                        window.close().map_err(|e| e.to_string())?;
+                        for _ in 0..100 {
+                            if probe.webview_windows().is_empty() { break; }
+                            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        }
+                        if !probe.webview_windows().is_empty() { return Err("Window close timed out".into()); }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        if cycle < 9 {
+                            thread_windows::open(probe.clone(), probe.config().app.windows[0].clone(), "native-window-regression".into(), "Window regression").await?;
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                    }
                     Ok::<_, String>(())
                 }).await;
                 match result {
-                    Ok(Ok(())) => { println!("PASS: async native thread window opens visibly on the exact route and repeated open reuses it"); handle.exit(0); }
+                    Ok(Ok(())) => { println!("PASS: async native thread window route, reuse and ten close/reopen teardown cycles"); handle.exit(0); }
                     failure => { eprintln!("FAIL: native thread window did not open: {failure:?}"); handle.exit(1); }
                 }
             });
@@ -49,7 +63,11 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("Native test app setup failed");
-    app.run(|_, _| {});
+    app.run(|_, event| {
+        if let tauri::RunEvent::ExitRequested { api, code: None, .. } = event {
+            api.prevent_exit();
+        }
+    });
 }
 #[cfg(not(target_os = "macos"))]
 fn main() {}

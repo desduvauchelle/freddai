@@ -34,7 +34,7 @@ pub fn activity(db: &Value, now_ms: u64) -> Option<String> {
     let mut parts = Vec::new();
     let running = db["sessions"].as_array().map_or(0, |s| s.iter().filter(|x| matches!(x["status"].as_str(), Some("running" | "starting" | "waiting"))).count());
     if running > 0 { parts.push(format!("{running} thread{}", if running == 1 { "" } else { "s" })); }
-    let queued = db["queues"].as_array().map_or(0, |q| q.iter().filter(|x| x["paused"] != true && x["messages"].as_array().is_some_and(|m| !m.is_empty())).count());
+    let queued = db["queues"].as_array().map_or(0, |q| q.iter().filter(|x| x["paused"] != true && x["messages"].as_array().is_some_and(|m| m.iter().any(|message| !message["id"].as_str().is_some_and(freddai_core::commander_autonomy::is_completion_card)))).count());
     if queued > 0 { parts.push(format!("{queued} queued")); }
     let due = db["schedules"].as_array().map_or(0, |s| s.iter().filter(|x| x["enabled"] == true && x["next_due"].as_u64().is_some_and(|d| d <= now_ms + SCHEDULE_LEAD_MS)).count());
     if due > 0 { parts.push(format!("{due} schedule{} due", if due == 1 { "" } else { "s" })); }

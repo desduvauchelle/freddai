@@ -6,6 +6,7 @@ import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { LocalPageContext } from "./GeneratedFile";
 import { BrowserContext } from "./browser-context";
+import { ThreadLinksContext } from "./ThreadLinksContext";
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => true) }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined), openPath: vi.fn(), revealItemInDir: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.mocked(isTauri).mockReset().mockReturnValue(true); });
@@ -86,4 +87,21 @@ it('reports failure from the explicit default-browser button', async () => {
   render(<MessageMarkdown text="https://example.com" />);
   fireEvent.click(screen.getByRole('button', { name: 'Open in default browser: https://example.com' }));
   expect((await screen.findByRole('alert')).textContent).toContain('Couldn’t open the browser');
+});
+
+describe("thread links", () => {
+  it("renders freddai://thread links as live chips that open the thread", () => {
+    const openThread = vi.fn();
+    render(<ThreadLinksContext.Provider value={{ openThread, threadInfo: id => ({ title: `Title ${id}`, status: "running" }) }}><MessageMarkdown text={"See [Fix login](freddai://thread/abc123) and <freddai://thread/zzz9> now."} /></ThreadLinksContext.Provider>);
+    const chips = screen.getAllByRole("button");
+    expect(chips.map(c => c.textContent)).toEqual(["Fix login", "Title zzz9"]);
+    expect(chips[0].getAttribute("data-status")).toBe("running");
+    fireEvent.click(chips[0]);
+    expect(openThread).toHaveBeenCalledWith("abc123");
+  });
+  it("falls back to plain text without a host", () => {
+    render(<MessageMarkdown text={"See [Fix login](freddai://thread/abc123)."} />);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText("Fix login")).toBeTruthy();
+  });
 });

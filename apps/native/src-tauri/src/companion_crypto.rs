@@ -14,7 +14,7 @@ pub const MAX_CIPHERTEXT:usize=16*1024*1024-1024;
 pub struct Envelope { pub nonce: String, pub ciphertext: String }
 pub fn random() -> String { let mut bytes=[0u8;32]; rand::rngs::OsRng.fill_bytes(&mut bytes); hex::encode(bytes) }
 pub fn now() -> u64 {SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()}
-fn cipher(key: &str) -> Result<Aes256Gcm,String> {
+pub(crate) fn cipher(key: &str) -> Result<Aes256Gcm,String> {
     Aes256Gcm::new_from_slice(&hex::decode(key).map_err(|_|"Invalid device key")?).map_err(|_|"Invalid device key".into())
 }
 pub fn seal(key:&str, context:&str, value:&Value) -> Result<Envelope,String> {

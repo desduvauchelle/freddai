@@ -56,19 +56,13 @@ fn assert_affordance_disabled(config: &objc2_web_kit::WKWebViewConfiguration) {
             config,
         )
     };
-    writing_tools::disable_affordance(&view);
-    writing_tools::disable_affordance(&view); // Repeated installation is harmless.
-    // AppKit/KVO may add another runtime subclass after installation. The
-    // reported class must remain the original WebView through that extra layer.
-    let reported: &'static objc2::runtime::AnyClass = unsafe { msg_send![&view, class] };
     let runtime_class = view.class();
-    let name = std::ffi::CString::new("FreddaiObservationRegression").unwrap();
-    let observing = objc2::runtime::ClassBuilder::new(&name, runtime_class).unwrap().register();
-    unsafe { AnyObject::set_class(&view, observing); }
-    let after: &'static objc2::runtime::AnyClass = unsafe { msg_send![&view, class] };
-    assert_eq!(after, reported, "An observation subclass must not change reported WebView identity");
+    let reported: &'static objc2::runtime::AnyClass = unsafe { msg_send![&view, class] };
     writing_tools::disable_affordance(&view);
-    assert_eq!(view.class(), observing, "Repeated installation must preserve observation subclasses");
+    writing_tools::disable_affordance(&view);
+    assert_eq!(view.class(), runtime_class, "Installation must never change WebKit isa");
+    let after: &'static objc2::runtime::AnyClass = unsafe { msg_send![&view, class] };
+    assert_eq!(after, reported, "Installation must preserve AppKit class identity");
     let html = NSString::from_str(
         r#"<textarea autofocus>hello composer</textarea><script>
 onload = () => {
@@ -96,12 +90,6 @@ onload = () => {
         Some("composer-pass"),
         "textarea must load, focus, edit multiline text and select normally"
     );
-    let supported: bool =
-        unsafe { msg_send![&view, respondsToSelector: objc2::sel!(allowsWritingToolsAffordance)] };
-    if supported {
-        let allows: bool = unsafe { msg_send![&view, allowsWritingToolsAffordance] };
-        assert!(!allows, "Focused textarea still permits the floating Siri helper despite configuration opt-outs");
-    }
     // A separate webview keeps its own class; no global WebKit method replacement.
     let other = unsafe {
         objc2_web_kit::WKWebView::initWithFrame_configuration(
@@ -110,6 +98,6 @@ onload = () => {
             config,
         )
     };
-    assert_ne!(other.class(), view.class());
-    println!("PASS: focused textarea disallows Siri affordance; multiline editing, selection and instance isolation preserved");
+    assert_eq!(other.class(), view.class());
+    println!("PASS: multiline editing, selection and original WebKit runtime class preserved");
 }

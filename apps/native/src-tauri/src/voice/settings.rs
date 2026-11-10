@@ -14,11 +14,12 @@ pub struct VoiceSettings {
     pub active_model: Option<String>,
     pub shortcut: String,
     pub language: String,
+    pub remove_filler_words: bool,
 }
 
 impl Default for VoiceSettings {
     fn default() -> Self {
-        Self { enabled: false, active_model: None, shortcut: "AltRight".into(), language: "auto".into() }
+        Self { enabled: false, active_model: None, shortcut: "AltRight".into(), language: "auto".into(), remove_filler_words: true }
     }
 }
 
@@ -29,6 +30,7 @@ pub struct SettingsPatch {
     pub active_model: Option<String>,
     pub shortcut: Option<String>,
     pub language: Option<String>,
+    pub remove_filler_words: Option<bool>,
 }
 
 pub fn voice_dir(root: &Path) -> PathBuf {
@@ -100,13 +102,14 @@ mod tests {
     fn defaults_roundtrip_and_camel_case() {
         let root = test_root("settings");
         assert_eq!(load(&root).unwrap(), VoiceSettings::default());
-        let s = VoiceSettings { enabled: true, active_model: Some("whisper-base".into()), shortcut: "MetaRight".into(), language: "fr".into() };
+        let s = VoiceSettings { enabled: true, active_model: Some("whisper-base".into()), shortcut: "MetaRight".into(), language: "fr".into(), remove_filler_words: false };
         save(&root, &s).unwrap();
         assert_eq!(load(&root).unwrap(), s);
         let raw = fs::read_to_string(path(&root)).unwrap();
         assert!(raw.contains("activeModel"));
         fs::write(path(&root), "{\"enabled\":true}").unwrap();
         assert_eq!(load(&root).unwrap().shortcut, "AltRight");
+        assert!(load(&root).unwrap().remove_filler_words);
         fs::write(path(&root), "garbage").unwrap();
         assert!(load(&root).is_err());
     }

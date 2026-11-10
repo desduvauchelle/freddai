@@ -55,7 +55,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   private var webBottomEdge: NSLayoutConstraint!
 
   var onSend: ((String, [AttachedFile]) -> Void)?
-  var onVoiceRecorded: ((String, Int) -> Void)?
+  var onVoiceRecorded: ((String, Int, String, [AttachedFile]) -> Void)?
   var onVoiceError: ((String) -> Void)?
   var onMenu: (() -> Void)?
   var onConnectionTap: (() -> Void)?
@@ -94,7 +94,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     composer.presenter = self
     composer.onSetting = { [weak self] action in self?.onThreadAction?(action) }
     composer.onSend = { [weak self] text, files in self?.onSend?(text, files) }
-    composer.onVoiceRecorded = { [weak self] path, ms in self?.onVoiceRecorded?(path, ms) }
+    composer.onVoiceRecorded = { [weak self] path, ms, text, files in self?.onVoiceRecorded?(path, ms, text, files) }
     composer.onVoiceError = { [weak self] message in self?.onVoiceError?(message) }
     view.addSubview(composer)
     dashboard.translatesAutoresizingMaskIntoConstraints = false
@@ -105,7 +105,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     NSLayoutConstraint.activate([
       dashboard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       dashboard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      dashboard.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      dashboard.topAnchor.constraint(equalTo: view.topAnchor),
       dashboard.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
     ])
     webHorizontal = [webView.leadingAnchor.constraint(equalTo: view.leadingAnchor), webView.trailingAnchor.constraint(equalTo: view.trailingAnchor)]
@@ -144,13 +144,20 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     actionsItem.style = .plain
     actionsItem.accessibilityLabel = "Thread actions"
     rebuildActions()
-    navigationItem.rightBarButtonItems = [actionsItem, newItem]
+    navigationItem.rightBarButtonItems = [actionsItem, callItem, newItem]
     let menu = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal"), style: .plain, target: self, action: #selector(menuTapped))
     menu.accessibilityLabel = "Threads"
     menu.accessibilityHint = "Opens the thread list"
     navigationItem.leftBarButtonItem = menu
     webView.allowsBackForwardNavigationGestures = false
   }
+
+  private lazy var callItem: UIBarButtonItem = {
+    let item = UIBarButtonItem(image: UIImage(systemName: "phone"), style: .plain, target: self, action: #selector(callTapped))
+    item.accessibilityLabel = "Start call"
+    return item
+  }()
+  @objc private func callTapped() { onThreadAction?("call") }
 
   @objc private func menuTapped() { onMenu?() }
   @objc private func connectionTapped() { onConnectionTap?() }
@@ -303,8 +310,8 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
-    // The New thread home has no thread actions, and its own compose button would be a no-op.
-    navigationItem.rightBarButtonItems = newMode == .conversation || newMode == .commander ? [actionsItem, newItem] : []
+    // New threads can begin a call before the first spoken message creates the thread.
+    navigationItem.rightBarButtonItems = newMode == .conversation || newMode == .commander ? [actionsItem, callItem, newItem] : newMode == .new ? [callItem] : newMode == .dashboard ? [callItem] : []
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {
       applyBarStyle()

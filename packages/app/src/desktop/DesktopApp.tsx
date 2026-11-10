@@ -1,3 +1,7 @@
+import { DashboardCall } from "./DashboardCall";
+import { isCompletionNotice } from "../conversation/CompletionCards";
+import { isBackgroundWake } from "../conversation/systemNotice";
+import { Dot, labelStatus } from "./ThreadStatus";
 import { isCommanderThread } from "../commanderThreads";
 import { BrowserWorkspace, BrowserToggle } from "./BrowserWorkspace";
 import { useNavigationState } from '../hooks/use-navigation-state';
@@ -25,6 +29,10 @@ import { RecentThreadsFooter, ThreadViewToggle } from "../RecentThreadsControls"
 import { THREAD_NAV_VIEW_KEY, asThreadNavView, selectRecentThreads } from "../recentThreads";
 import { HomeView } from "./HomeView";
 import { CommanderView } from "./commander/CommanderView";
+import { CommanderTrailingContext } from "./commander/TrailingContext";
+import { CommanderProfile } from "./commander/CommanderProfile";
+import { CommanderSettings } from "./commander/CommanderSettings";
+import { useCommander } from "./commander/useCommander";
 import { ProjectObjective } from "./commander/ProjectObjective";
 import { commanderApi } from "./commander/api";
 import { ThreadTitle } from "./ThreadTitle";
@@ -52,15 +60,19 @@ import { useFontSizes } from "./use-font-sizes";
 import { useTheme } from "./use-theme";
 import { CompanionSettings } from "./CompanionSettings";
 import { BackgroundSettings } from "./BackgroundSettings";
+import { ConnectedAccountsSettings } from "./ConnectedAccountsSettings";
 import { VoiceSettings } from "./VoiceSettings";
 import { AgentConfigSettings } from "./AgentConfigSettings";
 import { MicButton, VoiceNotice, useHoldToTalk } from "./VoiceControls";
+import { useVoiceCall } from "./voiceCall";
+import { VoiceCallBar } from "./VoiceCallBar";
 import { joinDictation, focusEnd, shortcutLabel, useVoice, voice } from "./voice";
 import { ImportSessions } from "./ImportSessions";
 import { AccountOverview } from "./AccountOverview";
 import { AccountSetup } from "./AccountSetup";
 import { accountLabel } from "./types";
 import { ThreadTranscript } from "../conversation/ThreadTranscript";
+import { ThreadLinksProvider } from "../conversation/ThreadLinksContext";
 import { TodoPanel } from "../conversation/TodoList";
 import { reconcileSnapshot } from "./reconcileSnapshot";
 import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
@@ -111,6 +123,7 @@ import {
   ArrowUp,
   ArrowDown,
   Square,
+  Phone,
   Columns2,
   X,
   FolderGit2,
@@ -139,7 +152,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { runInTerminal } from "./terminal-sessions";
 import { closePane, focusPane, focusedThread, openThreads, otherThread, restoreSplitView, selectThread, splitPreference, toggleSplit, type SplitPreference, type SplitSide, type SplitView } from "./split-view";
 import { hostUpdateNotice, shouldSurfacePollError, RESTART_NOW_LABEL } from "./host-update";
-import { dotClass, interruptedThreads, interruptedBannerText, resumeAll, resumeFailureMessage } from "./interrupted";
+import { interruptedThreads, interruptedBannerText, resumeAll, resumeFailureMessage } from "./interrupted";
 import "../workspace.css";
 import "./desktop.css";
 import "./themes.css";
@@ -179,31 +192,6 @@ function Picker({
         ))}
       </SelectContent>
     </Select>
-  );
-}
-function labelStatus(s: string) {
-  return (
-    (
-      {
-        done: "Completed",
-        unread: "Unread reply",
-        waiting: "Needs you",
-        failed: "Failed",
-        interrupted: "Interrupted",
-        running: "Running",
-        starting: "Starting",
-      } as Record<string, string>
-    )[s] || s
-  );
-}
-function Dot({ status }: { status: string }) {
-  return (
-    <span
-      role="img"
-      aria-label={labelStatus(status)}
-      title={labelStatus(status)}
-      className={`state-dot state-${dotClass(status)}`}
-    />
   );
 }
 function readPreference<T>(key: string, initial: T): T {
@@ -281,7 +269,7 @@ function SendButton({ threadId, label, blocked }: { threadId: string; label: str
 function ConversationPane({
   task, db, read, native, working, staging, standalone = false, split, side, focused, canToggleSplit, composerRef,
   attachments, onAttachments, permission, onPermission, selection, onSelection,
-  onFocus, onClose, onOpenThread, onToggleSplit, onFork, onPopOut, onRename, onSend, onQueueAction, onAttach,
+  onFocus, onClose, onOpenThread, onToggleSplit, onFork, onPopOut, onRename, onSend, onSendText, onQueueAction, onAttach,
   action, refresh, changeThread, openAccounts, fileChips, resumeThread,
 }: {
   standalone?: boolean;
@@ -296,6 +284,8 @@ function ConversationPane({
   onOpenThread: (id: string) => void;
   onRename: (title: string) => Promise<void>;
   onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
+  /** Voice call: send exact text (queued when the thread is busy). Rejects on failure. */
+  onSendText: (text: string) => Promise<void>;
   onQueueAction: (action: string, message?: string, prompt?: string) => Promise<boolean | undefined>;
   onAttach: () => void;
   action: <T>(fn: () => Promise<T>) => Promise<T | undefined>; refresh: () => Promise<void>;
@@ -310,6 +300,17 @@ function ConversationPane({
     taskAccount = db.accounts.find((a) => a.id === task.account),
     taskQueue = db.queues?.find(q => q.session === task.id);
   const capabilities = threadCapabilities(task, !!taskAccount);
+  // Hands-free voice call on this thread (Tauri only). Stop/send reuse the composer's own paths.
+  const voiceCall = useVoiceCall({
+    threadId: task.id,
+    enabled: native && !!taskAccount && !task.archived && task.deleted_at == null,
+    thread: {
+      isBusy: () => busy(task),
+      stopTurn: async () => { await invoke("stop", { session: task.id }); await refresh(); },
+      sendText: onSendText,
+    },
+    view: { busy: busy(task), messages: task.messages },
+  });
   const [scheduleOpen,setScheduleOpen] = useState(false);
   const [renameRequest, setRenameRequest] = useState(0);
   const renameChosen = useRef(false);
@@ -404,6 +405,7 @@ function ConversationPane({
         <div className="chat-transcript-viewport">
         <ScrollArea className="min-h-0 flex-1" viewportRef={transcript} viewportProps={{ className: "chat-transcript", role: "region", "aria-label": "Conversation messages" }}>
           {task.transcriptLoaded === false && <div role="status">Loading conversation details…</div>}
+          <ThreadLinksProvider threads={db.sessions} projects={db.projects} onOpen={onOpenThread}>
           <ThreadTranscript readToolText={(message, offset, hash) => invoke("tool_text", { thread: task.id, message, offset, hash })} readGeneratedFile={(href, offset) => invoke("generated_file", { thread: task.id, href, offset })} resolveLocalPage={href => invoke("preview_file_url", { thread: task.id, href })} messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
           {(task.error || task.status === "interrupted") && (
             <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={standalone ? undefined : openAccounts}
@@ -423,11 +425,13 @@ function ConversationPane({
             />
             </div>
           )}
+          <CommanderTrailingContext.Consumer>{trailing => trailing}</CommanderTrailingContext.Consumer>
           <ConversationActivity thread={task}
             onStop={capabilities.stop ? () => void action(async () => { await invoke("stop", { session: task.id }); await refresh(); }) : undefined}
             onResume={capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
             disabled={working || !native || !!db.host_update_pending} />
           </ThreadTranscript>
+          </ThreadLinksProvider>
         </ScrollArea>
         {showLatest && <Button
           type="button"
@@ -447,6 +451,7 @@ function ConversationPane({
         <TodoPanel key={`todos-${task.id}`} messages={task.messages} active={busy(task)}/>
         <ConversationUsage key={task.id} usage={task.usage}/>
         {taskQueue && <MessageQueue queue={taskQueue} active={busy(task)} disabled={working} canSteer={!!taskAccount} onAction={onQueueAction}/>}
+        {voiceCall.snapshot && voiceCall.controller && <VoiceCallBar call={voiceCall.controller} snapshot={voiceCall.snapshot} agentBusy={busy(task)} onEnd={voiceCall.end}/>}
         <form className="chat-composer" onSubmit={e => void onSend(e)}>
           {fileChips(attachments, onAttachments)}
           <ReplyTextarea
@@ -479,6 +484,9 @@ function ConversationPane({
               const box = button.closest("form")?.querySelector("textarea");
               setTimeout(() => focusEnd(box), 0);
             }} />
+            {native && <Button type="button" variant="ghost" size="icon" className="composer-call" data-active={!!voiceCall.snapshot}
+              aria-label={voiceCall.snapshot ? "End voice call" : "Start voice call"} title={voiceCall.snapshot ? "End voice call" : voiceCall.otherActive ? "A voice call is already running in another thread" : "Start a hands-free voice call"}
+              disabled={!voiceCall.snapshot && !voiceCall.canStart} onClick={() => voiceCall.snapshot ? voiceCall.end() : voiceCall.start()}><Phone size={18}/></Button>}
             <PermissionSelect provider={taskAccount?.provider} value={permission} onChange={onPermission} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
             <span className="composer-spacer"/>
             {(staging || attachments.length > 0) && <span className="attachment-status" role="status">
@@ -590,7 +598,7 @@ function DesktopWorkspace() {
     if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
   }, [snapshot, launching]);
   const [dialog, setDialog] = useNavigationState<
-      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "background" | "companion" | "project" | "help" | "schedules" | "import" | null
+      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "commander" | "background" | "companion" | "project" | "help" | "schedules" | "import" | "google" | null
     >(null, navigationRevision),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
@@ -668,6 +676,7 @@ function DesktopWorkspace() {
   const [resumePrompt, setResumePrompt] = useState("Continue where you left off.");
   const dialogThread = db.sessions.find(t => t.id === threadDialog?.id);
   const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default");
+  const [homeAccount, setHomeAccount] = usePreference<string>("freddai.home-agent-account", "");
   const [homeSelections, setHomeSelections] = usePreference<Record<string, AgentSelection>>("freddai.home-agent-selections", {});
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
   const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
@@ -724,8 +733,10 @@ function DesktopWorkspace() {
   const task = db.sessions.find((t) => t.id === selected),
     taskAccount = db.accounts.find((a) => a.id === task?.account);
   const openIds = openThreads(splitActive ? view : { ...view, split: false, left: selected });
+  const commanderData = useCommander({ todos: false, enabled: native });
+  const [dashboardCallActive, setDashboardCallActive] = useState(false);
   const snapshotScope = useRef<string[]>([]);
-  const scopeKey = JSON.stringify(home || dialog === "new" ? [] : [...openIds].sort());
+  const scopeKey = JSON.stringify([...new Set([...(home || dialog === "new" ? [] : openIds), ...(dashboardCallActive && commanderData.state?.thread_id ? [commanderData.state.thread_id] : [])])].sort());
   snapshotScope.current = JSON.parse(scopeKey);
   const openTasks = openIds.flatMap(id => db.sessions.find(t => t.id === id) ?? []);
   liveTargets.current = dialog === "new" ? ["new"] : openIds;
@@ -881,6 +892,7 @@ function DesktopWorkspace() {
     if (!narrow && !home && !commanderOpen && !selected && !dialog && !pane && !scheduleView && !threadDialog && !launching) openNewThread(false);
   }, [narrow, home, commanderOpen, selected, dialog, pane, scheduleView, threadDialog, launching]);
   useEffect(() => { if (dialog === "new") setHome(false); }, [dialog]);
+  const respondProposal = async (id: string, approve: boolean) => { await commanderApi.proposalRespond(id, approve); await commanderData.refresh(); };
   const homeActive = home && dialog !== "new" && !scheduleView && !commanderOpen;
   const commanderActive = commanderOpen && !dialog && !scheduleView && !pane;
   // Commander-in-Chief view: reuses the normal conversation for its thread; any other navigation closes it.
@@ -894,8 +906,7 @@ function DesktopWorkspace() {
   async function sendToCommander(text: string) {
     if (!native) throw new Error("Open the Freddai desktop app to message Commander.");
     const state = await commanderApi.state();
-    const thread = state.thread_id ? db.sessions.find(t => t.id === state.thread_id) : undefined;
-    if (thread) { await resumeThread(thread, text); await refresh(); }
+    if (state.thread_id) { await invoke("queue_message", { session: state.thread_id, prompt: text, options: { request_id: crypto.randomUUID() } }); await refresh(); }
     else await createHomeThread(state.project.id, text);
   }
   function goHome() {
@@ -1126,10 +1137,11 @@ function DesktopWorkspace() {
     });
   }
   /** The single launch path: used by the New thread composer and by Home's per-project prompt. */
-  async function launchThread({ project, account, prompt, attachments, requestId, options, select = true }: {
+  async function launchThread({ project, account, prompt, attachments, requestId, options, select = true, onCreated }: {
     project: string; account: string; prompt: string; attachments: Attachment[]; requestId: string; options: LaunchOptions;
     /** False for Home tiles: the thread appears in the snapshot but is not opened, so Home stays put. */
     select?: boolean;
+    onCreated?: (id: string) => void;
   }) {
     const preview: Session = {
       id: "pending-launch", project, account,
@@ -1143,6 +1155,7 @@ function DesktopWorkspace() {
       const commander = db.projects.find(p => p.id === project)?.kind === "commander";
       const existing = commander ? (await commanderApi.state()).thread_id : null;
       const sid = await invoke<string>("launch", { project, account: existing ? null : account, prompt, options, existing });
+      onCreated?.(sid);
       setLaunching({ ...preview, id: sid });
       if (select && navigationRevision.current === sentNavigation) {
         setSelected(sid);
@@ -1155,9 +1168,42 @@ function DesktopWorkspace() {
       throw error;
     }
   }
+  // Keep a call begun in the empty composer alive when its first utterance opens the thread.
+  const newCallThread = useRef<string | null>(null);
+  const newCallSession = db.sessions.find(t => t.id === newCallThread.current) ?? (launching?.id === newCallThread.current ? launching : undefined);
+  const newVoiceCall = useVoiceCall({
+    threadId: "new-thread-call",
+    enabled: native && dialog === "new" && !!newAccount && !!destination && !working,
+    thread: {
+      isBusy: () => !!newCallSession && busy(newCallSession),
+      stopTurn: async () => { if (newCallThread.current) { await invoke("stop", { session: newCallThread.current }); await refresh(); } },
+      sendText: async prompt => {
+        if (newCallThread.current) {
+          if (!newCallSession) throw new Error("The new conversation is still loading.");
+          await send(newCallSession, undefined, false, prompt);
+          return;
+        }
+        if (!native || !newAccount || !destination || actionLock.current) throw new Error("Choose a ready project and agent before starting a call.");
+        actionLock.current = true; setWorking(true);
+        try {
+          const requestId = crypto.randomUUID();
+          await launchThread({ onCreated: id => { newCallThread.current = id; }, project: projectId, account: effective, prompt, attachments: [], requestId,
+            options: { permission_mode: effectivePermissionMode(newAccount.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" ? null : effort, attachments: [], request_id: requestId } });
+          await refresh();
+        } finally { actionLock.current = false; setWorking(false); }
+      },
+    },
+    view: { busy: !!newCallSession && busy(newCallSession), messages: newCallSession?.messages ?? [] },
+  });
+  useEffect(() => {
+    if (!newVoiceCall.snapshot?.active) { newCallThread.current = null; return; }
+    if (dialog === "new" && !newCallThread.current) return;
+    if (newCallThread.current === selected && !dialog && !homeActive && !settingsVisible) return;
+    newVoiceCall.end();
+  }, [dialog, selected, homeActive, settingsVisible, newVoiceCall.snapshot?.active]);
   // Home prompt: same launch path and defaults as a fresh New thread draft (project/global default account,
   // saved worktree preference, current default permission mode). Errors propagate to the tile.
-  const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode, homeSelections);
+  const resolveHomeTile = (project: string) => resolveHomeLaunch(db, project, permissionMode, homeSelections, homeAccount);
   async function createHomeThread(project: string, prompt: string): Promise<string> {
     if (!native) throw new Error("Open the Freddai desktop app to start threads.");
     const plan = resolveHomeTile(project);
@@ -1210,9 +1256,35 @@ function DesktopWorkspace() {
       if (failures.length) throw new Error(resumeFailureMessage(failures));
     });
   }
-  async function send(task: Session, e?: FormEvent, steer = false) {
+  /** `override` sends that exact text (voice call) instead of the draft: the draft and attachments stay untouched and failures throw to the caller. */
+  async function send(task: Session, e?: FormEvent, steer = false, override?: string) {
     e?.preventDefault();
-    const taskAccount = db.accounts.find(a => a.id === task.account), reply = getDraft(task.id), attachments = replyAttachments[task.id] ?? [];
+    const taskAccount = db.accounts.find(a => a.id === task.account), reply = override ?? getDraft(task.id), attachments = override === undefined ? replyAttachments[task.id] ?? [] : [];
+    if (override !== undefined) {
+      if (!native || !taskAccount || task.status === "archived" || !!task.archived || task.deleted_at != null) throw new Error("This thread cannot receive messages right now.");
+      if (!reply.trim()) return;
+      if (actionLock.current) throw new Error("Another action is still running.");
+      actionLock.current = true; setWorking(true);
+      try {
+        const requestId = replyRequest(task.id);
+        const command = busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.some(m => !isCompletionNotice(m)) ? "queue_message" : "launch";
+        setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, queued: command === "queue_message", options: { attachments: [] }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
+        try {
+          await invoke(command, {
+            session: task.id, project: task.project, account: null, prompt: reply,
+            options: { permission_mode: effectivePermissionMode(taskAccount.provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: [], request_id: requestId },
+            existing: task.id,
+          });
+        } catch (error) {
+          setOutgoing(old => old.filter(m => m.message.id !== requestId));
+          throw error;
+        }
+        setOutgoing(old => old.map(m => m.message.id === requestId ? { ...m, message: { ...m.message, delivery: "Sent · syncing…" } } : m));
+        delete replyRequests.current[task.id];
+        await refresh();
+      } finally { actionLock.current = false; setWorking(false); }
+      return;
+    }
     // "!command" runs in the thread's terminal panel instead of going to the agent ("!!" sends a literal "!" message).
     const terminalCwd = task.working_dir || db.projects.find(p => p.id === task.project)?.path;
     if (native && terminalCwd && !attachments.length && /^!(?!!)/.test(reply) && reply.slice(1).trim()) {
@@ -1223,7 +1295,7 @@ function DesktopWorkspace() {
     if (!native || working || staging || !taskAccount || (task.status === "archived" || !!task.archived || task.deleted_at != null) || !reply.trim()) return;
     await action(async () => {
       const requestId = replyRequest(task.id);
-      const command = steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.length ? "queue_message" : "launch";
+      const command = steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.some(m => !isCompletionNotice(m)) ? "queue_message" : "launch";
       setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, queued: command === "queue_message", options: { attachments: attachments.map(f => f.id) }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
       setThreadDraft(task.id, "");
       setReplyAttachments(previous => ({ ...previous, [task.id]: [] }));
@@ -1254,7 +1326,8 @@ function DesktopWorkspace() {
       return true;
     });
   }
-  const commanderProjectId = db.projects.find(p => p.kind === "commander")?.id;
+  const commanderProject = db.projects.find(p => p.kind === "commander");
+  const commanderProjectId = commanderProject?.id;
   const sorted = db.sessions.filter(t => !isCommanderThread(t, commanderProjectId))
     .sort(compareThreadRecency)
     .filter(
@@ -1284,7 +1357,7 @@ function DesktopWorkspace() {
     ...defaultProjectOrder,
     ...db.projects.map(p => p.id),
   ])];
-  const projectOrder = fullProjectOrder.filter(id => defaultProjectOrder.includes(id));
+  const projectOrder = fullProjectOrder.filter(id => id !== commanderProjectId && defaultProjectOrder.includes(id));
   function moveProjectGroup(id: string, target: string, after: boolean) {
     if (id === target) return;
     const next = fullProjectOrder.filter(p => p !== id);
@@ -1303,7 +1376,7 @@ function DesktopWorkspace() {
   const recentFinished = sanitizeRecentCount(recentFinishedPref);
   const buckets = bucketThreads(sorted, {
     read, selected, recentCount: recentFinished, scope: grouped ? "grouped" : "flat", hideRead, filter, pinned: secondary,
-    queued: t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0,
+    queued: t => db.queues?.find(q => q.session === t.id)?.messages.filter(m => !isBackgroundWake(m)).length ?? 0,
   });
   // "Recent" is one flat list across every project, newest first; it honours the same search/project/status filters as the project view.
   const navView = asThreadNavView(storedNavView);
@@ -1499,6 +1572,7 @@ function DesktopWorkspace() {
         onPopOut={() => void action(() => invoke("open_thread_window", { session: thread.id }))}
         onRename={title => renameThread(thread.id, title)}
         onSend={(e, steer) => send(thread, e, steer)}
+        onSendText={text => send(thread, undefined, false, text)}
         onQueueAction={(queueAction, message, prompt) => queueActionFor(thread, queueAction, message, prompt)}
         onAttach={() => void attach(thread.id)}
         action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips} resumeThread={resumeThread}
@@ -1543,6 +1617,8 @@ function DesktopWorkspace() {
           <ThreadStats sessions={db.sessions.filter(t =>
             (!activeWorkspace || activeWorkspace.projects.includes(t.project)) &&
             (projectFilter === "all" || t.project === projectFilter))} />
+          {native && <DashboardCall onActive={setDashboardCallActive} visible={homeActive && !settingsVisible} enabled={!!commanderData.state?.project.account || db.accounts.length > 0} sendText={sendToCommander}
+            view={{ busy: db.sessions.some(t => t.id === commanderData.state?.thread_id && busy(t)), messages: db.sessions.find(t => t.id === commanderData.state?.thread_id)?.messages ?? [] }} />}
           <Button
             variant="ghost"
             size="icon"
@@ -1611,6 +1687,8 @@ function DesktopWorkspace() {
           </Button>
         </div>
       )}
+
+      {newVoiceCall.snapshot?.active && newVoiceCall.controller && <VoiceCallBar call={newVoiceCall.controller} snapshot={newVoiceCall.snapshot} agentBusy={!!newCallSession && busy(newCallSession)} onEnd={newVoiceCall.end} />}
       <div className="app-body">
         <main className="workbench">
           <div className={`workbench-panes ${scheduleView || (task && !homeActive) || dialog === "new" ? "has-detail" : ""}`}>
@@ -1634,6 +1712,17 @@ function DesktopWorkspace() {
                       <House size={15} aria-hidden="true" />
                       <span>Dashboard</span>
                     </button>
+                    {commanderProject && <button
+                      type="button"
+                      className="dashboard-link"
+                      aria-current={commanderActive && !settingsVisible ? "page" : undefined}
+                      aria-label={`Open ${commanderProject.name}`}
+                      title={`Open ${commanderProject.name}`}
+                      onClick={openCommander}
+                    >
+                      <img src={brandMascotUrl} width={15} height={15} alt="" />
+                      <span>{commanderProject.name}</span>
+                    </button>}
                   </div>
                   <ThreadViewToggle value={navView} onChange={view => { setNavView(view); setRecentPages(0); }} />
                   <div className="list-heading list-search-row">
@@ -1711,7 +1800,7 @@ function DesktopWorkspace() {
                         const p = db.projects.find((p) => p.id === pid);
                         const collapsed = collapsedProjects.includes(pid);
                         const projectSchedules = (db.schedules || []).filter(s => s.project === pid);
-                        const attention = collapsed ? attentionCount(sorted.filter(t => t.project === pid), read, t => db.queues?.find(q => q.session === t.id)?.messages.length ?? 0) : 0;
+                        const attention = collapsed ? attentionCount(sorted.filter(t => t.project === pid), read, t => db.queues?.find(q => q.session === t.id)?.messages.filter(m => !isBackgroundWake(m)).length ?? 0) : 0;
                         return (
                           <section key={pid} data-project-id={pid} data-collapsed={collapsed} aria-label={`${p?.name} threads`}
                             className={projectDrag?.target === pid && projectDrag.id !== pid ? `project-reorder-${projectDrag.after ? "after" : "before"}` : undefined}>
@@ -1787,7 +1876,7 @@ function DesktopWorkspace() {
                               </DropdownMenu>
                               {native && p?.path && <ShipButton projectId={pid} projectName={p.name} path={p.path} client={tauriGitClient} onShip={pid2 => createHomeThread(pid2, SHIP_PROMPT)}
                                 activity={db.sessions.filter(t => t.project === pid).map(t => `${t.id}:${t.status}`).join("|")} />}
-                              {native && <MicButton target={false} className="project-settings-button project-mic-button"
+                              {native && <MicButton target={false} variant="ghost" className="project-settings-button project-mic-button"
                                 label={`Dictate new task in ${p?.name}`}
                                 onText={text => { void createHomeThread(pid, text).catch(e => setError(String(e))); }} />}
                               <Button
@@ -1884,6 +1973,7 @@ function DesktopWorkspace() {
                             const box = button.closest("form")?.querySelector("textarea");
                             setTimeout(() => focusEnd(box), 0);
                           }} />
+                          {native && <Button type="button" variant="ghost" size="icon" aria-label="Start voice call" title="Start a hands-free voice call" disabled={!newVoiceCall.canStart} onClick={() => { newCallThread.current = null; newVoiceCall.start(); }}><Phone size={18}/></Button>}
                           <PermissionSelect provider={newAccount?.provider} value={permissionMode} onChange={setPermissionMode} disabled={working}/>
                           <span className="composer-spacer"/>
                           {!!staging && <span className="attachment-status" role="status">Copying attachments…</span>}
@@ -1901,14 +1991,17 @@ function DesktopWorkspace() {
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <div className="home-pane">
                     <HomeView
-            sessions={db.sessions} projects={db.projects} accounts={db.accounts} schedules={db.schedules}
+            sessions={db.sessions} read={read} projects={fullProjectOrder.flatMap(id => { const project = db.projects.find(p => p.id === id); return project ? [project] : []; })} accounts={db.accounts} schedules={db.schedules}
+            workspaces={workspaces}
+            onMoveProject={moveProjectGroup}
             canCreate={native && !working && !launching}
             onOpenThread={id => { setHome(false); setSelected(id); }}
             onAddProject={addProject}
-            native={native} homeSelections={homeSelections}
+            onNewThread={newThreadInProject}
+            native={native} homeSelections={homeSelections} homeAccount={homeAccount} onHomeAccount={setHomeAccount}
             onHomeSelection={(account, selection) => setHomeSelections(previous => ({ ...previous, [account]: selection }))}
             onCreateThread={createHomeThread}
-            commander={native ? { onOpen: openCommander, onSend: sendToCommander } : undefined}
+            commander={native ? { onOpen: openCommander, onSend: sendToCommander, proposals: Array.isArray(commanderData.proposals) ? commanderData.proposals : undefined, onProposalRespond: respondProposal } : undefined}
             resolveLaunch={resolveHomeTile}
             onRespond={respondHome}
           />
@@ -1916,7 +2009,7 @@ function DesktopWorkspace() {
                 </ResizablePanel>
               </>}
               {commanderActive && <>
-                <ResizableHandle withHandle />
+                <ResizableHandle withHandle={!listHidden} />
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <CommanderView projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
                     renderConversation={id => selected === id ? conversation(view.focus) : null}
@@ -2037,9 +2130,11 @@ function DesktopWorkspace() {
                   : dialog === "projects" ? "Projects"
                   : dialog === "import" ? "Import sessions"
                   : dialog === "appearance" ? "Appearance"
-                  : dialog === "companion" ? "Phone pairing"
+                  : dialog === "companion" ? "Devices & satellite"
                   : dialog === "voice" ? "Voice"
                   : dialog === "agentconfig" ? "Agent config"
+                  : dialog === "commander" ? "Commander"
+                  : dialog === "google" ? "Connected accounts"
                   : dialog === "background" ? "Background work"
                   : dialog === "settings"
                     ? "Agents & defaults"
@@ -2063,6 +2158,8 @@ function DesktopWorkspace() {
                   : dialog === "companion" ? "Generate a six-digit code, then approve your phone to connect to this Mac."
                   : dialog === "voice" ? "Push-to-talk dictation, transcribed on this Mac."
                   : dialog === "agentconfig" ? "MCP servers, hooks, plugins and memory files for Claude Code and Codex. Applies to new agent sessions."
+                  : dialog === "commander" ? "Name, attitude and what Commander remembers. The app manages these quietly; edit only if you want to."
+                  : dialog === "google" ? "Connect Google accounts and start agent work when mail arrives or your calendar and Drive change."
                   : dialog === "background" ? "Control startup and work that continues when the window closes."
                   : dialog === "settings"
                     ? "Manage agents and accounts, then choose the default for new conversations."
@@ -2270,6 +2367,8 @@ function DesktopWorkspace() {
           {dialog === "appearance" && <AppearanceSettings fontSizes={fontSizes} appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
           {dialog === "voice" && <VoiceSettings native={native && /Mac/.test(navigator.platform)}/>}
           {dialog === "agentconfig" && <AgentConfigSettings native={native} accounts={db.accounts} projects={db.projects}/>}
+          {dialog === "commander" && <><CommanderProfile/><CommanderSettings projects={db.projects}/></>}
+          {dialog === "google" && <ConnectedAccountsSettings db={db} native={native}/>}
           {dialog === "background" && <BackgroundSettings native={native}/>}
           {dialog === "threads" && (
             <FieldGroup>
