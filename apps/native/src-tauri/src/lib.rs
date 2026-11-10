@@ -4,7 +4,6 @@ mod browser;
 mod local_preview;
 #[cfg(target_os = "macos")]
 mod routine_notifications;
-#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos", test))]
 mod companion_operations;
 #[cfg(target_os = "macos")]
 mod writing_tools;

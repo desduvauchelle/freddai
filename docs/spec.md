@@ -3457,3 +3457,5 @@ Delivery verification (2026-11-10): tests — `freddai-core --lib` 312/312; `fre
 ### Desktop release 1.0.0 CI compatibility
 
 Release builds preserve Unix owner-only preview grant files while using portable file creation on Windows. Platform command registration excludes macOS-only recording APIs on Windows and Linux. Clean CI explicitly installs the separately locked relay dependencies. Windows host acceptance selects its synthetic project by ID so Commander project creation does not invalidate the large-snapshot check. Version 1.0.0 is distributed through signed desktop release artifacts and the published updater feed; publication and device verification are recorded separately.
+
+Desktop Google capability detection shares its portable helper on Windows and Linux as well as Apple platforms; the helper has no platform-specific dependencies.
