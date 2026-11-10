@@ -18,6 +18,7 @@ jobs:
           node-version: '24'
       - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
+      - run: npm ci --prefix services/relay
       - run: pnpm typecheck
       - run: node --test apps/web/tests/*.test.mjs services/relay/server.test.mjs
       - run: pnpm build

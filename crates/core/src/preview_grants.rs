@@ -6,7 +6,9 @@
 //! imports unexpired entries into its in-memory grants (`preview_host::grant_port`), which applies
 //! the port rules again. Entries expire after 12 h.
 use serde_json::{json, Value};
-use std::{fs, io::Write, os::unix::fs::OpenOptionsExt, path::{Path, PathBuf}};
+use std::{fs, io::Write, path::{Path, PathBuf}};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 pub const TTL_SECS: u64 = 12 * 3600;
 /// Companion HTTPS listener; never shareable.
@@ -33,7 +35,11 @@ fn read(root: &Path, now: u64) -> Vec<(u16, u64)> {
 pub fn record(root: &Path, port: u16) -> Result<(), String> {
     let dir = root.join("companion");
     fs::create_dir_all(&dir).map_err(|e| format!("Cannot record preview share: {e}"))?;
-    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).mode(0o600).open(dir.join("preview-grants.lock")).map_err(|e| format!("Cannot record preview share: {e}"))?;
+    let mut lock_options = fs::OpenOptions::new();
+    lock_options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    lock_options.mode(0o600);
+    let lock = lock_options.open(dir.join("preview-grants.lock")).map_err(|e| format!("Cannot record preview share: {e}"))?;
     fs2::FileExt::lock_exclusive(&lock).map_err(|e| format!("Cannot record preview share: {e}"))?;
     let now = now();
     let mut entries: Vec<_> = read(root, now).into_iter().filter(|(p, _)| *p != port).collect();
@@ -42,7 +48,11 @@ pub fn record(root: &Path, port: u16) -> Result<(), String> {
     let path = file(root);
     let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
     let result = (|| {
-        let mut f = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&tmp)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut f = options.open(&tmp)?;
         f.write_all(body.as_bytes())?;
         f.sync_all()?;
         fs::rename(&tmp, &path)

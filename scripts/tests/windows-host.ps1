@@ -22,13 +22,13 @@ try {
   if (!(($hello | ConvertFrom-Json).version)) { throw 'Missing handshake version' }
   $snapshot = & $probe snapshot $root | ConvertFrom-Json
   if ($LASTEXITCODE -ne 0 -or $snapshot.accounts.Count -ne 0 -or $snapshot.sessions.Count -ne 0) { throw 'Expected an empty workspace' }
-  if ($snapshot.projects[0].name.Length -ne $largeName.Length) { throw 'Large snapshot was truncated' }
+  if (($snapshot.projects | Where-Object id -eq fixture).name.Length -ne $largeName.Length) { throw 'Large snapshot was truncated' }
   & $probe upgrade_idle $root
   if ($LASTEXITCODE -ne 0 -or !$hostProcess.WaitForExit(10000)) { throw 'Idle upgrade failed' }
   $hostProcess = Start-Process $probe -ArgumentList @('--host', ('"' + $root + '"')) -PassThru
   Start-Sleep -Seconds 1
   $recovered = & $probe snapshot $root | ConvertFrom-Json
-  if ($LASTEXITCODE -ne 0 -or $recovered.projects[0].name.Length -ne $largeName.Length) { throw 'Host did not recover persisted data after restart' }
+  if ($LASTEXITCODE -ne 0 -or ($recovered.projects | Where-Object id -eq fixture).name.Length -ne $largeName.Length) { throw 'Host did not recover persisted data after restart' }
   & $probe upgrade_idle $root
   if (!$hostProcess.WaitForExit(10000)) { throw 'Host did not exit' }
   Write-Output 'PASS: Windows host handshake, large account-free snapshot, idle shutdown, persisted restart'

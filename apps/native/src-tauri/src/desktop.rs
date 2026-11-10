@@ -1288,6 +1288,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             voice_stop_recording,
             #[cfg(target_os = "macos")]
             voice_cancel_recording,
+            #[cfg(target_os = "macos")]
             voice_recording_level,
             #[cfg(target_os = "macos")]
             voice_call_start,
