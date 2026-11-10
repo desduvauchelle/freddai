@@ -106,7 +106,8 @@ mod tests {
         let db: Database = serde_json::from_value(json!({"accounts":[],"projects":[],"sessions":[session],"preferences":{"prefer_last":false}})).unwrap();
         let html = chunk(&db,"t","output/email.html",0).unwrap();
         assert_eq!(html["mime"], "text/html");
-        assert!(html["path"].as_str().unwrap().starts_with('/') && html["path"].as_str().unwrap().ends_with("output/email.html"));
+        let html_path = std::path::Path::new(html["path"].as_str().unwrap());
+        assert!(html_path.is_absolute() && html_path.ends_with(std::path::Path::new("output").join("email.html")));
         let text = base64::engine::general_purpose::STANDARD.decode(html["data"].as_str().unwrap()).unwrap();
         assert_eq!(String::from_utf8(text).unwrap(), "<h1>Hi é</h1>");
         assert!(chunk(&db,"t","bad.html",0).unwrap_err().contains("UTF-8"));

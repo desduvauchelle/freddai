@@ -216,12 +216,14 @@ fn flow_expires_and_releases_port() {
     let port: u16 = query_of(&auth_url)["redirect_uri"].rsplit(':').next().unwrap().parse().unwrap();
     // Do not re-bind the port: other tests allocate ephemeral ports concurrently and may grab the
     // freed one, which made this assertion flaky. Instead prove the flow's listener is gone by
-    // probing it: refused = released; if some other test's listener already reuses the port, it
+    // probing it: refused = released (Windows may instead time out its SYN retries);
+    // if some other test's listener already reuses the port, it
     // must not be the sign-in listener (which answers unknown paths with "Nothing to see here.").
     use std::io::{Read, Write};
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     match std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)) {
-        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused
+            || (cfg!(windows) && e.kind() == std::io::ErrorKind::TimedOut) => {}
         Err(e) => panic!("sign-in port {port} should refuse connections once expired, got: {e}"),
         Ok(mut s) => {
             let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(2)));
