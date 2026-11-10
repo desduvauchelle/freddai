@@ -40,6 +40,7 @@ try {
     await page.setViewportSize({ width, height });
     await page.evaluate(value => { document.documentElement.dataset.companionSidebar = String(value); }, sidebar);
     assert.equal(await columns(), count, `${width}×${height} columns`);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const heading = await page.getByRole('heading', { name: 'Your projects', exact: true }).boundingBox();
     const controls = await defaults.boundingBox();
     if (width >= 620) {

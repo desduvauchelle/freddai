@@ -18,12 +18,12 @@ try {
   await page.evaluate(() => window.approveSyntheticPairing());
   await page.getByText('Paired companion screen').waitFor();
   await page.setViewportSize({ width: 900, height: 800 }); await page.goto(base + '?desktop');
-  await page.getByRole('button', { name: 'Pair phone', exact: true }).click();
+  await page.getByRole('button', { name: 'Pair device', exact: true }).click();
   await page.getByText('123456', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Approve phone', exact: true }).click();
-  await page.getByRole('button', { name: 'Revoke access', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Approve device', exact: true }).click();
+  await page.getByRole('button', { name: 'Revoke access for Test iPhone', exact: true }).waitFor();
   assert.equal(await page.getByText('123456', { exact: true }).count(), 0);
-  await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
+  await page.getByRole('button', { name: 'Revoke access for Test iPhone', exact: true }).click();
   await page.waitForFunction(() => !document.body.textContent.includes('Revoke access'));
   console.log('Pairing UI passed: code validation, approval gate, successful transition, Mac approval and revocation (synthetic boundary).');
 } finally { await browser.close(); }

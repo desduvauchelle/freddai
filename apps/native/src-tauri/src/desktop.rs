@@ -1155,9 +1155,13 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             app.manage(host);
             app.manage(crate::terminal::Terminals::default());
             crate::updater::start(app.handle());
+            #[cfg(target_os = "macos")]
+            crate::updater::install_menu(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")] crate::satellite::satellite_onboarding_needed,
+            #[cfg(target_os = "macos")] crate::satellite::satellite_finish_onboarding,
             #[cfg(target_os = "macos")] crate::satellite::satellite_mode,
             #[cfg(target_os = "macos")] crate::satellite::satellite_set_mode,
             crate::browser::browser_view,

@@ -1096,3 +1096,47 @@
 .companion-dashboard-preserved { display: contents; }
 .companion-dashboard-preserved[hidden] { display: none; }
 .companion:has(> .companion-sheet-handle) { height: calc(var(--companion-viewport-height, 100dvh) * .9); margin-top: calc(var(--companion-viewport-height, 100dvh) * .1); padding-top: 0; overflow: hidden; }
+
+/* The web companion and Mac satellite share the desktop project card. */
+.companion-dashboard article.home-tile { padding: 8px 10px; border-radius: 5px; background: var(--card); }
+.companion-dashboard .home-tile .companion-project-actions { display: flex; align-items: center; gap: 4px; }
+.companion-dashboard .home-tile .companion-project-controls { margin: 0; }
+.companion-dashboard .home-tile .dashboard-mic { width: 44px; padding: 0; font-size: 0; gap: 0; background: transparent; color: inherit; }
+.companion-container { height: 100%; }
+.companion-desktop { height: 100dvh; display: flex; overflow: hidden; }
+.companion-desktop > .companion { max-width: none; margin: 0; flex: 1; min-width: 0; height: 100%; }
+.companion-desktop-sidebar { width: 280px; flex-shrink: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--sidebar, var(--muted)); }
+.companion-desktop-brand { padding: 48px 16px 12px; font-size: 13px; font-weight: 650; }
+.companion-desktop-sidebar nav { display: flex; justify-content: space-between; padding: 0 8px; }
+.companion-desktop-threads { flex: 1; min-height: 0; }
+.companion-desktop-toolbar { display: flex; align-items: center; gap: 8px; padding: 40px 12px 4px; flex-shrink: 0; }
+.companion-desktop[data-navigator="false"] .companion-desktop-toolbar { padding-left: 88px; }
+.companion-desktop .companion-header { min-height: 44px; padding: 6px 14px; }
+.companion-desktop .companion-header h1 { font-size: 14px; }
+.companion-desktop button { min-height: 28px; }
+.companion-desktop .companion-row { padding: 6px 12px; gap: 8px; }
+.companion-desktop .companion-row strong { font-size: 12px; }
+.companion-desktop .companion-row small, .companion-desktop .companion-row time { font-size: 10px; }
+.companion-desktop .companion-project-heading { padding: 6px 12px; }
+.companion-desktop .companion-project-heading h2 { font-size: 12px; }
+.companion-desktop .companion-filters { flex-wrap: wrap; padding: 6px 12px; gap: 6px; }
+.companion-desktop .companion-filters select { max-width: 100%; font-size: 11px; min-height: 28px; }
+.companion-desktop .companion-search { padding: 8px 12px; }
+.companion-desktop .companion-search input { height: 30px; font-size: 12px; }
+.companion-desktop .companion-dashboard { padding: 12px 14px 20px; gap: 14px; }
+.companion-desktop .companion-project-grid { grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 8px; }
+.companion-desktop .companion-dashboard-heading h2 { font-size: 13px; }
+.companion-desktop .home-tile .dashboard-mic { width: 28px; height: 28px; min-height: 28px; }
+@media (max-width: 760px) {
+  .companion-desktop-sidebar { width: 240px; }
+}
+
+.companion-desktop-sidebar nav[hidden] { display: none; }
+.companion-desktop .companion-project-group { margin-top: 4px; }
+.companion-desktop .companion-project-toggle { min-height: 28px; }
+.companion-desktop .companion-project-heading > button { height: 28px; }
+.companion-desktop .companion-desktop-toolbar { min-height: 76px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+@media (max-width: 619px) {
+  .companion-dashboard .home-tile > header { flex-wrap: wrap; }
+  .companion-dashboard .home-tile .companion-project-actions { flex-basis: 100%; justify-content: flex-end; }
+}

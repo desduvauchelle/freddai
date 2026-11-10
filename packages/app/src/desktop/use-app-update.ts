@@ -22,6 +22,15 @@ export function useAppUpdate(native: boolean, beforeRestart: () => void) {
       setNotice(manualCheckNotice(result));
     } catch (e) { setState({ state: "error", message: `Couldn't check for updates: ${e}` }); }
   }, []);
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    listen("updater://check-requested", () => void check()).then(un => {
+      if (cancelled) un(); else stop = un;
+    });
+    return () => { cancelled = true; stop?.(); };
+  }, [native, check]);
   const run = useCallback(async (kind: UpdateAction) => {
     try {
       if (kind === "retry") return await check();

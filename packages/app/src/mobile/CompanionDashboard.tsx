@@ -1,3 +1,4 @@
+import { ProjectTile } from "../desktop/ProjectTile";
 import { dashboardAssistantFor, dashboardControlKey } from './native-dashboard';
 import { DashboardSelect } from "../desktop/DashboardSelect";
 import { dashboardProjectGroups } from './dashboard-projects';
@@ -39,14 +40,20 @@ type Props = {
 };
 
 function ProjectCard({ project, snapshot, now, onProject, ...props }: Props & { project: CompanionProject; now: number; onProject: () => void }) {
-  return <article className="companion-project-card" aria-label={`Project ${project.name}`}>
-    <button className="companion-project-open" onClick={onProject} aria-label={`Open project ${project.name}`}>
-      <span className="companion-state" style={{ background: project.color }} /><h3 style={{ color: project.color }} aria-live="polite">{props.sendingProjects?.includes(project.id) ? 'Sending message…' : project.name}</h3>
-    </button>
-    <ProjectActions {...props} compact project={project} snapshot={snapshot} />
-    {snapshot.threads.filter(t => t.project === project.id && !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).slice(0, 3).map(thread =>
-      <button key={thread.id} className="companion-project-recent" onClick={() => props.onOpen(thread.id)}><span className="companion-project-title">{thread.title}</span><span className="companion-state" data-status={threadListStatus(thread, companionStatusRead(snapshot, props.read ?? {}))} role="img" aria-label={labelStatus(threadListStatus(thread, companionStatusRead(snapshot, props.read ?? {})))} /></button>)}
-  </article>;
+  const threads = snapshot.threads.filter(t => t.project === project.id && !['archived', 'deleted'].includes(t.status));
+  const midnight = new Date(now).setHours(0, 0, 0, 0);
+  const counts = {
+    working: threads.filter(t => ['starting', 'running'].includes(nativeRunState(t))).length,
+    done: threads.filter(t => t.status === 'done' && !t.pending && t.updated >= midnight).length,
+    needs: threads.filter(t => nativeRunState(t) === 'waiting').length,
+    failed: threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight).length,
+  };
+  return <ProjectTile openLabel={`Open project ${project.name}`} project={project} hasThreads={threads.length > 0} counts={counts}
+    recent={[...threads].sort(compareThreadRecency).slice(0, 3).map(t => ({ id: t.id, title: t.title, status: threadListStatus(t, companionStatusRead(snapshot, props.read ?? {})) }))}
+    onOpen={onProject} onOpenThread={props.onOpen}
+    actions={<ProjectActions {...props} compact project={project} snapshot={snapshot} />}>
+    {props.sendingProjects?.includes(project.id) && <p role="status">Sending message…</p>}
+  </ProjectTile>;
 }
 
 function ProjectActions({ project, connected, client, onNew, onDictation,

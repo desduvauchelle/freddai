@@ -1,3 +1,4 @@
+import { ProjectTile } from "./ProjectTile";
 import { dashboardProjectGroups } from "../mobile/dashboard-projects";
 import { DashboardSelect } from "./DashboardSelect";
 import { Dot, labelStatus } from "./ThreadStatus";
@@ -115,33 +116,15 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setDictating(false); }
   }
-  return <article className="home-tile" aria-label={`Project ${project.name}`}>
-    <header>
-      <span className="home-project-dot" style={{ background: project.color }} aria-hidden="true" />
-      <button type="button" className="home-tile-open" title={entry.latest ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`} aria-label={entry.latest ? `Open latest thread in ${project.name}` : `Create first thread in ${project.name}`} onClick={onOpen}><strong style={{ color: project.color }}>{project.name}</strong></button>
-      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
+  return <ProjectTile project={project} hasThreads={!!entry.latest} counts={entry}
+    recent={entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))}
+    onOpen={onOpen} onOpenThread={onOpenThread} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <MicButton target={false} onText={t => void dictate(t)} />
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
           title="New thread" aria-expanded={open} disabled={!canCreate} onClick={onToggle}>
           {open ? <X size={14} /> : <Plus size={14} />}
         </Button>
-      </div>
-    </header>
-    <ul className="home-counts" aria-label="Thread status">
-      <li data-kind="working" data-active={entry.working > 0} aria-label={`${entry.working} working`} title={`${entry.working} working`}><Activity size={12} aria-hidden="true" />{entry.working}</li>
-      <li data-kind="done" data-active={entry.done > 0} aria-label={`${entry.done} done today`} title={`${entry.done} done today`}><Check size={12} aria-hidden="true" />{entry.done}</li>
-      <li data-kind="needs" data-active={entry.needs > 0} aria-label={`${entry.needs} needs you`} title={`${entry.needs} needs you`}><CircleAlert size={12} aria-hidden="true" />{entry.needs}</li>
-      {entry.failed > 0 && <li data-kind="failed" aria-label={`${entry.failed} failed today`} title={`${entry.failed} failed today`}><CircleAlert size={12} aria-hidden="true" />{entry.failed}</li>}
-    </ul>
-    {entry.recent.length > 0 && <ul className="home-recent" aria-label={`Recent threads in ${project.name}`}>
-      {entry.recent.map(thread => {
-        const status = threadListStatus(thread, read);
-        return <li key={thread.id}><button type="button" onClick={() => onOpenThread(thread.id)} title={`${thread.title || "Untitled thread"} · ${labelStatus(status)}`}>
-          <Dot status={status} />
-          <span>{thread.title || "Untitled thread"}</span>
-        </button></li>;
-      })}
-    </ul>}
+      </div>}>
     {micUsed && <VoiceNotice target />}
     {dictating && <div className="voice-notice" role="status">Starting thread…</div>}
     {(open || armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
@@ -155,7 +138,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
       <Button type="submit" size="sm" disabled={!canCreate || busy || !text.trim() || !plan.ok}>{busy ? "Starting…" : "Start"}</Button>
       {error && <p role="alert" className="inline-error">{error}</p>}
     </form>}
-  </article>;
+  </ProjectTile>;
 }
 
 export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, onMoveProject, homeAccount = "", onHomeAccount }: HomeViewProps) {

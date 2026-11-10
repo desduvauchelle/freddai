@@ -288,3 +288,25 @@ mod tests {
         assert_eq!(serde_json::to_value(UpdateState::ReadyToRestart { version: "1".into() }).unwrap()["state"], "ready_to_restart");
     }
 }
+
+#[cfg(target_os = "macos")]
+pub fn install_menu(app: &mut tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    let menu = Menu::default(app.handle())?;
+    let items = menu.items()?;
+    let app_menu = items.first().and_then(|item| item.as_submenu())
+        .ok_or_else(|| std::io::Error::other("Default application menu is missing"))?;
+    app_menu.insert(&MenuItem::with_id(app.handle(), "check_for_updates", "Check for Updates…", true, None::<&str>)?, 1)?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id().as_ref() == "check_for_updates" {
+            use tauri::Emitter;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.emit("updater://check-requested", ());
+            }
+        }
+    });
+    Ok(())
+}

@@ -88,11 +88,30 @@ it('closes a browser thread sheet by dragging its handle down to Dashboard', asy
   expect(screen.queryByRole('button', { name: 'Close thread' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Back to threads' }));
   fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
-  fireEvent.click(document.querySelector<HTMLButtonElement>('.companion-project-recent')!);
+  fireEvent.click(document.querySelector<HTMLButtonElement>('.home-recent button')!);
   const handle = await screen.findByRole('button', { name: 'Close thread' });
   fireEvent.touchStart(handle, { touches: [{ clientX: 150, clientY: 20 }] });
   fireEvent.touchMove(handle, { touches: [{ clientX: 152, clientY: 110 }] });
   fireEvent.touchEnd(handle, { touches: [], changedTouches: [{ clientX: 152, clientY: 110 }] });
   expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Close thread' })).toBeNull();
+});
+
+it('keeps the satellite navigator beside the dashboard and selected conversation, and can hide and reopen it', async () => {
+  const snapshot = data(2);
+  snapshot.threads[0].messages = [{ role: 'assistant', text: 'Remote conversation content' } as never];
+  render(<MobileApp desktop client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(snapshot) }} deviceSettings={<p>This Mac settings</p>} />);
+  expect(await screen.findByRole('button', { name: 'Dashboard' })).toBeTruthy();
+  const sidebar = screen.getByRole('complementary', { name: 'Thread navigator' });
+  const thread = await within(sidebar).findAllByRole('button', { name: /^Task 00/ });
+  fireEvent.click(thread[0]);
+  expect(await screen.findByText('Remote conversation content')).toBeTruthy();
+  expect(screen.getByRole('complementary', { name: 'Thread navigator' })).toBe(sidebar);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Toggle thread navigator' })[0]);
+  expect(screen.queryByRole('complementary', { name: 'Thread navigator' })).toBeNull();
+  expect(screen.getByText('Remote conversation content')).toBeTruthy();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Toggle thread navigator' })[0]);
+  expect(screen.getByRole('complementary', { name: 'Thread navigator' })).toBeTruthy();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Settings' })[0]);
+  expect(await screen.findByText('This Mac settings')).toBeTruthy();
 });

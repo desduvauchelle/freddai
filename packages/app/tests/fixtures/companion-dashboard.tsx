@@ -11,7 +11,7 @@ const projects = ['Project One', 'Project Two', 'Project Three', 'A project with
 const snapshot: CompanionSnapshot = { projects, threads: [] };
 const calls: unknown[] = [];
 Object.assign(window, { dashboardCalls: calls });
-createRoot(document.getElementById('root')!).render(<MobileApp client={{ ...disconnectedClient,
+createRoot(document.getElementById('root')!).render(<MobileApp desktop={new URLSearchParams(location.search).has("desktop")} client={{ ...disconnectedClient,
   snapshot: async () => structuredClone(snapshot),
   models: async () => [],
   summaries: {

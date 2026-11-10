@@ -289,6 +289,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
     let builder=tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let builder=builder.plugin(tauri_plugin_native_shell::init());
+    #[cfg(target_os = "macos")]
+    let builder=builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_notification::init());
     builder.setup(move |app| {
         use tauri::Manager;
         #[cfg(target_os = "android")]
@@ -302,12 +304,19 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             let config=app.config().app.windows.first().cloned().ok_or("Missing window configuration")?;
             let window=tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?.build()?;
             window.show()?;
+            crate::updater::start(app.handle());
+            crate::updater::install_menu(app)?;
         }
         Ok(())
     })
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")] crate::satellite::satellite_mode,
             #[cfg(target_os = "macos")] crate::satellite::satellite_set_mode,
+            #[cfg(target_os = "macos")] crate::updater::updater_state,
+            #[cfg(target_os = "macos")] crate::updater::check_for_updates,
+            #[cfg(target_os = "macos")] crate::updater::install_update,
+            #[cfg(target_os = "macos")] crate::updater::restart_app,
+            #[cfg(target_os = "macos")] crate::updater::open_release_page,
             platform,companion_wake_refresh,companion_wake_info,companion_wake,companion_pairing_status,companion_pair,companion_pair_claim,companion_snapshot,companion_start,companion_reply,companion_composer,companion_upload_path,companion_transcribe_path,companion_respond,preview_open,companion_action,companion_mark_read,companion_merge_read])
         .run(context).expect("Cannot run mobile companion");
 }

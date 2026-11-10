@@ -9,7 +9,9 @@
     "./mobile": "./src/mobile/MobileApp.tsx",
     "./mobile-pairing": "./src/mobile/Pairing.tsx",
     "./mobile-client": "./src/mobile/native-client.ts",
-    "./mobile-fixture": "./src/mobile/fixture-client.ts"
+    "./mobile-fixture": "./src/mobile/fixture-client.ts",
+    "./app-update": "./src/desktop/use-app-update.ts",
+    "./update-state": "./src/desktop/app-update.ts"
   },
   "scripts": {
     "typecheck": "tsc",
