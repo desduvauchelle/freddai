@@ -40,6 +40,12 @@ struct OptionModel: Decodable, Equatable {
   let label: String
 }
 
+/// Present whenever a Commander project exists, independent of filters and search.
+struct CommanderModel: Decodable, Equatable {
+  let id: String
+  let name: String
+}
+
 struct ThreadFiltersModel: Decodable, Equatable {
   var workspace: String?
 
@@ -273,7 +279,7 @@ extension ProductUsageFooterView {
 struct ThreadsModel: Decodable {
   var productUsage: [ProductUsageModel]?
 
-  let groups: [ThreadGroupModel]
+  var groups: [ThreadGroupModel]
   var canReorderProjects: Bool = false
   var selectedId: String = ""
   /// "projects" or "recent"; JS owns this preference and the Recent list (computed by `selectRecentThreads`).
@@ -283,6 +289,7 @@ struct ThreadsModel: Decodable {
   var recentSection: RecentModel = RecentModel()
   var filters: ThreadFiltersModel = ThreadFiltersModel()
   var workspaceOptions: [OptionModel]?
+  var commander: CommanderModel?
   var projectOptions: [OptionModel] = []
   var statusOptions: [OptionModel] = []
 }
@@ -330,6 +337,11 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   private let searchField = UISearchTextField()
   private let filterButton = UIButton(type: .system)
   private let connectionIcon = UIImageView(image: UIImage(systemName: "desktopcomputer"))
+  private let dashboardTile = NavTileButton()
+  private let commanderTile = NavTileButton()
+  private let chipsScroll = UIScrollView()
+  private let chipsStack = UIStackView()
+  private var activeFilterCount = 0
   private var searchDebounce: DispatchWorkItem?
   private let emptySection = "__empty__"
   private let recentSection = "__recent__"
@@ -459,43 +471,102 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     searchRow.alignment = .center
     searchRow.spacing = 6
 
-    var dashboardConfig = UIButton.Configuration.plain()
-        dashboardConfig.image = UIImage(systemName: "square.grid.2x2")
-    dashboardConfig.baseForegroundColor = .secondaryLabel
-    dashboardConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-    let dashboard = UIButton(configuration: dashboardConfig)
-    dashboard.accessibilityLabel = "Dashboard"
-    dashboard.widthAnchor.constraint(equalToConstant: 44).isActive = true
-    dashboard.heightAnchor.constraint(equalToConstant: 44).isActive = true
-    titleRow.addArrangedSubview(dashboard)
-    dashboard.accessibilityIdentifier = "companion-dashboard"
-    dashboard.addAction(UIAction { [weak self] _ in self?.onDashboard?() }, for: .touchUpInside)
-    var settingsConfig = UIButton.Configuration.plain()
-    settingsConfig.image = UIImage(systemName: "gearshape")
-    settingsConfig.baseForegroundColor = .secondaryLabel
-    settingsConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-    settingsConfig.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0)
-    let settings = UIButton(configuration: settingsConfig)
-    settings.accessibilityLabel = "Settings"
-    settings.widthAnchor.constraint(equalToConstant: 44).isActive = true
-    settings.accessibilityIdentifier = "companion-settings"
-    settings.accessibilityHint = "Organize projects and workspaces"
-    settings.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-    settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .touchUpInside)
-    titleRow.insertArrangedSubview(settings, at: titleRow.arrangedSubviews.count - 1)
-    var addConfig = UIButton.Configuration.plain()
-    addConfig.title = "Project"
-    addConfig.image = UIImage(systemName: "folder.badge.plus")
-    addConfig.imagePadding = 8
-    let addProject = UIButton(configuration: addConfig)
-    addProject.accessibilityLabel = "Add project"
-    addProject.accessibilityIdentifier = "companion-add-project"
-    addProject.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-    addProject.addAction(UIAction { [weak self] _ in self?.onNewThread?("freddai:add-project") }, for: .touchUpInside)
-    let column = UIStackView(arrangedSubviews: [titleRow, addProject, searchRow])
+    // Add project + Settings share one icon style at the trailing edge of the title row.
+    func iconButton(_ symbol: String, label: String, id: String, hint: String? = nil, action: @escaping () -> Void) -> UIButton {
+      var config = UIButton.Configuration.plain()
+      config.image = UIImage(systemName: symbol)
+      config.baseForegroundColor = .secondaryLabel
+      config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
+      let button = UIButton(configuration: config)
+      button.accessibilityLabel = label
+      button.accessibilityIdentifier = id
+      button.accessibilityHint = hint
+      button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+      button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+      button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+      return button
+    }
+    titleRow.addArrangedSubview(iconButton("folder.badge.plus", label: "Add project", id: "companion-add-project") { [weak self] in self?.onNewThread?("freddai:add-project") })
+    titleRow.addArrangedSubview(iconButton("gearshape", label: "Settings", id: "companion-settings", hint: "Organize projects and workspaces") { [weak self] in self?.onSettings?() })
+
+    // Navigation row: Dashboard and Commander as equal-width tiles.
+    configureNavTile(dashboardTile, title: "Dashboard", image: UIImage(systemName: "square.grid.2x2"), id: "companion-dashboard", hint: nil) { [weak self] in self?.onDashboard?() }
+    configureNavTile(commanderTile, title: "Commander", image: Self.commanderTileImage(), id: "drawer-commander", hint: "Opens Commander") { [weak self] in self?.onSelectThread?("commander:open") }
+    commanderTile.isHidden = true
+    let navRow = UIStackView(arrangedSubviews: [dashboardTile, commanderTile])
+    navRow.axis = .horizontal
+    navRow.distribution = .fillEqually
+    navRow.spacing = 8
+
+    // Active-filter chips: hidden (zero height) unless a filter is on.
+    chipsStack.axis = .horizontal
+    chipsStack.spacing = 8
+    chipsStack.alignment = .center
+    chipsStack.translatesAutoresizingMaskIntoConstraints = false
+    chipsScroll.showsHorizontalScrollIndicator = false
+    chipsScroll.alwaysBounceVertical = false
+    chipsScroll.isHidden = true
+    chipsScroll.addSubview(chipsStack)
+    NSLayoutConstraint.activate([
+      chipsStack.topAnchor.constraint(equalTo: chipsScroll.contentLayoutGuide.topAnchor, constant: 4),
+      chipsStack.bottomAnchor.constraint(equalTo: chipsScroll.contentLayoutGuide.bottomAnchor, constant: -4),
+      chipsStack.leadingAnchor.constraint(equalTo: chipsScroll.contentLayoutGuide.leadingAnchor),
+      chipsStack.trailingAnchor.constraint(equalTo: chipsScroll.contentLayoutGuide.trailingAnchor),
+      chipsScroll.heightAnchor.constraint(equalTo: chipsStack.heightAnchor, constant: 8),
+    ])
+    let column = UIStackView(arrangedSubviews: [titleRow, navRow, searchRow, chipsScroll])
     column.axis = .vertical
     column.spacing = 10
     return column
+  }
+
+  /// Commander tile icon: the mascot on its cream disc, pre-rendered so it is not tinted.
+  private static func commanderTileImage() -> UIImage? {
+    let size = CGSize(width: 24, height: 24)
+    return UIGraphicsImageRenderer(size: size).image { _ in
+      UIColor(red: 234.0 / 255, green: 229.0 / 255, blue: 215.0 / 255, alpha: 1).setFill()
+      UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
+      guard let mascot = MascotImage.smallImage else { return }
+      let scale = min(size.width / mascot.size.width, size.height / mascot.size.height)
+      let fitted = CGSize(width: mascot.size.width * scale, height: mascot.size.height * scale)
+      mascot.draw(in: CGRect(x: (size.width - fitted.width) / 2, y: (size.height - fitted.height) / 2, width: fitted.width, height: fitted.height))
+    }.withRenderingMode(.alwaysOriginal)
+  }
+
+  private func configureNavTile(_ tile: NavTileButton, title: String, image: UIImage?, id: String, hint: String?, action: @escaping () -> Void) {
+    tile.setContent(title: title, image: image)
+    tile.accessibilityLabel = title
+    tile.accessibilityIdentifier = id
+    tile.accessibilityHint = hint
+    tile.addAction(UIAction { _ in action() }, for: .touchUpInside)
+  }
+
+  /// One chip per active filter (workspace, project, status); tapping clears just that filter.
+  private func rebuildFilterChips(_ model: ThreadsModel) {
+    func name(_ options: [OptionModel]?, _ id: String) -> String { options?.first { $0.id == id }?.label ?? id }
+    var chips: [(kind: String, symbol: String, label: String, clear: () -> Void)] = []
+    let workspace = model.filters.workspace ?? ""
+    if !workspace.isEmpty {
+      chips.append(("workspace", "square.stack.3d.up", name(model.workspaceOptions, workspace), { [weak self] in self?.onSetFilter?("", "all", "") }))
+    }
+    if !model.filters.project.isEmpty {
+      chips.append(("project", "folder", name(model.projectOptions, model.filters.project), { [weak self] in self?.onSetFilter?("", model.filters.status, nil) }))
+    }
+    if model.filters.status != "all" {
+      chips.append(("status", "circle.dashed", name(model.statusOptions, model.filters.status), { [weak self] in self?.onSetFilter?(model.filters.project, "all", nil) }))
+    }
+    chipsStack.arrangedSubviews.forEach { chipsStack.removeArrangedSubview($0); $0.removeFromSuperview() }
+    for chip in chips {
+      let view = FilterChipView(symbol: chip.symbol, text: chip.label)
+      view.accessibilityIdentifier = "drawer-filter-chip-\(chip.kind)"
+      view.accessibilityLabel = "Remove \(chip.kind) filter \(chip.label)"
+      let clear = chip.clear
+      view.addAction(UIAction { _ in clear() }, for: .touchUpInside)
+      chipsStack.addArrangedSubview(view)
+    }
+    chipsScroll.isHidden = chips.isEmpty
+    chipsScroll.contentOffset = .zero
+    activeFilterCount = chips.count
   }
 
   private func setView(_ view: String) {
@@ -552,7 +623,8 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       UIMenu(title: "Project", options: .displayInline, children: projects),
       UIMenu(title: "Status", options: .displayInline, children: statuses),
     ])
-    let active = !(model.filters.workspace ?? "").isEmpty || !model.filters.project.isEmpty || model.filters.status != "all"
+    rebuildFilterChips(model)
+    let active = activeFilterCount > 0
     filterButton.setImage(UIImage(systemName: active ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"), for: .normal)
     filterButton.tintColor = active ? .tintColor : .secondaryLabel
     filterButton.accessibilityValue = (currentView == "recent" ? "Recent" : "Projects") + (active ? ", filters on" : "")
@@ -657,7 +729,14 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     var snapshot = NSDiffableDataSourceSnapshot<String, DrawerItem>()
     var seen = Set<DrawerItem>()
     var sections = Set<String>()
-    for group in new.groups where !recentMode && sections.insert(group.project).inserted {
+    // Commander lives in the header's navigation row, not in the list.
+    let listGroups = new.groups.filter { $0.kind != "commander" }
+    // Prefer the filter-independent `commander` field; older JS only has the (filterable) group.
+    let commanderName = new.commander?.name ?? new.groups.first { $0.kind == "commander" }?.label
+    commanderTile.isHidden = commanderName == nil
+    // The tile is always titled "Commander"; VoiceOver gets the full name.
+    if let commanderName, !commanderName.isEmpty { commanderTile.accessibilityLabel = commanderName }
+    for group in listGroups where !recentMode && sections.insert(group.project).inserted {
       snapshot.appendSections([group.project])
       var items: [DrawerItem] = [.header(group.project)]
       if !collapsedProjects.contains(group.project) {
@@ -674,13 +753,13 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       if new.recent.expanded { items.append(.recentLess) }
       snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: recentSection)
     } else if !new.recentSection.threads.isEmpty {
-      if new.groups.allSatisfy({ $0.threads.isEmpty }) { snapshot.appendSections([emptySection]); snapshot.appendItems([.empty], toSection: emptySection) }
+      if listGroups.allSatisfy({ $0.threads.isEmpty }) { snapshot.appendSections([emptySection]); snapshot.appendItems([.empty], toSection: emptySection) }
       snapshot.appendSections([recentSection])
       var items: [DrawerItem] = [.sectionHeader] + new.recentSection.threads.map { .recent($0.id) }
       if new.recentSection.remaining > 0 { items.append(.recentMore) }
       if new.recentSection.expanded { items.append(.recentLess) }
       snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: recentSection)
-    } else if new.groups.allSatisfy({ $0.threads.isEmpty }) {
+    } else if listGroups.allSatisfy({ $0.threads.isEmpty }) {
       snapshot.appendSections([emptySection])
       snapshot.appendItems([.empty], toSection: emptySection)
     }
@@ -768,6 +847,106 @@ private extension UIFont {
   func bold() -> UIFont {
     guard let descriptor = fontDescriptor.withSymbolicTraits(.traitBold) else { return self }
     return UIFont(descriptor: descriptor, size: pointSize)
+  }
+}
+
+/// Header navigation tile: icon + title on a quaternary fill; the title shrinks slightly before it would truncate.
+final class NavTileButton: UIButton {
+  let titleText = UILabel()
+  private let iconView = UIImageView()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    layer.cornerRadius = 10
+    layer.cornerCurve = .continuous
+    backgroundColor = .quaternarySystemFill
+    iconView.contentMode = .scaleAspectFit
+    iconView.tintColor = .secondaryLabel
+    iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+    iconView.setContentHuggingPriority(.required, for: .horizontal)
+    iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+    titleText.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: 15, weight: .medium))
+    titleText.adjustsFontForContentSizeCategory = true
+    titleText.adjustsFontSizeToFitWidth = true
+    titleText.minimumScaleFactor = 0.85
+    titleText.textColor = .label
+    titleText.lineBreakMode = .byTruncatingTail
+    let stack = UIStackView(arrangedSubviews: [iconView, titleText])
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 8
+    stack.isUserInteractionEnabled = false
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+      stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+    ])
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func setContent(title: String, image: UIImage?) {
+    titleText.text = title
+    iconView.image = image
+  }
+
+  override var isHighlighted: Bool { didSet { backgroundColor = isHighlighted ? .tertiarySystemFill : .quaternarySystemFill } }
+}
+
+/// Capsule chip for an active drawer filter: leading symbol, name, trailing xmark. The whole chip is the tap target.
+final class FilterChipView: UIControl {
+  init(symbol: String, text: String) {
+    super.init(frame: .zero)
+    backgroundColor = .tertiarySystemFill
+    isAccessibilityElement = true
+    accessibilityTraits = .button
+    let leading = UIImageView(image: UIImage(systemName: symbol))
+    leading.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+    let label = UILabel()
+    label.text = text
+    label.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: .systemFont(ofSize: 13, weight: .medium))
+    label.adjustsFontForContentSizeCategory = true
+    label.textColor = .label
+    label.lineBreakMode = .byTruncatingTail
+    let trailing = UIImageView(image: UIImage(systemName: "xmark"))
+    trailing.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+    for icon in [leading, trailing] {
+      icon.tintColor = .secondaryLabel
+      icon.contentMode = .scaleAspectFit
+      icon.setContentHuggingPriority(.required, for: .horizontal)
+      icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+    let stack = UIStackView(arrangedSubviews: [leading, label, trailing])
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 6
+    stack.isUserInteractionEnabled = false
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+      stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+      widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+    ])
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  override var isHighlighted: Bool { didSet { alpha = isHighlighted ? 0.6 : 1 } }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    layer.cornerRadius = bounds.height / 2
+  }
+
+  /// Visible height is 32pt; the touch area extends to 44pt.
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    bounds.insetBy(dx: 0, dy: -max(0, (44 - bounds.height) / 2)).contains(point)
   }
 }
 

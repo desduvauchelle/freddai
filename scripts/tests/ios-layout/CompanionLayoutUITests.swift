@@ -38,6 +38,45 @@ final class CompanionLayoutUITests: XCTestCase {
     choice.tap()
   }
 
+  /// Active filters show as chips under the search row; tapping a chip clears only that filter.
+  @MainActor
+  func testDrawerFilterChipsAppearAndClearIndividually() throws {
+    let app = XCUIApplication(bundleIdentifier: "com.freddai.companion")
+    XCUIDevice.shared.orientation = .portrait
+    app.launch()
+    let menu = app.buttons["Threads"]
+    XCTAssertTrue(menu.waitForExistence(timeout: 15))
+    let list = app.collectionViews["thread-drawer-list"]
+    if !list.waitForExistence(timeout: 2) { menu.tap() }
+    XCTAssertTrue(list.waitForExistence(timeout: 5))
+    if #available(iOS 17.0, *) { XCUIDevice.shared.appearance = .light }
+    let projectChip = app.buttons["drawer-filter-chip-project"], statusChip = app.buttons["drawer-filter-chip-status"]
+    XCTAssertFalse(projectChip.exists || statusChip.exists)
+    func pick(_ title: String) {
+      app.buttons["Filter threads"].tap()
+      let choice = app.buttons[title].firstMatch
+      XCTAssertTrue(choice.waitForExistence(timeout: 3), "Filter menu has no \(title)")
+      choice.tap()
+    }
+    pick("Freddai")
+    pick("Done")
+    XCTAssertTrue(projectChip.waitForExistence(timeout: 5))
+    XCTAssertTrue(statusChip.waitForExistence(timeout: 5))
+    XCTAssertGreaterThanOrEqual(projectChip.frame.height, 32)
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let dir = ProcessInfo.processInfo.environment["FREDDAI_SCREENSHOT_DIR"] ?? root.appendingPathComponent("output/screenshots").path
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let shot = XCUIScreen.main.screenshot()
+    let attachment = XCTAttachment(screenshot: shot)
+    attachment.name = "drawer-filter-chips-light"; attachment.lifetime = .keepAlways; add(attachment)
+    try? shot.pngRepresentation.write(to: URL(fileURLWithPath: dir + "/drawer-filter-chips-light.png"))
+    projectChip.tap()
+    XCTAssertTrue(NSPredicate(format: "exists == false").evaluate(with: projectChip) || projectChip.waitForNonExistence(timeout: 5))
+    XCTAssertTrue(statusChip.exists)
+    statusChip.tap()
+    XCTAssertTrue(statusChip.waitForNonExistence(timeout: 5))
+  }
+
   @MainActor
   func testDashboardUsesNativeCardsAndProjectAgentSelection() throws {
     let app = XCUIApplication(bundleIdentifier: "com.freddai.companion")
@@ -109,13 +148,16 @@ final class CompanionLayoutUITests: XCTestCase {
     let toggle = app.buttons["Filter threads"]
     XCTAssertTrue(toggle.waitForExistence(timeout: 5))
     selectThreadView("Projects", app: app)
-    // First group in the drawer, ahead of every other project.
-    let header = list.cells["project-header-commander"]
+    // Commander is a tile in the header's navigation row, beside Dashboard, and no longer a list group.
+    let header = app.buttons["drawer-commander"]
     XCTAssertTrue(header.waitForExistence(timeout: 5))
-    let other = list.cells["project-header-freddai"]
-    XCTAssertTrue(other.exists)
-    XCTAssertLessThan(header.frame.minY, other.frame.minY)
-    XCTAssertTrue(header.images["drawer-commander-icon"].exists || header.label.contains("Commander"))
+    let dashboardTile = app.buttons["companion-dashboard"]
+    XCTAssertTrue(dashboardTile.exists)
+    XCTAssertEqual(header.frame.midY, dashboardTile.frame.midY, accuracy: 2)
+    XCTAssertLessThan(dashboardTile.frame.maxX, header.frame.minX + 1)
+    XCTAssertFalse(list.cells["project-header-commander"].exists)
+    XCTAssertTrue(app.buttons["companion-add-project"].exists && app.buttons["companion-settings"].exists)
+    XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "drawer-filter-chip-")).firstMatch.exists)
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let dir = ProcessInfo.processInfo.environment["FREDDAI_SCREENSHOT_DIR"] ?? root.appendingPathComponent("output/screenshots").path
     try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

@@ -979,12 +979,11 @@
 /* Match the desktop queue and composer while retaining phone touch targets. */
 .companion .message-queue { margin: 12px 12px 0; border-bottom: 1px solid var(--adaptive-border, #484853); border-radius: 18px; padding-bottom: 0; font-size: 14px; }
 .companion .message-queue li { flex-wrap: nowrap; gap: 4px; padding: 4px 8px; }
-.companion .message-queue-preview { flex: 1 1 0; min-width: 0; }
 .companion .message-queue li:has(form) { flex-wrap: wrap; }
 .companion .message-queue li:has(form) .message-queue-preview { flex-basis: calc(100% - 24px); }
-.companion .message-queue-actions { gap: 0; white-space: nowrap; }
-.companion .message-queue button { min-width: 44px; min-height: 44px; font-size: 12px; }
-.companion .message-queue-action-label { display: inline; }
+.companion .message-queue-actions { gap: 0; }
+.companion .message-queue-actions button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+.companion .message-queue form button { min-height: 44px; min-width: 44px; }
 .companion .message-queue textarea { font-size: 16px; }
 .companion-composer { border-radius: 24px; }
 .companion-composer-tools { flex-wrap: nowrap; }
@@ -1175,3 +1174,16 @@
 
 .companion-project-dot { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 10px; height: 10px; }
 .companion-project-dot > .state-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+
+/* Sidebar hierarchy: title-row icon buttons and the Dashboard/Commander nav tiles. */
+.companion-title-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.companion-title-actions .companion-title-action { width: 44px; height: 44px; color: var(--muted-foreground); }
+.companion-desktop .companion-title-actions .companion-title-action { width: 28px; height: 28px; }
+.companion-desktop-brand { display: flex; align-items: center; justify-content: space-between; }
+.companion-nav-tiles { display: flex; gap: 8px; padding: 0 16px 12px; }
+.companion-desktop-sidebar nav.companion-nav-tiles { padding: 0 12px 8px; justify-content: flex-start; }
+.companion-nav-tiles .companion-nav-tile { flex: 1 1 0; min-width: 0; justify-content: flex-start; gap: 8px; border: 1px solid var(--border); background: var(--accent); color: var(--foreground); font-size: 14px; }
+.companion-desktop .companion-nav-tiles .companion-nav-tile { font-size: 12px; }
+.companion-nav-tile svg { flex-shrink: 0; width: 16px; height: 16px; color: var(--muted-foreground); }
+
+.new-thread-project-required { margin: 8px 0; padding: 10px 12px; border: 1px solid currentColor; border-radius: 8px; color: var(--adaptive-fg, var(--foreground)); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }

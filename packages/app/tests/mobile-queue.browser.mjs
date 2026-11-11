@@ -11,6 +11,7 @@ try {
   await queue.waitFor();
   assert.equal(await queue.getByRole('listitem').count(),3);
   assert.equal(await queue.getByRole('button').count(),9);
+  assert.equal(await queue.getByText(/Clear all|Steer/).count(),0);
   const rows = await queue.getByRole('listitem').evaluateAll(items => items.map(row => {
     const preview = row.querySelector('.message-queue-preview').getBoundingClientRect();
     const actions = [...row.querySelectorAll('.message-queue-actions button')].map(button => button.getBoundingClientRect());
@@ -19,6 +20,11 @@ try {
       touchTargets: actions.every(button => button.width >= 44 && button.height >= 44) };
   }));
   assert.ok(rows.every(row => row.fits && row.previewWidth > 60 && row.aligned && row.touchTargets), `preview and all actions share one compact row with phone touch targets: ${width} ${JSON.stringify(rows)}`);
+  const rects = await queue.getByRole('button').evaluateAll(buttons => buttons.map(b => { const r = b.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; }));
+  for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+    const a = rects[i], c = rects[j];
+    assert.ok(a.r <= c.l + 0.5 || c.r <= a.l + 0.5 || a.b <= c.t + 0.5 || c.b <= a.t + 0.5, `queue buttons ${i} and ${j} overlap at ${width}px: ${JSON.stringify([a, c])}`);
+  }
   const composer = page.locator('.companion-composer');
   const gap = (await composer.boundingBox()).y - ((await queue.boundingBox()).y + (await queue.boundingBox()).height);
   assert.ok(gap >= 0 && gap <= 16, `queue stays against composer: ${width}, gap ${gap}`);

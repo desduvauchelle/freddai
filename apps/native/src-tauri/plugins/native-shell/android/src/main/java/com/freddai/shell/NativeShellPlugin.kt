@@ -46,7 +46,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private lateinit var drawer: DrawerLayout
     private lateinit var navigation: LinearLayout
     private lateinit var composer: LinearLayout
-    private lateinit var modelButton: ImageButton
+    private lateinit var modelButton: Button
+    private lateinit var agentButton: Button
     private lateinit var accessButton: ImageButton
     private lateinit var editor: EditText
     private lateinit var subtitle: TextView
@@ -55,6 +56,10 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private lateinit var list: LinearLayout
     private lateinit var search: EditText
     private lateinit var viewFilter: Button
+    private lateinit var dashboardTile: Button
+    private lateinit var commanderTile: Button
+    private lateinit var filterChips: LinearLayout
+    private lateinit var filterChipsScroll: HorizontalScrollView
     private lateinit var chips: LinearLayout
     private val collapsedProjects = mutableSetOf<String>()
     private var model = JSONObject()
@@ -122,6 +127,22 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     }
 
     private var mode = "other"
+    // Active Commander call, pushed by JS in set_mode. The header shows a compact group instead of the phone button.
+    private var callActive = false
+    private var callStartedAt: Long? = null
+    private var callMuted = false
+    private var callPhase = "idle"
+    private var callGroup: LinearLayout? = null
+    private lateinit var callWave: TextView
+    private lateinit var callTime: TextView
+    private lateinit var callMute: Button
+    private var callWaveAnimator: android.animation.ObjectAnimator? = null
+    private val callTick = object : Runnable {
+        override fun run() {
+            if (!callActive || callGroup?.isAttachedToWindow != true) return
+            refreshCallTime(); callTime.postDelayed(this, 1000)
+        }
+    }
     @Volatile private var installed = false
     private var installAttempts = 0
     private var updatingSearch = false
@@ -214,6 +235,62 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         text = label; contentDescription = label; isAllCaps = false; minWidth = dp(48); minimumWidth = dp(48); minimumHeight = dp(48)
         setOnClickListener { action() }
     }
+    private fun buildCallGroup(): LinearLayout {
+        val group = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL; tag = "call-group"; visibility = View.GONE; isFocusable = true }
+        callWave = TextView(host).apply { text = "≋"; textSize = 18f; setPadding(dp(4), 0, dp(4), 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        callTime = TextView(host).apply { textSize = 15f; typeface = android.graphics.Typeface.MONOSPACE; text = "0:00"; setPadding(dp(4), 0, dp(4), 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        callMute = button("Mute") { event("threadAction", JSONObject().put("action", "mute")) }.apply { text = "🎤"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) }
+        val hangup = button("End call") { event("threadAction", JSONObject().put("action", "hangup")) }.apply {
+            text = "☎"; rotation = 135f; setTextColor(android.graphics.Color.WHITE)
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(android.graphics.Color.rgb(0xD9, 0x2D, 0x20)) }
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(4); marginEnd = dp(4) }
+        }
+        group.addView(callWave); group.addView(callTime); group.addView(callMute); group.addView(hangup)
+        group.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { if (callActive) { callTime.removeCallbacks(callTick); callTime.post(callTick) } }
+            override fun onViewDetachedFromWindow(v: View) { callTime.removeCallbacks(callTick); callWaveAnimator?.cancel() }
+        })
+        callGroup = group
+        return group
+    }
+    private fun refreshCallTime() {
+        val started = callStartedAt
+        val seconds = if (started == null) 0L else ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
+        val text = "%d:%02d".format(seconds / 60, seconds % 60)
+        if (callTime.text != text) callTime.text = text
+        val phase = if (callMuted) "$callPhase, muted" else callPhase
+        callGroup?.contentDescription = "Commander call, $phase, $text"
+    }
+    /** Cheap and idempotent: set_mode re-invokes this with the same values; it never touches the dashboard or web view. */
+    private fun applyCall() {
+        val group = callGroup ?: return
+        val showCall = callActive && mode in listOf("conversation", "new", "dashboard")
+        navigation.findViewWithTag<View>("start-call")?.visibility = if (!callActive && mode in listOf("conversation", "new", "dashboard")) View.VISIBLE else View.GONE
+        val vis = if (showCall) View.VISIBLE else View.GONE
+        if (group.visibility != vis) group.visibility = vis
+        callMute.text = if (callMuted) "🔇" else "🎤"
+        callMute.contentDescription = if (callMuted) "Unmute" else "Mute"
+        callWave.visibility = if (mode == "conversation" && host.resources.configuration.screenWidthDp < 400) View.GONE else View.VISIBLE
+        callWave.setTextColor(if (callPhase == "error") android.graphics.Color.rgb(0xD9, 0x2D, 0x20) else primaryText())
+        val animate = showCall && !callMuted && callPhase in listOf("listening", "hearing", "speaking", "transcribing", "working")
+        if (animate) {
+            if (callWaveAnimator == null) callWaveAnimator = android.animation.ObjectAnimator.ofFloat(callWave, "alpha", 1f, 0.3f).apply {
+                duration = 600; repeatMode = android.animation.ValueAnimator.REVERSE; repeatCount = android.animation.ValueAnimator.INFINITE
+            }
+            if (callWaveAnimator?.isStarted != true) callWaveAnimator?.start()
+        } else { callWaveAnimator?.cancel(); callWave.alpha = 1f }
+        refreshCallTime()
+        callTime.removeCallbacks(callTick)
+        if (showCall) callTime.postDelayed(callTick, 1000)
+    }
+    private fun themeColor(attr: Int, fallback: Int): Int {
+        val value = android.util.TypedValue()
+        if (!host.theme.resolveAttribute(attr, value, true)) return fallback
+        return if (value.resourceId != 0) host.getColorStateList(value.resourceId).defaultColor else value.data
+    }
+    private fun primaryText() = themeColor(android.R.attr.textColorPrimary, android.graphics.Color.GRAY)
+    private fun secondaryText() = themeColor(android.R.attr.textColorSecondary, android.graphics.Color.GRAY)
+    private fun subtleFill() = (primaryText() and 0x00ffffff) or 0x14000000
     private fun event(name: String, data: JSONObject = JSONObject()) = trigger(name, JSObject(data.toString()))
     private fun ui(invoke: Invoke, action: () -> Unit) = host.runOnUiThread {
         try { action(); invoke.resolve() } catch (_: Exception) { invoke.reject("Native shell operation failed") }
@@ -258,7 +335,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             connection = button("Mac") { event("connectionTap") }
             navigation.addView(connection)
             navigation.addView(button("Start call") { event("threadAction", JSONObject().put("action", "call")) }.apply { tag = "start-call"; text = "☎"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
-            navigation.addView(button("More") { showActions() }.apply { text = "⋮"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
+            navigation.addView(buildCallGroup())
+            navigation.addView(button("More") { showActions() }.apply { text = "⋮"; tag = "more"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
             content.addView(navigation)
             contentWebView = webView
             content.addView(webView, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -342,10 +420,17 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
                 setOnClickListener { event("threadAction", JSONObject().put("action", action)) }
             }
-            modelButton = setting("Model", android.R.drawable.ic_menu_manage, "model")
+            fun textSetting(label: String, action: String) = Button(host).apply {
+                text = label; textSize = 11f; isAllCaps = false; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; minWidth = 0; setPadding(dp(2), 0, dp(2), 0)
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                layoutParams = LinearLayout.LayoutParams(dp(64), dp(48))
+                setOnClickListener { event("threadAction", JSONObject().put("action", action)) }
+            }
+            agentButton = textSetting("Agent", "agent")
+            modelButton = textSetting("Normal", "model")
             accessButton = setting("Permissions", android.R.drawable.ic_lock_lock, "permissions")
-            row.addView(modelButton, 1); row.addView(accessButton, 2)
-            row.addView(Space(host), 3, LinearLayout.LayoutParams(0, 1, 1f))
+            row.addView(agentButton, 1); row.addView(modelButton, 2); row.addView(accessButton, 3)
+            row.addView(Space(host), 4, LinearLayout.LayoutParams(0, 1, 1f))
             recordingRow.addView(row, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
             recordingRow.addView(voiceStatus, FrameLayout.LayoutParams(-1, dp(128), Gravity.BOTTOM))
             recordingRow.addView(recordingCancel, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin = dp(180); bottomMargin = dp(2) })
@@ -368,9 +453,23 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
-            val navigation = LinearLayout(host)
-            navigation.addView(button("Settings") { closeDrawer(); event("threadAction", JSONObject().put("action", "organization")) }, LinearLayout.LayoutParams(0, dp(48), 1f))
-            navigation.addView(button("Dashboard") { event("dashboard"); closeDrawer() }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            val headerRow = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, 0, 0) }
+            headerRow.addView(TextView(host).apply { text = "Freddai"; textSize = 20f; setTypeface(typeface, android.graphics.Typeface.BOLD); setSingleLine(true) }, LinearLayout.LayoutParams(0, -2, 1f))
+            fun headerIcon(label: String, icon: Int, action: () -> Unit) = ImageButton(host).apply {
+                contentDescription = label; setImageResource(icon); imageTintList = android.content.res.ColorStateList.valueOf(secondaryText())
+                setBackgroundColor(android.graphics.Color.TRANSPARENT); setOnClickListener { action() }
+            }
+            headerRow.addView(headerIcon("Add project", android.R.drawable.ic_menu_add) { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "freddai:add-project")); closeDrawer() }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            headerRow.addView(headerIcon("Settings", android.R.drawable.ic_menu_preferences) { closeDrawer(); event("threadAction", JSONObject().put("action", "organization")) }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            sidebar.addView(headerRow)
+            fun tile(label: String, action: () -> Unit) = button(label, action).apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL; setTextColor(primaryText()); minimumHeight = dp(48); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(subtleFill()) }
+            }
+            val navigation = LinearLayout(host).apply { setPadding(dp(12), 0, dp(12), dp(4)) }
+            navigation.addView(tile("Dashboard") { event("dashboard"); closeDrawer() }.also { dashboardTile = it }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            commanderTile = tile("Commander") { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", "commander:open")); closeDrawer() }.apply { visibility = View.GONE }
+            navigation.addView(commanderTile, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
             sidebar.addView(navigation)
             sidebar.addView(search)
             val filters = LinearLayout(host)
@@ -385,7 +484,9 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             filters.addView(button("Project") { filter("projectOptions", "project") })
             filters.addView(button("Status") { filter("statusOptions", "status") })
             sidebar.addView(filters)
-            sidebar.addView(button("＋ Project") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "freddai:add-project")); closeDrawer() })
+            filterChips = LinearLayout(host).apply { setPadding(dp(12), 0, dp(12), 0); gravity = Gravity.CENTER_VERTICAL }
+            filterChipsScroll = HorizontalScrollView(host).apply { isHorizontalScrollBarEnabled = false; visibility = View.GONE; addView(filterChips) }
+            sidebar.addView(filterChipsScroll)
             sidebar.addView(button("New thread") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "")); closeDrawer() })
             list = column(); sidebar.addView(ScrollView(host).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
             // Keep the direct drawer child stable: ViewDragHelper retains it while settling.
@@ -445,15 +546,16 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         if (mode != "dashboard" || dashboardModel.optBoolean("expanded")) dashboard.cancelRecording()
         dashboard.visibility = if (mode == "dashboard" && !dashboardModel.optBoolean("expanded")) View.VISIBLE else View.GONE
         resizeDashboardWeb()
-        navigation.findViewWithTag<View>("start-call")?.visibility = if (mode == "conversation" || mode == "new" || mode == "dashboard") View.VISIBLE else View.GONE
+        applyCall()
+        navigation.findViewWithTag<View>("more")?.visibility = if (mode == "callReview") View.GONE else View.VISIBLE
         navigation.visibility = if (visible) View.VISIBLE else View.GONE
         composer.visibility = if (mode == "conversation" || mode == "new") View.VISIBLE else View.GONE
         if (::menuButton.isInitialized) {
-            menuButton.visibility = if (mode == "project") View.GONE else View.VISIBLE
+            menuButton.visibility = if (mode == "project" || mode == "callReview") View.GONE else View.VISIBLE
             menuButton.text = if (backNav) "←" else "☰"
             menuButton.contentDescription = if (backNav) "Back" else "Threads"
         }
-        drawer.setDrawerLockMode(if (visible && !persistentSidebar && mode != "project" && !backNav) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
+        drawer.setDrawerLockMode(if (visible && !persistentSidebar && mode != "project" && mode != "callReview" && !backNav) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
         back?.isEnabled = visible
         updateSidebar()
     }
@@ -463,18 +565,23 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         if (args.optString("mode", "other") !in listOf("new", "conversation", "commander")) composerRecorder?.cancel()
         // Commander is a conversation with its own web header; Android has no transparent-bar variant, so it uses the plain conversation chrome.
         val nextMode = args.optString("mode", "other")
-        val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("new", "conversation", "commander", "project")
+        val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("new", "conversation", "commander", "project", "callReview")
         if (wantsSheet) openThreadSheet()
         backNav = args.optBoolean("back", false)
         mode = args.optString("mode", "other").let { if (it == "commander") "conversation" else it }
-        title.text = args.optString("title", "Freddai"); editor.hint = args.optString("placeholder", "Message")
+        val call = args.optJSONObject("call")
+        callActive = call?.optBoolean("active", false) ?: false
+        callMuted = call?.optBoolean("muted", false) ?: false
+        callPhase = call?.optString("phase", "idle") ?: "idle"
+        callStartedAt = call?.optDouble("startedAt", Double.NaN)?.takeIf { !it.isNaN() }?.toLong()
+        title.text = if (mode == "callReview") "Review command" else args.optString("title", "Freddai"); editor.hint = args.optString("placeholder", "Message")
         applyMode()
         if (!wantsSheet) {
             sheetDestinationReady = true
             threadSheet?.dismiss()
             revealSheetDestination()
         }
-        if (mode != "other" && mode != "project" && args.optBoolean("openDrawer")) {
+        if (mode != "other" && mode != "project" && mode != "callReview" && args.optBoolean("openDrawer")) {
             if (persistentSidebar) sidebarView.visibility = View.VISIBLE else drawer.openDrawer(Gravity.START)
         }
     }
@@ -488,10 +595,11 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         val state = when (meta.optString("runState")) { "running" -> "Running"; "waiting" -> "Needs you"; "failed" -> "Failed"; else -> "" }
         subtitle.text = listOf(state, meta.optString("project")).filter { it.isNotBlank() }.joinToString(" · ")
         subtitle.visibility = if (subtitle.text.isEmpty()) View.GONE else View.VISIBLE
-        for ((button, key) in listOf(modelButton to "model", accessButton to "access")) {
+        for ((button, key) in listOf< Pair<android.view.View, String> >(agentButton to "agent", modelButton to "model", accessButton to "access")) {
             button.visibility = if (meta.isNull(key) || !meta.has(key)) View.GONE else View.VISIBLE
             button.isEnabled = !meta.optBoolean("controlsDisabled", false)
-            button.contentDescription = (if (key == "model") "Model: " else "Permissions: ") + meta.optString(key)
+            if (button is Button) button.text = meta.optString(key)
+            button.contentDescription = (if (key == "model") "Difficulty: " else "Permissions: ") + meta.optString(key)
         }
     }
     @Command fun setDashboard(invoke: Invoke) = ui(invoke) {
@@ -571,7 +679,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private fun renderThreads() {
         list.removeAllViews()
         if (pendingView != null && pendingView == model.optString("view", "projects")) pendingView = null
-        renderViewToggle()
+        renderViewToggle(); renderHeaderExtras()
         if (currentView() == "recent") { renderRecent() } else {
             renderGroups()
             renderRecent("recentSection", bottom = true)
@@ -677,10 +785,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             val group = groups.getJSONObject(i); val project = group.getString("project")
             val collapsed = project in collapsedProjects
             val projectRow = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
-            val commander = group.optString("kind") == "commander"
-            projectRow.addView(button("${if (commander) "★" else if (collapsed) "▸" else "▾"} ${group.getString("label")}") {
-                // Commander-in-Chief is listed first and opens its screen instead of collapsing.
-                if (commander) { composerRecorder?.cancel(); event("selectThread", JSONObject().put("id", "commander:open")); closeDrawer(); return@button }
+            if (group.optString("kind") == "commander") continue // Shown as the Commander tile in the drawer header.
+            projectRow.addView(button("${if (collapsed) "▸" else "▾"} ${group.getString("label")}") {
                 if (!collapsedProjects.add(project)) collapsedProjects.remove(project)
                 val scrollY = list.parent.let { it as? android.widget.ScrollView }?.scrollY ?: 0
                 renderThreads()
@@ -730,11 +836,37 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         val options = model.optJSONArray(optionsKey) ?: return
         AlertDialog.Builder(host).setTitle(if (field == "workspace") "Workspace" else if (field == "project") "Project" else "Status")
             .setItems(Array(options.length()) { options.getJSONObject(it).getString("label") }) { _, index ->
-                val current = JSONObject((model.optJSONObject("filters") ?: JSONObject()).toString())
-                if (field != "workspace") current.remove("workspace")
-                current.put(field, options.getJSONObject(index).getString("id")); event("setFilter", current)
-                if (current.optString("workspace") == "__manage_workspaces") closeDrawer()
+                applyFilter(field, options.getJSONObject(index).getString("id"))
             }.show()
+    }
+    private fun applyFilter(field: String, id: String) {
+        val current = JSONObject((model.optJSONObject("filters") ?: JSONObject()).toString())
+        if (field != "workspace") current.remove("workspace")
+        current.put(field, id); event("setFilter", current)
+        if (current.optString("workspace") == "__manage_workspaces") closeDrawer()
+    }
+    private fun renderHeaderExtras() {
+        val groups = model.optJSONArray("groups") ?: JSONArray()
+        val commander = model.optJSONObject("commander") ?: (0 until groups.length()).map { groups.getJSONObject(it) }.firstOrNull { it.optString("kind") == "commander" }
+        commanderTile.visibility = if (commander == null) View.GONE else View.VISIBLE
+        if (commander != null) { val name = commander.optString("name").ifEmpty { commander.optString("label") }.ifEmpty { "Commander" }; commanderTile.text = "Commander"; commanderTile.contentDescription = name }
+        filterChips.removeAllViews()
+        val filters = model.optJSONObject("filters") ?: JSONObject()
+        listOf(Triple("workspace", "workspaceOptions", "workspace"), Triple("project", "projectOptions", "project"), Triple("status", "statusOptions", "status")).forEach { (field, optionsKey, noun) ->
+            val options = model.optJSONArray(optionsKey) ?: return@forEach
+            if (options.length() == 0) return@forEach
+            val all = options.getJSONObject(0).getString("id"); val value = filters.optString(field)
+            if (value == all || value.isEmpty() || value == "__manage_workspaces") return@forEach
+            val label = (0 until options.length()).map { options.getJSONObject(it) }.firstOrNull { it.getString("id") == value }?.getString("label") ?: value
+            filterChips.addView(TextView(host).apply {
+                text = "$label ✕"; textSize = 12f; setSingleLine(true); gravity = Gravity.CENTER; setTextColor(primaryText())
+                contentDescription = "Remove $noun filter $label"; isClickable = true; isFocusable = true
+                setPadding(dp(12), 0, dp(12), 0)
+                background = android.graphics.drawable.InsetDrawable(android.graphics.drawable.GradientDrawable().apply { cornerRadius = 999f; setColor(subtleFill()) }, 0, dp(8), 0, dp(8))
+                setOnClickListener { applyFilter(field, all) }
+            }, LinearLayout.LayoutParams(-2, dp(48)).apply { marginEnd = dp(8) })
+        }
+        filterChipsScroll.visibility = if (filterChips.childCount == 0) View.GONE else View.VISIBLE
     }
     private fun showActions() {
         val options = mutableListOf("New thread" to "new")

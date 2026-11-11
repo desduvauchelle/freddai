@@ -28,6 +28,7 @@ export const nativeCompanionClient: CompanionClient = {
   addProject: path => composer("add_project", { path }),
   updateProjectOrganization: (project, name, color) => composer("update_project_organization", { project, name, color }),
   moveProject: (project, target, after) => composer("move_project", { project, target, after }),
+  saveModelConfiguration: configuration => composer("save_model_configuration", { configuration }),
   saveWorkspaces: workspaces => composer("save_workspaces", { workspaces }),
   generatedFile: (thread, href, offset) => composer("generated_file", { thread, href, offset }),
   async snapshot(signal, thread) {

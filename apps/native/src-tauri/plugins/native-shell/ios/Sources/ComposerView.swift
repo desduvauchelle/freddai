@@ -14,6 +14,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   private let sendButton = UIButton(type: .system)
   private var hasModel = false
   private var hasAccess = false
+  private let agentButton = ComposerIconButton(type: .system)
   private let modelButton = ComposerIconButton(type: .system)
   private let accessButton = ComposerIconButton(type: .system)
   var onSetting: ((String) -> Void)?
@@ -122,7 +123,7 @@ final class ComposerView: UIView, UITextViewDelegate {
     attachButton.menu = UIMenu(children: attachActions())
     field.addSubview(attachButton)
 
-    for (button, symbol, action) in [(modelButton, "cpu", "model"), (accessButton, "checkmark.shield", "permissions")] {
+    for (button, symbol, action) in [(agentButton, "person", "agent"), (modelButton, "cpu", "model"), (accessButton, "checkmark.shield", "permissions")] {
       var setting = UIButton.Configuration.plain()
       setting.image = UIImage(systemName: symbol)
       setting.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
@@ -260,9 +261,13 @@ final class ComposerView: UIView, UITextViewDelegate {
       attachButton.widthAnchor.constraint(equalToConstant: 32),
       attachButton.heightAnchor.constraint(equalToConstant: 32),
 
-      modelButton.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 6),
+      agentButton.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 4),
+      agentButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
+      agentButton.widthAnchor.constraint(equalToConstant: 66),
+      agentButton.heightAnchor.constraint(equalToConstant: 32),
+      modelButton.leadingAnchor.constraint(equalTo: agentButton.trailingAnchor, constant: 4),
       modelButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-      modelButton.widthAnchor.constraint(equalToConstant: 32),
+      modelButton.widthAnchor.constraint(equalToConstant: 62),
       modelButton.heightAnchor.constraint(equalToConstant: 32),
       accessButton.leadingAnchor.constraint(equalTo: modelButton.trailingAnchor, constant: 6),
       accessButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
@@ -319,14 +324,25 @@ final class ComposerView: UIView, UITextViewDelegate {
     refresh()
   }
 
-  func setSettings(model: String?, access: String?, disabled: Bool) {
+  func setSettings(agent: String? = nil, model: String?, access: String?, disabled: Bool) {
     hasModel = model != nil
     hasAccess = access != nil
     modelButton.isHidden = !hasModel || recording || voiceState == "transcribing"
     accessButton.isHidden = !hasAccess || recording || voiceState == "transcribing"
     modelButton.isEnabled = !disabled
     accessButton.isEnabled = !disabled
-    modelButton.accessibilityLabel = "Model: " + (model ?? "Unavailable")
+    agentButton.isHidden = agent == nil || recording || voiceState == "transcribing"
+    agentButton.isEnabled = !disabled
+    agentButton.accessibilityLabel = "Agent: " + (agent ?? "Unavailable")
+    var agentConfig = agentButton.configuration ?? .plain()
+    agentConfig.image = nil; agentConfig.title = agent; agentConfig.titleLineBreakMode = .byTruncatingTail
+    agentConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in var outgoing = incoming; outgoing.font = UIFont.systemFont(ofSize: 11); return outgoing }
+    agentButton.configuration = agentConfig
+    var levelConfig = modelButton.configuration ?? .plain()
+    levelConfig.image = nil; levelConfig.title = model
+    levelConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in var outgoing = incoming; outgoing.font = UIFont.systemFont(ofSize: 11); return outgoing }
+    modelButton.configuration = levelConfig
+    modelButton.accessibilityLabel = "Difficulty: " + (model ?? "Unavailable")
     accessButton.accessibilityLabel = "Permissions: " + (access ?? "Unavailable")
     accessButton.setImage(UIImage(systemName: access == "Full access" ? "exclamationmark.shield" : "checkmark.shield"), for: .normal)
   }
@@ -503,6 +519,7 @@ final class ComposerView: UIView, UITextViewDelegate {
 
   private func updateVoiceUI() {
     let transcribing = voiceState == "transcribing"
+    agentButton.isHidden = !hasModel || recording || transcribing
     modelButton.isHidden = !hasModel || recording || transcribing
     accessButton.isHidden = !hasAccess || recording || transcribing
     updatePrimaryAction()

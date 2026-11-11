@@ -10,6 +10,7 @@ struct SetModeArgs: Decodable {
   var openDrawer: Bool?
   var threadSheet: Bool?
   var back: Bool?
+  var call: CallState?
 }
 
 struct SetDashboardArgs: Decodable { let model: DashboardModel }
@@ -284,17 +285,17 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
   @objc func setMode(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SetModeArgs.self)
     DispatchQueue.main.async { [weak self] in
-      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "project" ? .project : args.mode == "dashboard" ? .dashboard : .other
-      if args.threadSheet == true && (mode == .conversation || mode == .commander || mode == .new || mode == .project) { self?.openThreadSheet() }  // already open: openThreadSheet no-ops, so apply() below updates the sheet in place
+      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "project" ? .project : args.mode == "dashboard" ? .dashboard : args.mode == "callReview" ? .callReview : .other
+      if args.threadSheet == true && (mode == .conversation || mode == .commander || mode == .new || mode == .project || mode == .callReview) { self?.openThreadSheet() }  // already open: openThreadSheet no-ops, so apply() below updates the sheet in place
       else if self?.threadSheetOpen == true, let container = self?.container {
         container.dismiss(animated: true) { [weak self] in self?.restoreShell() }
       }
-      self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder, back: args.back ?? false)
+      self?.shell?.apply(mode: mode, title: mode == .callReview ? "Review command" : args.title, placeholder: args.placeholder, back: args.back ?? false, call: args.call ?? .none)
       if args.threadSheet != true {
         self?.sheetDestinationReady = true
         self?.revealSheetDestination()
       }
-      self?.container?.drawerEnabled = mode != .other && mode != .project && args.back != true
+      self?.container?.drawerEnabled = mode != .other && mode != .project && mode != .callReview && args.back != true
       if mode != .other, args.openDrawer == true {
         self?.drawer?.refreshTimes()
         self?.container?.setOpen(true, animated: true)

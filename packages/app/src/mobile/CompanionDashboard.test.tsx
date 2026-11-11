@@ -124,11 +124,10 @@ it('shows one shared model and difficulty row outside project cards and saves it
   const onSelectionChange = vi.fn();
   render(<CompanionDashboard connected onNew={vi.fn()} onOpen={vi.fn()} onSelectionChange={onSelectionChange}
     snapshot={{ projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true, defaultAssistant: 'a', assistants: [{ id: 'a', name: 'Personal', provider: 'claude' }] }], threads: [] }} />);
-  expect(screen.getAllByRole('combobox', { name: 'Model' })).toHaveLength(1);
-  expect(screen.getByRole('combobox', { name: 'Model' }).closest('.companion-project-card')).toBeNull();
-  chooseDashboard('Model', 'Opus');
-  chooseDashboard('Difficulty', 'High');
-  expect(onSelectionChange).toHaveBeenLastCalledWith('new:p:a:claude', { model: 'opus', effort: 'high' });
+  expect(screen.getAllByRole('combobox', { name: 'Difficulty' })).toHaveLength(1);
+  expect(screen.getByRole('combobox', { name: 'Difficulty' }).closest('.companion-project-card')).toBeNull();
+  chooseDashboard('Difficulty', 'Smart');
+  expect(onSelectionChange).toHaveBeenLastCalledWith('new:p:a:claude', { model: 'freddai-level:smart', effort: 'default' });
 });
 
 it('shows the resolved saved provider and follows changes without pinning it', () => {

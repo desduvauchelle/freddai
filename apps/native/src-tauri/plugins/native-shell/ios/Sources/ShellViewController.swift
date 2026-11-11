@@ -5,7 +5,7 @@ import WebKit
 /// UINavigationController) and an optional native composer that tracks the keyboard.
 /// Every conversation (`conversation` and `commander`) uses the web layer's translucent floating header (avatar + name pill) under a transparent bar;
 /// the native menu and action buttons sit on the same row.
-enum ShellMode { case conversation, commander, new, project, dashboard, other }
+enum ShellMode { case conversation, commander, new, project, dashboard, callReview, other }
 
 struct PickerOption: Decodable {
   let id: String
@@ -16,6 +16,7 @@ struct PickerOption: Decodable {
 
 /// Per-thread header metadata pushed from JS (`set_thread_meta`).
 struct ThreadMeta: Decodable {
+  var agent: String?
   var model: String?
   var access: String?
   var controlsDisabled: Bool?
@@ -147,7 +148,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     actionsItem.style = .plain
     actionsItem.accessibilityLabel = "Thread actions"
     rebuildActions()
-    navigationItem.rightBarButtonItems = [actionsItem, callItem, newItem]
+    navigationItem.rightBarButtonItems = [actionsItem, callPhoneItem, newItem]
     let menu = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal"), style: .plain, target: self, action: #selector(menuTapped))
     menu.accessibilityLabel = "Threads"
     menu.accessibilityHint = "Opens the thread list"
@@ -160,11 +161,37 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     webView.allowsBackForwardNavigationGestures = false
   }
 
-  private lazy var callItem: UIBarButtonItem = {
+  private lazy var callPhoneItem: UIBarButtonItem = {
     let item = UIBarButtonItem(image: UIImage(systemName: "phone"), style: .plain, target: self, action: #selector(callTapped))
     item.accessibilityLabel = "Start call"
     return item
   }()
+  private lazy var callIndicator: CallIndicatorView = {
+    let v = CallIndicatorView()
+    v.onMute = { [weak self] in self?.onThreadAction?("mute") }
+    v.onHangup = { [weak self] in self?.onThreadAction?("hangup") }
+    return v
+  }()
+  private lazy var callGroupItem = UIBarButtonItem(customView: callIndicator)
+  private var call = CallState.none
+  /// Phone button when idle; compact indicator group while a call is active.
+  private var callItem: UIBarButtonItem { call.active ? callGroupItem : callPhoneItem }
+
+  private func rightItems(for mode: ShellMode) -> [UIBarButtonItem] {
+    switch mode {
+    case .conversation, .commander: return [actionsItem, callItem, newItem]
+    case .new, .dashboard: return [callItem]
+    default: return []
+    }
+  }
+
+  /// Only reassigns when the set of items changes, so repeated set_mode calls leave the bar alone.
+  private func updateRightItems() {
+    callIndicator.compact = conversation && view.bounds.width < 430
+    let items = rightItems(for: mode)
+    let current = navigationItem.rightBarButtonItems ?? []
+    if current.count != items.count || !zip(current, items).allSatisfy({ $0 === $1 }) { navigationItem.rightBarButtonItems = items }
+  }
   @objc private func callTapped() { onThreadAction?("call") }
 
   @objc private func menuTapped() { onMenu?() }
@@ -233,7 +260,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
 
   func setThreadMeta(_ new: ThreadMeta) {
     meta = new
-    composer.setSettings(model: new.model, access: new.access, disabled: new.controlsDisabled ?? false)
+    composer.setSettings(agent: new.agent, model: new.model, access: new.access, disabled: new.controlsDisabled ?? false)
     refreshSubtitle()
     rebuildActions()
   }
@@ -314,14 +341,16 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     navigationItem.titleView?.isHidden = floatingHeader
   }
 
-  func apply(mode newMode: ShellMode, title: String?, placeholder: String?, back: Bool = false) {
+  func apply(mode newMode: ShellMode, title: String?, placeholder: String?, back: Bool = false, call newCall: CallState = .none) {
     let modeChanged = mode != newMode
     if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
+    call = newCall
+    callIndicator.apply(newCall)
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
     // New threads can begin a call before the first spoken message creates the thread.
-    navigationItem.rightBarButtonItems = newMode == .conversation || newMode == .commander ? [actionsItem, callItem, newItem] : newMode == .new ? [callItem] : newMode == .dashboard ? [callItem] : []
-    let left: UIBarButtonItem? = back ? backItem : (newMode == .project ? nil : menuItem)
+    updateRightItems()
+    let left: UIBarButtonItem? = back ? backItem : (newMode == .project || newMode == .callReview ? nil : menuItem)
     if navigationItem.leftBarButtonItem !== left { navigationItem.leftBarButtonItem = left }
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {

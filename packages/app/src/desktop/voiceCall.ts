@@ -38,6 +38,8 @@ export type ThreadView = { busy: boolean; messages: { id: string; role: string; 
 export type CallSnapshot = {
   active: boolean; engine: EngineState; error: string | null; pending: string;
   speaking: boolean; muted: boolean; speak: boolean; mode: CallMode;
+  /** Epoch ms when the call began; null while no call is active. */
+  startedAt: number | null;
 };
 /** Sees each transcribed segment first; 'consume' keeps it away from the thread (used by the dashboard command center). */
 export type SegmentInterceptor = (text: string) => "consume" | "pass";
@@ -71,7 +73,7 @@ export class VoiceCallController {
   private awaiting: { baseline: string | null } | null = null;
 
   constructor(private io: CallIo, private getThread: () => CallThread, prefs: CallPrefs, private delayMs = SEND_DELAY_MS, private getInterceptor: () => SegmentInterceptor | undefined = () => undefined) {
-    this.s = { active: false, engine: "idle", error: null, pending: "", speaking: false, muted: false, speak: prefs.speak, mode: prefs.mode };
+    this.s = { active: false, engine: "idle", error: null, pending: "", speaking: false, muted: false, speak: prefs.speak, mode: prefs.mode, startedAt: null };
   }
 
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
@@ -92,7 +94,7 @@ export class VoiceCallController {
     if (this.s.active) return;
     const token = ++this.generation;
     this.actionError = null; this.engineError = null;
-    this.set({ active: true, engine: "idle", muted: false });
+    this.set({ active: true, engine: "idle", muted: false, startedAt: Date.now() });
     try {
       const off = await this.io.listen(event => this.handle(event));
       if (token !== this.generation) { off(); return; }
@@ -112,7 +114,7 @@ export class VoiceCallController {
     this.pendingParts = [];
     this.awaiting = null;
     this.unlisten?.(); this.unlisten = null;
-    this.set({ active: false, speaking: false, engine: "idle" });
+    this.set({ active: false, speaking: false, engine: "idle", startedAt: null });
     const results = await Promise.allSettled([this.io.stop(), this.io.stopSpeaking()]);
     for (const r of results) if (r.status === "rejected") console.error(JSON.stringify({ event: "voice_call.end_failed", error: message(r.reason) }));
     try { await this.getThread().purgeVoiceQueue?.(); } catch (error) { console.warn(JSON.stringify({ event: "voice_call.queue_purge_failed", error: message(error) })); }

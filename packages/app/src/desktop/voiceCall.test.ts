@@ -159,4 +159,14 @@ describe("VoiceCallController", () => {
     expect(t.io.stopSpeaking).toHaveBeenCalled();
     expect(t.c.getSnapshot().active).toBe(false);
   });
+
+  it("records the start time while active and clears it on end", async () => {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const t = setup();
+    expect(t.c.getSnapshot().startedAt).toBeNull();
+    await t.c.begin();
+    expect(t.c.getSnapshot().startedAt).toBe(Date.parse("2026-01-01T00:00:00Z"));
+    await t.c.end();
+    expect(t.c.getSnapshot().startedAt).toBeNull();
+  });
 });

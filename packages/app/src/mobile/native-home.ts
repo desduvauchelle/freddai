@@ -1,6 +1,8 @@
+import { levelChoices, levelName, selectionLevel } from "../desktop/model-levels";
 import { agentDisplayName, type PermissionMode } from '../desktop/types';
-import { effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from '../desktop/agent-selection';
+import { advancedModelChoices, effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from '../desktop/agent-selection';
 import type { CompanionProject } from './companion';
+import { formatProjectName } from '../projectName';
 import type { NativeFile, PickerOption } from './native-shell';
 
 /** Pure helpers behind the iPhone "new thread" home and the agent/model pills. */
@@ -40,24 +42,32 @@ export function pickNewProject(projects: CompanionProject[], ...preferred: strin
 }
 
 export const assistantLabel = (assistant: { name: string; provider: string }) => agentDisplayName(assistant);
-export const projectOptions = (projects: CompanionProject[]): PickerOption[] =>
-  projects.map(p => ({ id: p.id, label: p.name, detail: p.canStart ? undefined : 'Not ready on your Mac', disabled: !p.canStart }));
+export const projectOptions = (projects: CompanionProject[], uppercase?: boolean): PickerOption[] =>
+  projects.map(p => ({ id: p.id, label: formatProjectName(p.name, uppercase), detail: p.canStart ? undefined : 'Not ready on your Mac', disabled: !p.canStart }));
 export const assistantOptions = (project?: CompanionProject): PickerOption[] =>
   (project?.assistants ?? []).map(a => ({ id: a.id, label: assistantLabel(a) }));
 
-const DEFAULT_OPTION: PickerOption = { id: '', label: 'Agent default' };
-export const modelOptions = (provider: string | undefined, models: Model[]): PickerOption[] =>
-  [DEFAULT_OPTION, ...modelChoices(provider, models).map(c => ({ id: c.value, label: c.label }))];
+export const modelOptions = (provider: string | undefined, _models: Model[]): PickerOption[] =>
+  [...levelChoices(provider).map(c => ({ id: c.value, label: c.label })), { id: '__custom', label: 'Custom' }];
+
+export async function chooseModel(choose: (title: string, options: PickerOption[], selected: string) => Promise<string | null>, provider: string | undefined, models: Model[], current: string, editCustom?: (current: string) => Promise<string | null>): Promise<string | null> {
+  const currentLevel = selectionLevel(current);
+  const selected = await choose('Difficulty', modelOptions(provider, models), currentLevel === 'custom' ? '__custom' : `freddai-level:${currentLevel}`);
+  if (selected !== '__custom') return selected;
+  const choices = advancedModelChoices(provider, models).map(c => ({ id: c.value, label: c.label }));
+  if (currentLevel === 'custom' && !choices.some(c => c.id === current)) choices.unshift({ id: current, label: current });
+  const model = await choose('Specific model', [...choices, { id: '__custom_id', label: 'Enter model ID…' }], currentLevel === 'custom' ? current : '');
+  return model === '__custom_id' ? editCustom ? editCustom(currentLevel === 'custom' ? current : '') : null : model;
+}
 export const effortOptions = (provider: string | undefined, model: string, models: Model[]): PickerOption[] =>
-  [{ id: 'default', label: 'Agent default' }, ...effortChoices(provider || '', model, models).map(e => ({ id: e, label: effortLabel(e) }))];
+  [{ id: 'default', label: 'Provider default' }, ...effortChoices(provider || '', model, models).map(e => ({ id: e, label: effortLabel(e) }))];
 export const PERMISSION_OPTIONS: PickerOption[] = [{ id: 'ask', label: 'Ask for approval' }, { id: 'bypass', label: 'Full access' }];
 export const permissionLabel = (mode: PermissionMode) => (mode === 'bypass' ? 'Full access' : 'Ask for approval');
 export const supportsPermissions = (provider?: string) => provider === 'codex' || provider === 'claude';
 
-/** "Opus · High", or "Model default" when nothing is chosen. */
+/** Every composer displays a level; exact legacy model IDs are Custom. */
 export function modelPillLabel(provider: string | undefined, selection: AgentSelection, models: Model[]): string {
-  const name = modelChoices(provider, models).find(c => c.value === selection.model)?.label || selection.model || 'Model default';
-  return selection.effort !== 'default' ? `${name} · ${effortLabel(selection.effort)}` : name;
+  return levelName(selection.model);
 }
 
 /** Client-side mirror of the native limits so the web layer never uploads what the native alert would have refused. */

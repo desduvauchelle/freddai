@@ -10,7 +10,7 @@ it('native iOS and Android display and launch the resolved saved integration', (
   const model = buildDashboardModel(snapshot, true, '', controls, false);
   expect(model.agent).toBe('Codex · RS');
   expect(model.projects[0].assistant).toBe('rs');
-  expect(model.model).toContain('custom-model');
+  expect(model.model).toBe('Custom');
   snapshot.projects[0].defaultAssistant = 'other';
   expect(buildDashboardModel(snapshot, true, '', controls, false).agent).toBe('Claude · Other');
   expect(buildDashboardModel(snapshot, true, 'rs', controls, false).agent).toBe('Codex · RS');
@@ -69,4 +69,11 @@ it('persists last-used model and effort under new: keys only', () => {
   saveControls({ 'new:p:a:claude': { selection: { model: 'opus', effort: 'high' } }, 'thread-1': { selection: { model: 'x', effort: 'low' } } });
   expect(savedControls()).toEqual({ 'new:p:a:claude': { model: 'opus', effort: 'high' } });
   expect(localStorage.getItem('freddai.companion.controls')).toContain('new:p:a:claude');
+});
+
+it('uppercases dashboard project names only when the Mac setting is on', () => {
+  const data = snap();
+  expect(buildDashboardModel(data, true, '', {}, false).projects.map(p => p.name)).toEqual(['Project', 'Other']);
+  data.threadList = { projectNameUppercase: true };
+  expect(buildDashboardModel(data, true, '', {}, false).projects.map(p => p.name)).toEqual(['PROJECT', 'OTHER']);
 });

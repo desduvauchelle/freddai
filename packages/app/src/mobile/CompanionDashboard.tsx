@@ -12,6 +12,7 @@ import { defaultSelection, type AgentSelection } from '../desktop/agent-selectio
 import { DashboardMic } from './DashboardMic';
 import { CommanderCluster } from './commander/CommanderCluster';
 import { useCommanderData } from './commander/useCommanderData';
+import { formatProjectName } from '../projectName';
 import type { CompanionClient, CompanionProject, CompanionSnapshot } from './companion';
 import { Button } from '@freddai/ui/components/button';
 import { labelStatus } from '../desktop/ThreadStatus';
@@ -45,15 +46,8 @@ type Props = {
 
 function ProjectCard({ project, snapshot, now, onProject, ...props }: Props & { project: CompanionProject; now: number; onProject: () => void }) {
   const threads = snapshot.threads.filter(t => t.project === project.id && !['archived', 'deleted'].includes(t.status));
-  const midnight = new Date(now).setHours(0, 0, 0, 0);
-  const counts = {
-    working: threads.filter(t => ['starting', 'running'].includes(nativeRunState(t))).length,
-    done: threads.filter(t => t.status === 'done' && !t.pending && t.updated >= midnight).length,
-    needs: threads.filter(t => nativeRunState(t) === 'waiting').length,
-    failed: threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight).length,
-  };
   const pending = pendingThreads(project.id, props.outbox ?? [], new Set(snapshot.threads.map(t => t.id)), props.connected, now);
-  return <ProjectTile openLabel={`Open project ${project.name}`} project={project} hasThreads={threads.length > 0} counts={counts}
+  return <ProjectTile openLabel={`Open project ${project.name}`} project={project} uppercase={snapshot.threadList?.projectNameUppercase} hasThreads={threads.length > 0}
     recent={[...pending.map(t => ({ id: t.id, title: t.title, status: t.status as ReturnType<typeof threadListStatus> })),
       ...[...threads].sort(compareThreadRecency).map(t => ({ id: t.id, title: t.title, status: threadListStatus(t, companionStatusRead(snapshot, props.read ?? {})) }))].slice(0, 3)}
     onOpen={onProject} onOpenThread={props.onOpen}
@@ -159,7 +153,7 @@ export function CompanionDashboard(props: Props) {
     </div>
     {!connected && <p>Connect to your Mac to refresh project activity.</p>}
     {!!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
-      {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{snapshot.projects.find(p => p.id === t.project)?.name} · Review decision</small></span></button>)}
+      {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{formatProjectName(snapshot.projects.find(p => p.id === t.project)?.name, snapshot.threadList?.projectNameUppercase)} · Review decision</small></span></button>)}
     </section>}
     {dashboardProjectGroups(snapshot).map(group => <section key={group.id} aria-label={group.name ?? undefined}>
       {group.name && <h3 className="companion-workspace-heading">{group.name}</h3>}
@@ -167,7 +161,7 @@ export function CompanionDashboard(props: Props) {
     </section>)}
     <Sheet open={!!activeProject} onOpenChange={open => { if (!open) setOpenProject(null); }}>
       <SheetContent className="companion-project-panel">
-        <SheetHeader><SheetTitle>{activeProject?.name}</SheetTitle><SheetDescription>Project threads and new tasks</SheetDescription></SheetHeader>
+        <SheetHeader><SheetTitle>{formatProjectName(activeProject?.name, snapshot.threadList?.projectNameUppercase)}</SheetTitle><SheetDescription>Project threads and new tasks</SheetDescription></SheetHeader>
         {activeProject && <ProjectPanel {...props} assistantSelections={selections} project={activeProject}
           onOpen={id => { setOpenProject(null); onOpen(id); }} onNew={(id, assistant) => { setOpenProject(null); props.onNew(id, assistant); }} />}
       </SheetContent>

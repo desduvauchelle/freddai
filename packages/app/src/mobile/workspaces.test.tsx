@@ -33,15 +33,42 @@ it('saves workspace management through the paired client', async () => {
   await waitFor(() => expect(saveWorkspaces).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ name: 'Personal', projects: [] })])));
 });
 
-it('switches workspace from the dashboard and scopes project cards', async () => {
+it('dashboard ignores the sidebar workspace, project and status filters', async () => {
   render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(data) }}/>);
-  fireEvent.click(await screen.findByRole('button', { name: 'Dashboard' }));
-  expect(screen.getByRole('combobox', { name: 'Workspace filter' })).toBeTruthy();
-  fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: 'w' } });
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Workspace filter' }), { target: { value: 'w' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Project filter' }), { target: { value: 'a' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Status filter' }), { target: { value: 'running' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+  expect(screen.queryByRole('combobox', { name: 'Workspace filter' })).toBeNull();
   expect(screen.getByRole('heading', { name: 'Alpha' })).toBeTruthy();
-  expect(screen.queryByRole('heading', { name: 'Beta' })).toBeNull();
-  fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: '' } });
   expect(screen.getByRole('heading', { name: 'Beta' })).toBeTruthy();
+});
+
+it('shows one removable chip per active filter and clears only that filter', async () => {
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(data) }}/>);
+  await screen.findByRole('combobox', { name: 'Workspace filter' });
+  expect(screen.queryByRole('list', { name: 'Active filters' })).toBeNull();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Workspace filter' }), { target: { value: 'w' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Project filter' }), { target: { value: 'a' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Status filter' }), { target: { value: 'done' } });
+  expect(screen.getAllByRole('listitem').map(li => li.getAttribute('data-kind'))).toEqual(['workspace', 'project', 'status']);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove status filter Finished' }));
+  expect((screen.getByRole('combobox', { name: 'Status filter' }) as HTMLSelectElement).value).toBe('all');
+  expect((screen.getByRole('combobox', { name: 'Project filter' }) as HTMLSelectElement).value).toBe('a');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove project filter Alpha' }));
+  expect((screen.getByRole('combobox', { name: 'Project filter' }) as HTMLSelectElement).value).toBe('');
+  expect((screen.getByRole('combobox', { name: 'Workspace filter' }) as HTMLSelectElement).value).toBe('w');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove workspace filter Work' }));
+  expect(screen.queryByRole('list', { name: 'Active filters' })).toBeNull();
+});
+
+it('keeps the Commander tile visible under filters and opens Commander', async () => {
+  const withCommander = { ...data, projects: [{ id: 'cmd', name: 'Commander', color: '#fff', canStart: true, kind: 'commander' as const }, ...data.projects] };
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(withCommander) }}/>);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Project filter' }), { target: { value: 'a' } });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Search threads' }), { target: { value: 'nothing' } });
+  expect(screen.getByRole('button', { name: 'Commander' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Dashboard' })).toBeTruthy();
 });
 
 it('edits project presentation and saved order from organization settings', async () => {

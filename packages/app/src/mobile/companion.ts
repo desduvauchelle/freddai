@@ -8,10 +8,10 @@ import type { BackgroundTask, Message, Pending, Attachment, Workspace } from '..
 
 // Intentionally excludes account credentials, filesystem paths and settings.
 export type CompanionProject = { id: string; name: string; color: string; canStart: boolean; provider?: string; defaultAssistant?: string; assistants?: { id: string; name: string; provider: string }[]; kind?: 'commander' | null; objective?: string | null };
-export type CompanionThread = { scheduled?: boolean; origin?: { kind: string; thread?: string | null; project?: string | null } | null; pinned?: boolean; id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
+export type CompanionThread = { agent?: string; scheduled?: boolean; origin?: { kind: string; thread?: string | null; project?: string | null } | null; pinned?: boolean; id: string; project: string; title: string; status: string; updated: number; read_at?: number | null; last_user_message_at?: number | null; messages: Message[]; messagesLoaded?: boolean; tasks?: BackgroundTask[]; canReply: boolean; queued: number; error: string | null; pending?: Pending | null; provider?: string; queuePaused?: boolean; queueError?: string | null; options?: ComposerOptions; usage?: ConversationUsage | null; queue?: { id: string; prompt: string; attachments: number }[] };
 export type CompanionProductUsage = { error?: string | null; id: string; name: string; provider: string; color: string; usage?: { windows: import("../desktop/usage").UsageWindow[]; checked_at: number } | null };
-export type CompanionSnapshot = { productUsage?: CompanionProductUsage[]; canReorderProjects?: boolean; workspaces?: Workspace[]; schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number } };
-export type ComposerOptions = { model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
+export type CompanionSnapshot = { modelConfiguration?: import("../desktop/model-levels").ModelConfiguration; productUsage?: CompanionProductUsage[]; canReorderProjects?: boolean; workspaces?: Workspace[]; schedules?: import("../desktop/types").Schedule[]; projects: CompanionProject[]; threads: CompanionThread[]; threadList?: { projectOrder?: string[]; grouped?: boolean; hideRead?: boolean; ignoreUnread?: boolean; recentFinished?: number; projectNameUppercase?: boolean } };
+export type ComposerOptions = { agent?: string | null; model?: string | null; effort?: string | null; permission_mode?: 'ask' | 'bypass' | null; attachments?: string[]; update_agent_controls?: boolean };
 /** Commander-in-Chief operations proxied to the Mac. The state omits the folder path; memory and settings stay desktop-only. */
 type DesktopCommanderState = import('../desktop/commander/api').CommanderState;
 export type CompanionCommanderState = Omit<DesktopCommanderState, 'project'> & { project: Omit<DesktopCommanderState['project'], 'path'> };
@@ -32,6 +32,7 @@ export type CompanionClient = {
   projectFolders?(operation: "browse_folders" | "create_folder", input: { path?: string; name?: string }): Promise<FolderListing>;
   addProject?(path: string): Promise<{ id: string }>;
   moveProject?(project: string, target: string, after: boolean): Promise<string[]>;
+  saveModelConfiguration?(configuration: import("../desktop/model-levels").ModelConfiguration): Promise<void>;
   saveWorkspaces?(workspaces: Workspace[]): Promise<void>;
   generatedFile?(thread: string, href: string, offset: number): Promise<import("../conversation/GeneratedFile").FileChunk>;
   scheduleCommand?: import("../desktop/ScheduleManager").ScheduleCommand;

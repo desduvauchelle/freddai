@@ -1,0 +1,12 @@
+.active-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; min-width: 0; }
+.active-filter-chip { max-width: 100%; min-width: 0; gap: 4px; padding: 0 2px 0 8px; font-size: 11px; line-height: 16px; color: var(--foreground); background: var(--accent); border-color: var(--border); }
+.active-filter-chip > svg { color: var(--muted-foreground); flex-shrink: 0; }
+.active-filter-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.active-filter-chips .active-filter-chip-clear { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.active-filter-chips .active-filter-chip-clear:hover { color: var(--foreground); background: color-mix(in srgb, var(--foreground) 12%, transparent); }
+.active-filter-chips .active-filter-chip-clear:focus-visible { outline: 2px solid var(--ring, var(--foreground)); outline-offset: -2px; }
+.active-filter-chip-clear svg { width: 12px; height: 12px; }
+/* Touch layout: 44px hit area for the remove control. */
+.companion-container .active-filter-chips { padding: 0 16px 12px; }
+.companion-container .active-filter-chips .active-filter-chip { font-size: 13px; }
+.companion-container .active-filter-chips .active-filter-chip-clear { min-width: 44px; min-height: 44px; }

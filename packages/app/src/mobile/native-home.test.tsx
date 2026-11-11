@@ -45,7 +45,9 @@ const clientWith = (extra: Partial<CompanionClient> = {}): CompanionClient => ({
   attachPath: vi.fn(async f => ({ id: `att-${f.name}`, name: f.name, bytes: 1000, mime: f.mime, sha256: '' })),
   start: vi.fn(async () => 'new-thread'), ...extra,
 });
-const modeCalls = () => shell.setMode.mock.calls as unknown as [string, Record<string, unknown>][];
+const rawModeCalls = () => shell.setMode.mock.calls as unknown as [string, Record<string, unknown>][];
+// Most assertions predate the `call` payload; they compare mode and options without it.
+const modeCalls = () => rawModeCalls().map(([mode, { call: _call, ...options }]) => [mode, options] as [string, Record<string, unknown>]);
 const send = (text: string, files: unknown[] = []) => act(async () => { (shell.handlers.composerSend as (t: string, f: unknown[]) => void)(text, files); });
 
 // Composer tests enter New thread through the same explicit native action as users.
@@ -462,9 +464,7 @@ it('applies the shared dashboard model and difficulty to tasks in different proj
   await act(async () => { shell.handlers.dashboard(); });
   shell.pickOption.mockResolvedValueOnce('b');
   await dashboardAction({ action: 'agent' });
-  shell.pickOption.mockResolvedValueOnce('shared-model');
-  await dashboardAction({ action: 'dashboard-model' });
-  shell.pickOption.mockResolvedValueOnce('high');
+  shell.pickOption.mockResolvedValueOnce('__custom').mockResolvedValueOnce('shared-model').mockResolvedValueOnce('high');
   await dashboardAction({ action: 'dashboard-effort' });
   await dashboardAction({ action: 'new', project: 'p1', assistant: 'b' });
   await send('First shared task');
@@ -969,7 +969,7 @@ it.each(['delete', 'archive'] as const)('closes a dashboard thread sheet after %
 });
 
 
-it.each(['delete', 'archive'] as const)('restores the original conversation after %s in a linked-thread sheet', async operation => {
+it.each(['delete', 'archive'] as const)('returns to dashboard after delete or the original conversation after archive in a linked-thread sheet', async operation => {
   const snapshot = structuredClone(data);
   snapshot.threads[0].messages = [{ id: 'm1', role: 'assistant', text: 'See [Other thread](freddai://thread/t2).' }];
   snapshot.threads.push({ ...snapshot.threads[0], id: 't2', title: 'Linked thread', messages: [] });
@@ -981,7 +981,9 @@ it.each(['delete', 'archive'] as const)('restores the original conversation afte
   await waitFor(() => expect(modeCalls().at(-1)?.[1]?.threadSheet).toBe(true));
   await act(async () => { (shell.handlers.threadAction as (p: unknown) => void)({ action: operation }); });
   await waitFor(() => expect(action).toHaveBeenCalledWith({ thread: 't2', action: operation }));
-  await waitFor(() => expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Old thread', threadSheet: false })]));
+  await waitFor(() => operation === 'delete'
+    ? expect(modeCalls().at(-1)?.[0]).toBe('dashboard')
+    : expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Old thread', threadSheet: false })]));
 });
 
 
@@ -1012,7 +1014,8 @@ it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the i
   expect((instruction as HTMLTextAreaElement).value).toContain('say hello');
   expect(client.start).not.toHaveBeenCalled();
   expect(client.reply).not.toHaveBeenCalled();
-  expect(modeCalls().at(-1)?.[0]).toBe('other');
+  // Reviewing on native presents the web view in the page sheet; the call state rides along on every set_mode.
+  await waitFor(() => expect(rawModeCalls().at(-1)).toEqual(['callReview', expect.objectContaining({ threadSheet: true, call: expect.objectContaining({ active: true, muted: false, startedAt: expect.any(Number) }) })]));
   fireEvent.change(instruction, { target: { value: 'Say hello to check this works.' } });
   if (action === 'agent') fireEvent.change(within(card).getByRole('combobox', { name: 'Agent' }), { target: { value: 'b' } });
   if (action === 'unready') {
@@ -1039,8 +1042,31 @@ it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the i
     await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p1', assistant: action === 'agent' ? 'b' : 'a', prompt: 'Say hello to check this works.' })));
   }
   expect(screen.queryByRole('region', { name: 'Command review' })).toBeNull();
-  await act(async () => { screen.getByRole('button', { name: 'End call' }).click(); });
+  // The native header owns the call controls: no web pill, hang-up arrives as a threadAction.
+  expect(screen.queryByRole('button', { name: 'End call' })).toBeNull();
+  await waitFor(() => expect(rawModeCalls().at(-1)?.[1]).toMatchObject({ call: { active: true, muted: false, phase: expect.any(String) } }));
+  await act(async () => { (shell.handlers.threadAction as (p: { action: string }) => void)({ action: 'mute' }); });
+  await waitFor(() => expect(rawModeCalls().at(-1)?.[1]).toMatchObject({ call: { active: true, muted: true } }));
+  await act(async () => { (shell.handlers.threadAction as (p: { action: string }) => void)({ action: 'hangup' }); });
+  await waitFor(() => expect(rawModeCalls().at(-1)).toEqual(['dashboard', expect.objectContaining({ call: { active: false, startedAt: null, muted: false, phase: 'idle' } })]));
+});
+
+it('cancels the native call review when the page sheet is swiped away', async () => {
+  const snapshot = structuredClone(data);
+  snapshot.projects[0]!.name = 'freddai';
+  snapshot.projects.push({ id: 'chief', name: 'Commander', color: '#777', canStart: true, kind: 'commander' });
+  const client = clientWith({ snapshot: async () => structuredClone(snapshot), transcribe: vi.fn(), reply: vi.fn(), commander: { state: async () => ({ thread_id: null, status: {} }), proposals: async () => [] } as never });
+  render(<MobileApp client={client} />);
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ connected: true, commander: expect.objectContaining({ id: 'chief' }) })));
+  await act(async () => { (shell.handlers.threadAction as (p: { action: string }) => void)({ action: 'call' }); });
+  await act(async () => { callIo.handler({ type: 'segment', text: 'Freddy, send a request to say hello to the project Freddy to see if this is working.' }); });
+  await screen.findByRole('region', { name: 'Command review' });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('callReview'));
+  await act(async () => { shell.handlers.navBack(); });
+  expect(screen.queryByRole('region', { name: 'Command review' })).toBeNull();
   await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  expect(client.start).not.toHaveBeenCalled();
+  await act(async () => { (shell.handlers.threadAction as (p: { action: string }) => void)({ action: 'hangup' }); });
 });
 
 it('project sheet in native mode renders only that project\'s threads, with no web chrome', async () => {

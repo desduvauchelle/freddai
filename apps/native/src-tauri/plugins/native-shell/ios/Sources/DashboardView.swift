@@ -332,8 +332,7 @@ final class DashboardView: UIScrollView {
     let defaults = UIStackView(arrangedSubviews: [agent]); defaults.axis = .horizontal; defaults.alignment = .center; defaults.spacing = 6
     defaults.accessibilityIdentifier = "dashboard-launch-controls"
     if model.hasControls == true {
-      defaults.addArrangedSubview(picker(model.model ?? "Model default", label: "Model: " + (model.model ?? "Model default"), id: "dashboard-model", action: "dashboard-model"))
-      defaults.addArrangedSubview(picker(model.difficulty ?? "Difficulty default", label: "Difficulty: " + (model.difficulty ?? "Difficulty default"), id: "dashboard-difficulty", action: "dashboard-effort"))
+      defaults.addArrangedSubview(picker(model.difficulty ?? "Normal", label: "Difficulty: " + (model.difficulty ?? "Normal"), id: "dashboard-difficulty", action: "dashboard-effort"))
     }
     let wide = bounds.width >= 620 && !traitCollection.preferredContentSizeCategory.isAccessibilityCategory
     if wide {

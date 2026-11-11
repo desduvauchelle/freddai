@@ -149,8 +149,7 @@ class DashboardView(private val activity: AppCompatActivity,
         }
         picker("Provider", model.optString("agent", "Project defaults"), "agent")
         if (model.optBoolean("hasControls")) {
-            picker("Model", model.optString("model", "Model default"), "dashboard-model")
-            picker("Difficulty", model.optString("difficulty", "Difficulty default"), "dashboard-effort")
+            picker("Difficulty", model.optString("difficulty", "Normal"), "dashboard-effort")
         }
         if (width / resources.displayMetrics.density >= 620) header.addView(defaults)
         column.addView(header)

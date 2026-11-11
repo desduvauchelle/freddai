@@ -3,6 +3,7 @@ import { threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
 import { COMPANION_RECENT_PAGING, asThreadNavView, selectRecentThreads, type ThreadNavView } from '../recentThreads';
 import type { Outgoing } from './outbox';
+import { formatProjectName } from '../projectName';
 import { companionStatusRead, groupCompanionThreads, selectThreads, scopeCompanion } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
@@ -15,6 +16,8 @@ export type NativeOption = { id: string; label: string };
 export type NativeThreadsModel = {
   productUsage?: ProductUsageCard[];
   groups: NativeThreadGroup[];
+  /** Commander nav tile target. Taken from the unfiltered, unscoped snapshot, so it is present whatever workspace/project/status/search filters are active; absent when no commander project exists. */
+  commander?: { id: string; name: string };
   canReorderProjects?: boolean;
   /** Which list the drawer shows; owned by JS (`freddai.companion.threadNavView`) and echoed back via `setView`. */
   view: ThreadNavView;
@@ -79,24 +82,27 @@ export function buildThreadsModel(input: {
   const { selected, project, query, filter, olderPages } = input;
   const data = scopeCompanion(input.data, input.workspace || "");
   const read = companionStatusRead(data, input.read);
+  const projectName = (name: string | null | undefined) => formatProjectName(name, input.data.threadList?.projectNameUppercase);
   const threads = selectThreads(data, project, query, filter, 'recent', read);
   const groups = groupCompanionThreads(data, threads, { read, selected, filter, pages: olderPages, includeEmpty: !query.trim() && filter === 'all', project });
   const recentRows = (pick: ReturnType<typeof selectRecentThreads<CompanionThread>>): NativeRecent => ({
     threads: pick.threads.map(t => {
       const owner = data.projects.find(p => p.id === t.project);
-      return { ...nativeThread(t, read), projectLabel: owner?.name || 'Project', projectColor: owner?.color || '' };
+      return { ...nativeThread(t, read), projectLabel: projectName(owner?.name) || 'Project', projectColor: owner?.color || '' };
     }),
     remaining: pick.remaining,
     expanded: pick.expanded,
   });
+  const commanderProject = input.data.projects.find(p => p.kind === 'commander');
   return {
     productUsage: productUsageCards(input.data.productUsage),
+    ...(commanderProject ? { commander: { id: commanderProject.id, name: commanderProject.name } } : {}),
     view: input.view ?? 'projects',
     recent: recentRows(selectRecentThreads(threads, input.recentPages ?? 0, COMPANION_RECENT_PAGING)),
     recentSection: recentRows(selectRecentThreads(threads, input.sectionPages ?? 0)),
     groups: [...groups].sort((a, b) => Number(isCommanderGroup(b)) - Number(isCommanderGroup(a))).map(group => ({
       project: group.id,
-      label: group.project?.name || 'Project',
+      label: projectName(group.project?.name) || 'Project',
       color: group.project?.color || '',
       canStart: !!group.project?.canStart,
       ...(group.project && 'kind' in group.project && group.project.kind === 'commander' ? { kind: 'commander' as const } : {}),
@@ -108,7 +114,7 @@ export function buildThreadsModel(input: {
     selectedId: selected,
     filters: { ...(input.workspace !== undefined ? { workspace: input.workspace } : {}), project, status: filter, query },
     workspaceOptions: [{ id: "", label: "All workspaces" }, ...(data.workspaces || []).map(w => ({ id: w.id, label: w.name })), ...(input.canManageWorkspaces ? [{ id: "__manage_workspaces", label: "Manage workspaces…" }] : [])],
-    projectOptions: [{ id: '', label: 'All projects' }, ...data.projects.map(p => ({ id: p.id, label: p.name }))],
+    projectOptions: [{ id: '', label: 'All projects' }, ...data.projects.map(p => ({ id: p.id, label: projectName(p.name) }))],
     statusOptions: data.threadList?.ignoreUnread ? STATUS_OPTIONS.map(option => ({ ...option, label: option.id === "running" ? "Working" : option.id === "done" ? "Done" : option.label })) : STATUS_OPTIONS,
   };
 }

@@ -48,11 +48,14 @@ export function useNativeShell(): boolean {
   return native;
 }
 
-export type NativeMode = 'conversation' | 'commander' | 'new' | 'dashboard' | 'project' | 'other';
-/** 'conversation', 'commander' and 'new' show the native bar and drawer ('commander' is a conversation whose web header draws under a transparent bar); 'other' (pairing, loading) shows neither. */
-export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean; threadSheet?: boolean; back?: boolean } = {}): Promise<void> {
+export type NativeMode = 'conversation' | 'commander' | 'new' | 'dashboard' | 'project' | 'callReview' | 'other';
+/** Dashboard Commander call state. Sent with every `set_mode` so the native header can draw the indicator. `phase` is `callPhase()` or 'idle'. */
+export type NativeCallState = { active: boolean; startedAt: number | null; muted: boolean; phase: string };
+export const NO_NATIVE_CALL: NativeCallState = { active: false, startedAt: null, muted: false, phase: 'idle' };
+/** 'conversation', 'commander' and 'new' show the native bar and drawer ('commander' is a conversation whose web header draws under a transparent bar); 'other' (pairing, loading) shows neither; 'callReview' presents the web view (the Commander review card) in the native page sheet. */
+export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean; threadSheet?: boolean; back?: boolean; call?: NativeCallState } = {}): Promise<void> {
   if (!available) return Promise.resolve();
-  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null, threadSheet: options.threadSheet ?? false, back: options.back ?? false });
+  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null, threadSheet: options.threadSheet ?? false, back: options.back ?? false, call: options.call ?? NO_NATIVE_CALL });
 }
 
 /** Pushes the thread list model to the native drawer. Callers should wrap this in `createChangeSender`. */
@@ -68,7 +71,7 @@ export function setConnection(state: 'ok' | 'down' | 'connecting', message?: str
 }
 
 /** Header metadata for the native bar's second line and thread actions menu. All keys are always sent. */
-export type NativeThreadMeta = { model?: string | null; access?: string | null; controlsDisabled?: boolean; project: string; runState: 'running' | 'waiting' | 'failed' | ''; canPin?: boolean; pinned?: boolean; canStop: boolean; canReview: boolean; canArchive: boolean; canDelete: boolean };
+export type NativeThreadMeta = { agent?: string | null; model?: string | null; access?: string | null; controlsDisabled?: boolean; project: string; runState: 'running' | 'waiting' | 'failed' | ''; canPin?: boolean; pinned?: boolean; canStop: boolean; canReview: boolean; canArchive: boolean; canDelete: boolean };
 export function setThreadMeta(meta: NativeThreadMeta): Promise<void> {
   if (!available) return Promise.resolve();
   return invoke<void>(`plugin:${PLUGIN}|set_thread_meta`, { meta });

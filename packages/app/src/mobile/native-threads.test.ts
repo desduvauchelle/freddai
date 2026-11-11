@@ -264,3 +264,25 @@ it('preserves scheduled markers in project and recent navigation without marking
     expect(rows.find(row => row.id === 'ordinary')?.scheduled).toBe(false);
   }
 });
+
+it('exposes the commander tile target regardless of workspace, project, status or search filters', () => {
+  const data = snapshot([thread('t', 'a', 'running', 1)]);
+  expect(buildThreadsModel({ ...base, data }).commander).toBeUndefined();
+  data.projects.unshift({ id: 'cmd', name: 'Commander', color: '#fff', canStart: true, kind: 'commander' });
+  data.workspaces = [{ id: 'w', name: 'Work', color: '#fff', projects: ['a'] }];
+  const model = buildThreadsModel({ ...base, data, workspace: 'w', project: 'a', filter: 'done', query: 'zzz-no-match' });
+  expect(model.commander).toEqual({ id: 'cmd', name: 'Commander' });
+});
+
+it('uppercases project names only when the Mac setting is on', () => {
+  const data = snapshot([thread('a1', 'a', 'done', 50)]);
+  const off = buildThreadsModel({ ...base, data });
+  expect(off.groups[0].label).toBe('Alpha');
+  expect(off.recent.threads[0].projectLabel).toBe('Alpha');
+  data.threadList = { projectNameUppercase: true };
+  const on = buildThreadsModel({ ...base, data });
+  expect(on.groups[0].label).toBe('ALPHA');
+  expect(on.recent.threads[0].projectLabel).toBe('ALPHA');
+  expect(on.projectOptions.map(o => o.label)).toEqual(['All projects', 'ALPHA', 'BETA']);
+  expect(on.groups[0].threads[0].title).toBe('Thread a1');
+});

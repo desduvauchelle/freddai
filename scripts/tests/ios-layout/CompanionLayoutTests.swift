@@ -3,6 +3,29 @@ import UIKit
 
 final class CompanionLayoutTests: XCTestCase {
   @MainActor
+  func testComposerAgentAndDifficultyRemainVisibleAtPhoneAndTabletWidths() throws {
+    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    for width: CGFloat in [320, 393, 744, 1024] {
+      let composer = ComposerView()
+      composer.frame = CGRect(x: 0, y: 0, width: width, height: 180)
+      composer.setSettings(agent: "Codex · Work", model: "Smart", access: "Ask", disabled: false)
+      composer.setText("Keep my draft")
+      composer.layoutIfNeeded()
+      let agent = try XCTUnwrap(descendants(composer).first { $0.accessibilityLabel == "Agent: Codex · Work" } as? UIButton)
+      let level = try XCTUnwrap(descendants(composer).first { $0.accessibilityLabel == "Difficulty: Smart" } as? UIButton)
+      XCTAssertFalse(agent.isHidden); XCTAssertFalse(level.isHidden)
+      XCTAssertEqual(level.configuration?.title, "Smart")
+      let agentFrame = agent.convert(agent.bounds, to: composer)
+      let levelFrame = level.convert(level.bounds, to: composer)
+      XCTAssertLessThanOrEqual(agentFrame.maxX, levelFrame.minX)
+      XCTAssertLessThanOrEqual(levelFrame.maxX, width)
+      composer.setSettings(agent: "Claude · Work", model: "Custom", access: "Ask", disabled: false)
+      XCTAssertEqual(level.configuration?.title, "Custom")
+      XCTAssertTrue(descendants(composer).contains { ($0 as? UITextView)?.text == "Keep my draft" })
+    }
+  }
+
+  @MainActor
   func testRecordingCuesStayOnTheirAxesAndReturnHome() {
     for width: CGFloat in [390, 744, 1024, 1366] {
       let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1000))
@@ -35,29 +58,103 @@ final class CompanionLayoutTests: XCTestCase {
       let views = descendants(drawer.view)
       let dashboard = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "companion-dashboard" } as? UIButton)
       let settings = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "companion-settings" } as? UIButton)
+      let addProject = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "companion-add-project" } as? UIButton)
+      let commander = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "drawer-commander" } as? UIButton)
       let search = try XCTUnwrap(views.compactMap { $0 as? UISearchTextField }.first)
       XCTAssertTrue(views.compactMap { $0 as? UISegmentedControl }.isEmpty)
       let filter = try XCTUnwrap(views.compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Filter threads" })
       let title = try XCTUnwrap(views.compactMap { $0 as? UILabel }.first { $0.text == "Freddai" })
       func rect(_ view: UIView) -> CGRect { view.convert(view.bounds, to: drawer.view) }
-      XCTAssertEqual(dashboard.accessibilityLabel, "Dashboard")
-      XCTAssertEqual(rect(dashboard).midY, rect(title).midY, accuracy: 1)
-      XCTAssertGreaterThanOrEqual(rect(dashboard).width, 44)
+      // Title row: add project then settings, trailing, same size, centred on the title.
+      XCTAssertEqual(addProject.accessibilityLabel, "Add project")
+      XCTAssertEqual(settings.accessibilityLabel, "Settings")
+      for button in [addProject, settings] {
+        XCTAssertEqual(rect(button).midY, rect(title).midY, accuracy: 1)
+        XCTAssertEqual(rect(button).width, 44, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(rect(button).height, 44)
+        XCTAssertLessThanOrEqual(rect(button).maxX, width)
+      }
+      XCTAssertEqual(rect(addProject).height, rect(settings).height, accuracy: 0.5)
+      XCTAssertLessThan(rect(addProject).maxX, rect(settings).minX + 0.5)
+      XCTAssertGreaterThan(rect(addProject).minX, rect(title).maxX)
+      // Navigation row: Dashboard alone at full width while the model has no commander group.
+      XCTAssertTrue(commander.isHidden)
+      XCTAssertGreaterThanOrEqual(rect(dashboard).minY, rect(settings).maxY)
       XCTAssertGreaterThanOrEqual(rect(search).minY, rect(dashboard).maxY)
+      XCTAssertEqual(rect(dashboard).minX, rect(search).minX, accuracy: 0.5)
+      XCTAssertEqual(rect(dashboard).maxX, rect(filter).maxX, accuracy: 0.5)
       XCTAssertEqual(rect(filter).midY, rect(search).midY, accuracy: 1)
-      XCTAssertLessThanOrEqual(rect(dashboard).maxX, width)
+      XCTAssertNil(views.first { ($0.accessibilityIdentifier ?? "").hasPrefix("drawer-filter-chip-") }.flatMap { $0.isHidden ? nil : $0 })
       var opened = false
       drawer.onDashboard = { opened = true }
       dashboard.sendActions(for: .touchUpInside)
       XCTAssertTrue(opened)
-      XCTAssertEqual(settings.titleLabel?.text, "Settings")
-      XCTAssertGreaterThanOrEqual(rect(settings).height, 44)
-      XCTAssertGreaterThanOrEqual(rect(settings).minY, rect(dashboard).maxY)
-      XCTAssertLessThanOrEqual(rect(settings).maxY, rect(search).minY)
       var settingsOpened = false
       drawer.onSettings = { settingsOpened = true }
       settings.sendActions(for: .touchUpInside)
       XCTAssertTrue(settingsOpened)
+
+      // With a Commander group: two equal tiles, 8pt apart; Commander is not repeated in the list.
+      let json = """
+      {"groups":[{"project":"commander","label":"Commander","color":"","canStart":true,"threads":[],"olderRemaining":0,"olderLabel":"","olderExpanded":false,"kind":"commander"},
+        {"project":"freddai","label":"Freddai","color":"#777777","canStart":true,"threads":[],"olderRemaining":0,"olderLabel":"","olderExpanded":false}],
+       "canReorderProjects":false,"selectedId":"","view":"projects",
+       "recent":{"threads":[],"remaining":0,"expanded":false},"recentSection":{"threads":[],"remaining":0,"expanded":false},
+       "filters":{"workspace":"","project":"freddai","status":"working","query":""},
+       "commander":{"id":"commander","name":"Chief"},
+       "projectOptions":[{"id":"","label":"All projects"},{"id":"freddai","label":"Freddai App"}],
+       "statusOptions":[{"id":"all","label":"All"},{"id":"working","label":"Working"}]}
+      """
+      let model = try JSONDecoder().decode(ThreadsModel.self, from: Data(json.utf8))
+      let baseline = rect(search).minY
+      drawer.apply(model)
+      drawer.view.layoutIfNeeded()
+      // Decoded from the filter-independent `commander` field, even with the group filtered out of `groups`.
+      XCTAssertEqual(model.commander?.name, "Chief")
+      XCTAssertFalse(commander.isHidden)
+      XCTAssertEqual(commander.accessibilityLabel, "Chief")
+      XCTAssertEqual((commander as? NavTileButton)?.titleText.text, "Commander")
+      // Titles never truncate: at worst they shrink to the 0.85 minimum scale.
+      for tile in [dashboard, commander].compactMap({ $0 as? NavTileButton }) {
+        let label = tile.titleText
+        XCTAssertGreaterThanOrEqual(label.bounds.width + 0.5, ceil(label.intrinsicContentSize.width * 0.85), "\(label.text ?? "") truncates at width \(width)")
+      }
+      XCTAssertEqual(rect(dashboard).width, rect(commander).width, accuracy: 0.5)
+      XCTAssertEqual(rect(commander).minX - rect(dashboard).maxX, 8, accuracy: 0.5)
+      XCTAssertEqual(rect(dashboard).midY, rect(commander).midY, accuracy: 0.5)
+      XCTAssertGreaterThanOrEqual(rect(commander).height, 44)
+      XCTAssertEqual(rect(dashboard).minX, rect(search).minX, accuracy: 0.5)
+      var selected: String?
+      drawer.onSelectThread = { selected = $0 }
+      commander.sendActions(for: .touchUpInside)
+      XCTAssertEqual(selected, "commander:open")
+      // Chips: project then status, below the search row, header grows; the filter button is active.
+      let chips = descendants(drawer.view).compactMap { $0 as? FilterChipView }
+      XCTAssertEqual(chips.map(\.accessibilityIdentifier), ["drawer-filter-chip-project", "drawer-filter-chip-status"])
+      XCTAssertEqual(chips.first?.accessibilityLabel, "Remove project filter Freddai App")
+      XCTAssertGreaterThanOrEqual(rect(chips[0]).minY, rect(search).maxY)
+      XCTAssertGreaterThanOrEqual(rect(chips[0]).height, 32)
+      XCTAssertEqual(filter.accessibilityValue, "Projects, filters on")
+      var cleared: [String] = []
+      drawer.onSetFilter = { project, status, workspace in cleared = [project, status, workspace ?? "nil"] }
+      chips[0].sendActions(for: .touchUpInside)
+      XCTAssertEqual(cleared, ["", "working", "nil"])
+      chips[1].sendActions(for: .touchUpInside)
+      XCTAssertEqual(cleared, ["freddai", "all", "nil"])
+      // Filter active and the commander group absent from `groups`: tile stays visible via `commander`.
+      var filteredOut = model
+      filteredOut.groups = model.groups.filter { $0.kind != "commander" }
+      drawer.apply(filteredOut)
+      drawer.view.layoutIfNeeded()
+      XCTAssertFalse(commander.isHidden)
+      // Clearing every filter collapses the chip row and restores the header height.
+      var clean = model
+      clean.filters = ThreadFiltersModel()
+      drawer.apply(clean)
+      drawer.view.layoutIfNeeded()
+      XCTAssertTrue(descendants(drawer.view).compactMap { $0 as? FilterChipView }.allSatisfy { $0.isHidden || $0.superview?.superview?.isHidden == true })
+      XCTAssertEqual(rect(search).minY, baseline, accuracy: 1)
+      XCTAssertEqual(filter.accessibilityValue, "Projects")
     }
   }
 
@@ -681,13 +778,12 @@ final class CompanionLayoutTests: XCTestCase {
       let root = UIViewController(); root.view.backgroundColor = .systemBackground
       root.view.addSubview(dashboard); window.rootViewController = root; window.isHidden = false
       defer { window.isHidden = true }
-      let data = Data(##"{"connected":true,"busy":false,"agent":"Codex","hasControls":true,"model":"Shared model","difficulty":"High","projects":[{"id":"sample","name":"Sample","color":"#123456","assistant":"a","activity":"","model":"Old per-project model","canStart":true}]}"##.utf8)
+      let data = Data(##"{"connected":true,"busy":false,"agent":"Codex","hasControls":true,"model":"Smart","difficulty":"Smart","projects":[{"id":"sample","name":"Sample","color":"#123456","assistant":"a","activity":"","model":"Old per-project model","canStart":true}]}"##.utf8)
       dashboard.apply(try JSONDecoder().decode(DashboardModel.self, from: data)); dashboard.layoutIfNeeded()
       func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
       let views = descendants(dashboard)
       let heading = try XCTUnwrap(views.first { ($0 as? UILabel)?.text == "Your projects" })
       let provider = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-agent" } as? UIButton)
-      let model = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-model" } as? UIButton)
       let effort = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-difficulty" } as? UIButton)
       func rect(_ view: UIView) -> CGRect { view.convert(view.bounds, to: dashboard) }
       if width >= 620 {
@@ -696,16 +792,14 @@ final class CompanionLayoutTests: XCTestCase {
       } else {
         XCTAssertGreaterThanOrEqual(rect(provider).minY, rect(heading).maxY)
       }
-      XCTAssertEqual(rect(model).midY, rect(provider).midY, accuracy: 1)
       XCTAssertEqual(rect(effort).midY, rect(provider).midY, accuracy: 1)
       XCTAssertLessThanOrEqual(rect(provider).height, 48)
-      XCTAssertGreaterThan(rect(model).minX, rect(provider).minX)
-      XCTAssertGreaterThan(rect(effort).minX, rect(model).minX)
+      XCTAssertGreaterThan(rect(effort).minX, rect(provider).minX)
       XCTAssertFalse(views.contains { $0.accessibilityIdentifier == "dashboard-model-sample" })
-      for view in [provider, model, effort] { XCTAssertGreaterThanOrEqual(rect(view).minX, 0); XCTAssertLessThanOrEqual(rect(view).maxX, width) }
+      for view in [provider, effort] { XCTAssertGreaterThanOrEqual(rect(view).minX, 0); XCTAssertLessThanOrEqual(rect(view).maxX, width) }
       var actions: [String] = []; dashboard.onAction = { actions.append($0.action) }
-      model.sendActions(for: .touchUpInside); effort.sendActions(for: .touchUpInside)
-      XCTAssertEqual(actions, ["dashboard-model", "dashboard-effort"])
+      effort.sendActions(for: .touchUpInside)
+      XCTAssertEqual(actions, ["dashboard-effort"])
       let out = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("output/dashboard-screens")
       try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
       let image = UIGraphicsImageRenderer(bounds: dashboard.bounds).image { context in dashboard.layer.render(in: context.cgContext) }
@@ -944,5 +1038,41 @@ final class CompanionLayoutTests: XCTestCase {
       XCTAssertEqual(banner.superview?.isHidden, true)
       _ = closed
     }
+  }
+
+  @MainActor
+  func testCallIndicatorShowsTimerAndControlsAndDecodesDefensively() throws {
+    let view = CallIndicatorView()
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 100))
+    window.addSubview(view); window.isHidden = false
+    defer { window.isHidden = true }
+    var actions: [String] = []
+    view.onMute = { actions.append("mute") }
+    view.onHangup = { actions.append("hangup") }
+    view.apply(CallState(active: true, startedAt: Date().timeIntervalSince1970 * 1000 - 83_000, muted: false, phase: "listening"))
+    view.frame.size = view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+    view.layoutIfNeeded()
+    XCTAssertLessThanOrEqual(view.frame.width, 200, "group must fit beside the other bar items")
+    XCTAssertEqual(view.timerLabel.text, "1:23")
+    XCTAssertEqual(view.hangupButton.accessibilityLabel, "End call")
+    XCTAssertEqual(view.muteButton.accessibilityLabel, "Mute")
+    XCTAssertGreaterThanOrEqual(view.hangupButton.bounds.width, 44)
+    XCTAssertTrue(view.accessibilityLabel?.hasPrefix("Commander call, listening, 1:2") ?? false)
+    // No UIApplication in the unit-test host, so sendActions is a no-op: fire the wired selectors directly.
+    for (button, name) in [(view.muteButton, "muteTapped"), (view.hangupButton, "hangupTapped")] {
+      XCTAssertTrue(button.actions(forTarget: view, forControlEvent: .touchUpInside)?.contains(name) ?? false)
+      view.perform(Selector(name))
+    }
+    XCTAssertEqual(actions, ["mute", "hangup"])
+    view.apply(CallState(active: true, startedAt: nil, muted: true, phase: "paused"))
+    XCTAssertEqual(view.muteButton.accessibilityLabel, "Unmute")
+    view.compact = true
+    XCTAssertTrue(view.waveform.isHidden)
+    let ok = try JSONDecoder().decode(CallState.self, from: Data(#"{"active":true,"startedAt":1000,"muted":true,"phase":"hearing"}"#.utf8))
+    XCTAssertEqual(ok.phase, "hearing")
+    XCTAssertTrue(ok.muted)
+    let bad = try JSONDecoder().decode(CallState.self, from: Data(#"{"active":"yes","phase":7}"#.utf8))
+    XCTAssertFalse(bad.active)
+    XCTAssertEqual(bad.phase, "idle")
   }
 }

@@ -1,26 +1,32 @@
-.message-queue { position: relative; margin: 0 34px -16px; padding-bottom: 16px; border: 1px solid var(--adaptive-border, #484853); border-bottom: 0; border-radius: 18px 18px 0 0; background: var(--adaptive-surface, #292a32); color: var(--adaptive-text, #dedbe8); font-size: 12px; flex-shrink: 0; }
-.message-queue ol { list-style: none; padding: 0; margin: 0; max-height: 156px; overflow: auto; }
-.message-queue li { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; }
+/* Shared queue rows: one layout for desktop, web and the mobile webview. Only the touch-target size differs (see mobile.css). */
+.message-queue { position: relative; margin: 0 34px -16px; padding-bottom: 16px; border: 1px solid var(--adaptive-border, #484853); border-bottom: 0; border-radius: 18px 18px 0 0; background: var(--adaptive-surface, #292a32); color: var(--adaptive-text, #dedbe8); font-size: 12px; flex-shrink: 0; overflow: hidden; animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
+.message-queue ol { list-style: none; padding: 0; margin: 0; }
+.message-queue li { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; min-height: 40px; padding: 4px 10px; overflow: hidden; animation: message-queue-row-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
 .message-queue li + li { border-top: 1px solid var(--adaptive-border, #3d3d48); }
-.message-queue-icon { width: 14px; color: var(--adaptive-muted, #9690a6); flex-shrink: 0; }
-.message-queue-preview { flex: 1; min-width: 0; }
+.message-queue-icon { width: 14px; height: 14px; color: var(--adaptive-muted, #9690a6); flex: none; }
+.message-queue-preview { flex: 1 1 0; min-width: 0; }
 .message-queue-preview p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.message-queue-preview small { color: var(--adaptive-muted, #aaa7b4); font-size: 10px; margin-left: 6px; }
-.message-queue-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-shrink: 0; }
+.message-queue-actions { display: flex; flex: none; align-items: center; gap: 3px; margin-left: auto; white-space: nowrap; }
+.message-queue-actions button { flex: none; width: 28px; height: 28px; padding: 0; }
+.message-queue-actions button svg { width: 16px; height: 16px; flex: none; }
+.message-queue button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; min-width: 28px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--adaptive-muted, #aaa7b4); font: inherit; font-size: 11px; cursor: pointer; }
+.message-queue button:hover { background: #ffffff0a; color: var(--adaptive-text, #dedbe8); }
+.message-queue button:focus-visible { outline: 2px solid #b59ae9; outline-offset: -2px; }
 .message-queue button:disabled { opacity: .4; cursor: default; }
 .message-queue-error { margin: 6px 10px; color: #f3a6a6; overflow-wrap: anywhere; }
+/* Radix's intrinsic table wrapper otherwise expands to the full queued prompt. */
 .message-queue [data-slot="scroll-area-viewport"] > div { display: block !important; }
 .message-queue-preview form { display: flex; flex-wrap: wrap; gap: 6px; padding: 5px 0; }
 .message-queue-preview textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--background); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
-.message-queue { animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
-.message-queue li { animation: motion-fade-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both; }
-
-.message-queue button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; min-width: 28px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent; color: var(--adaptive-muted, #aaa7b4); font: inherit; font-size: 11px; cursor: pointer; }
-.message-queue button:hover { background: #ffffff0a; color: var(--adaptive-text, #dedbe8); }
-.message-queue button:focus-visible { outline: 2px solid #b59ae9; outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { .message-queue, .message-queue li { animation: none; } }
+.message-queue-preview form button { width: auto; height: 28px; padding: 0 10px; }
 .message-queue li.message-queue-system { min-height: 28px; opacity: .75; font-style: italic; color: var(--adaptive-muted, #9690a6); }
-
 .message-queue-state { display: block; margin: 6px 10px; color: var(--adaptive-muted, #aaa7b4); }
-.message-queue-clear { position: absolute; top: 3px; right: 8px; height: 22px !important; }
 .message-queue-badge { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 8px; background: #ffffff14; color: var(--adaptive-muted, #aaa7b4); font-size: 10px; line-height: 16px; }
+
+/* Enter grows from zero height; exit (class added by MessageQueue.tsx, unmounted after 180ms) collapses. */
+.message-queue li.message-queue-leaving { pointer-events: none; animation: message-queue-row-out 180ms var(--motion-ease-out, ease-out) forwards; }
+.message-queue.message-queue-leaving { pointer-events: none; animation: message-queue-section-out 180ms var(--motion-ease-out, ease-out) forwards; }
+@keyframes message-queue-row-in { from { opacity: 0; transform: translateY(6px); max-height: 0; min-height: 0; padding-block: 0; } to { opacity: 1; transform: none; max-height: 240px; } }
+@keyframes message-queue-row-out { from { opacity: 1; max-height: 240px; } to { opacity: 0; max-height: 0; min-height: 0; padding-block: 0; border-top-width: 0; } }
+@keyframes message-queue-section-out { from { opacity: 1; max-height: 400px; } to { opacity: 0; max-height: 0; padding-bottom: 0; margin-bottom: 0; border-width: 0; } }
+@media (prefers-reduced-motion: reduce) { .message-queue, .message-queue li, .message-queue li.message-queue-leaving, .message-queue.message-queue-leaving { animation: none; } }

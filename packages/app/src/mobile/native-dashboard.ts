@@ -5,6 +5,7 @@ import { effortLabel, defaultSelection, type AgentSelection } from '../desktop/a
 import { assistantLabel, lastAssistantFor, modelPillLabel } from './native-home';
 import type { Outgoing } from './outbox';
 import { companionStatusRead } from './companion';
+import { formatProjectName } from '../projectName';
 import { nativeThread, nativeRunState, pendingThreads } from './native-threads';
 
 /** Resolution order: explicit selection, then the agent last used for this project, then the project default, then the first one. */
@@ -34,7 +35,7 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
   const provider = controlAssistant?.provider ?? controlProject?.provider;
   return {
     model: modelPillLabel(provider, { ...selection, effort: 'default' }, []),
-    difficulty: selection.effort === 'default' ? 'Agent default' : effortLabel(selection.effort),
+    difficulty: modelPillLabel(provider, selection, []),
     hasControls: !!provider,
     workspace: null as string | null, summaries: [] as NativeSummary[], schedules: false, message: '',
     connected, busy, expanded, workspaceHeight: 240, agent: controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider',
@@ -49,7 +50,7 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
       const failed = threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight.getTime()).length;
       const ids = new Set(snapshot.threads.map(t => t.id));
       const pending = pendingThreads(project.id, outbox, ids, connected, now);
-      return { id: project.id, name: project.name, color: project.color, assistant: assistant?.id || '',
+      return { id: project.id, name: formatProjectName(project.name, snapshot.threadList?.projectNameUppercase), color: project.color, assistant: assistant?.id || '',
         canStart: connected && !busy && project.canStart && (!project.assistants || !!assistant),
         activity: `${working} working · ${needs} need you · ${done} done today · ${failed} failed today`,
         recent: [...pending, ...[...threads].filter(t => !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).map(t => nativeThread(t, companionStatusRead(snapshot, read)))].slice(0, 3),
