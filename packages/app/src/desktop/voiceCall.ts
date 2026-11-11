@@ -2,7 +2,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { VOICE_CALL_SUFFIX, extractSpoken } from "../conversation/voiceCallMarkup";
+import { VOICE_CALL_SUFFIX, extractSpoken, hasSpeech } from "../conversation/voiceCallMarkup";
 
 export type CallMode = "interrupt" | "queue";
 export type EngineState = "idle" | "listening" | "speech" | "transcribing" | "paused" | "error";
@@ -31,12 +31,16 @@ export type CallThread = {
   stopTurn(): Promise<void>;
   /** The app's existing send path (queues itself when the thread is busy). Rejects on failure. */
   sendText(text: string): Promise<void>;
+  /** Best-effort: delete still-queued messages carrying the live-call instruction once the call is over. */
+  purgeVoiceQueue?(): Promise<void>;
 };
 export type ThreadView = { busy: boolean; messages: { id: string; role: string; text: string }[] };
 export type CallSnapshot = {
   active: boolean; engine: EngineState; error: string | null; pending: string;
   speaking: boolean; muted: boolean; speak: boolean; mode: CallMode;
 };
+/** Sees each transcribed segment first; 'consume' keeps it away from the thread (used by the dashboard command center). */
+export type SegmentInterceptor = (text: string) => "consume" | "pass";
 export type CallPrefs = { speak: boolean; mode: CallMode };
 
 const PREFS_KEY = "freddai.voiceCall.prefs";
@@ -66,7 +70,7 @@ export class VoiceCallController {
   /** Set when a spoken-reply message was sent; `baseline` is the last tagged user message before it. */
   private awaiting: { baseline: string | null } | null = null;
 
-  constructor(private io: CallIo, private getThread: () => CallThread, prefs: CallPrefs, private delayMs = SEND_DELAY_MS) {
+  constructor(private io: CallIo, private getThread: () => CallThread, prefs: CallPrefs, private delayMs = SEND_DELAY_MS, private getInterceptor: () => SegmentInterceptor | undefined = () => undefined) {
     this.s = { active: false, engine: "idle", error: null, pending: "", speaking: false, muted: false, speak: prefs.speak, mode: prefs.mode };
   }
 
@@ -111,6 +115,7 @@ export class VoiceCallController {
     this.set({ active: false, speaking: false, engine: "idle" });
     const results = await Promise.allSettled([this.io.stop(), this.io.stopSpeaking()]);
     for (const r of results) if (r.status === "rejected") console.error(JSON.stringify({ event: "voice_call.end_failed", error: message(r.reason) }));
+    try { await this.getThread().purgeVoiceQueue?.(); } catch (error) { console.warn(JSON.stringify({ event: "voice_call.queue_purge_failed", error: message(error) })); }
   }
 
   setSpeak(speak: boolean) { this.set({ speak }); saveCallPrefs({ speak, mode: this.s.mode }); }
@@ -153,6 +158,7 @@ export class VoiceCallController {
   private onSegment(raw: string) {
     const text = raw.trim();
     if (!text) return;
+    if (this.getInterceptor()?.(text) === "consume") return;
     this.pendingParts.push(text);
     this.set({});
     this.clearTimer();
@@ -169,6 +175,7 @@ export class VoiceCallController {
   private async flush() {
     if (!this.pendingParts.length) return;
     const text = this.pendingParts.join(" ");
+    if (!hasSpeech(text)) { this.pendingParts = []; this.set({}); return; }
     const speak = this.s.speak;
     const baseline = this.view.messages[this.lastTaggedUser()]?.id ?? null;
     this.pendingParts = [];
@@ -196,6 +203,9 @@ export class VoiceCallController {
     const text = extractSpoken((replies.find(m => m.text.includes("<spoken>")) ?? replies[0]).text);
     if (text) void this.speakAloud(text);
   }
+
+  /** Reads text aloud with the microphone paused, like a spoken reply. */
+  speak(text: string) { return this.speakAloud(text); }
 
   private async speakAloud(text: string) {
     this.set({ speaking: true });
@@ -239,9 +249,11 @@ const registry = new Set<() => void>();
 const setActiveThread = (id: string | null) => { activeThread = id; registry.forEach(fn => fn()); };
 const subscribeActive = (fn: () => void) => { registry.add(fn); return () => { registry.delete(fn); }; };
 
-export function useVoiceCall({ threadId, enabled, thread, view, io = tauriCallIo, prefs }: { threadId: string; enabled: boolean; thread: CallThread; view: ThreadView; io?: CallIo; prefs?: CallPrefs }) {
+export function useVoiceCall({ threadId, enabled, thread, view, io = tauriCallIo, prefs, onSegment }: { threadId: string; enabled: boolean; thread: CallThread; view: ThreadView; io?: CallIo; prefs?: CallPrefs; onSegment?: SegmentInterceptor }) {
   const latest = useRef(thread);
   latest.current = thread;
+  const interceptor = useRef(onSegment);
+  interceptor.current = onSegment;
   const controller = useRef<VoiceCallController | null>(null);
   const subscribe = (fn: () => void) => controller.current ? controller.current.subscribe(fn) : () => {};
   const snapshot = useSyncExternalStore(subscribe, () => controller.current?.getSnapshot() ?? null);
@@ -267,9 +279,10 @@ export function useVoiceCall({ threadId, enabled, thread, view, io = tauriCallIo
     canStart: enabled && (active === null || active === threadId),
     otherActive: active !== null && active !== threadId,
     controller: controller.current,
+    speak(text: string) { return controller.current?.speak(text); },
     start() {
       if (!enabled || activeThread) return;
-      const c = new VoiceCallController(io, () => latest.current, prefs ?? loadCallPrefs());
+      const c = new VoiceCallController(io, () => latest.current, prefs ?? loadCallPrefs(), SEND_DELAY_MS, () => interceptor.current);
       controller.current = c;
       setActiveThread(threadId);
       c.observeThread(view);

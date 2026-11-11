@@ -46,4 +46,63 @@ describe('dashboard Commander calls', () => {
     expect(io.stop).toHaveBeenCalledTimes(1);
     expect(screen.queryByLabelText('Commander call')).toBeNull();
   });
+
+  describe('command center', () => {
+    const accounts = [{ id: 'a1', name: 'Claude', provider: 'claude' as const, color: '#fff' }];
+    const projects = [{ id: 'p1', name: 'HCCI', path: '/tmp/hcci', color: '#0af', policy: 'inherit' as const, account: null, last: null }] as never[];
+    async function setup(launch: (a: unknown) => Promise<void>) {
+      let emit!: (event: CallEvent) => void;
+      const io: CallIo = { start: vi.fn(async () => {}), stop: vi.fn(async () => {}), setListening: vi.fn(async () => {}), speak: vi.fn(async () => {}), stopSpeaking: vi.fn(async () => {}), listen: vi.fn(async handler => { emit = handler; return () => {}; }) };
+      const sendText = vi.fn(async (_text: string) => {});
+      const commandCenter = { projects, accounts, native: false, homeSelections: {}, launch };
+      render(<DashboardCall visible enabled io={io} sendText={sendText} view={{ busy: false, messages: [] }} commandCenter={commandCenter} />);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Call Commander' })); });
+      const say = (text: string) => act(async () => { emit({ type: 'segment', text }); await vi.advanceTimersByTimeAsync(SEND_DELAY_MS); });
+      return { io, sendText, say };
+    }
+
+    it('consumes speech without the wake word', async () => {
+      vi.useFakeTimers();
+      const { sendText, say } = await setup(vi.fn(async () => {}));
+      expect(screen.getByText(/Listening for/)).toBeTruthy();
+      await say('add search to HCCI');
+      expect(sendText).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('Command review')).toBeNull();
+    });
+
+    it('opens the card, launches on go with the selected values, then returns to listening', async () => {
+      vi.useFakeTimers();
+      const launch = vi.fn(async (_a: unknown) => {});
+      const { sendText, say, io } = await setup(launch);
+      await say('Freddie, in HCCI, add a retry');
+      expect(screen.getByLabelText('Command review')).toBeTruthy();
+      expect((screen.getByLabelText('Instruction') as HTMLTextAreaElement).value).toBe('add a retry');
+      await say('go');
+      expect(launch).toHaveBeenCalledWith({ projectId: 'p1', accountId: 'a1', model: '', effort: 'default', prompt: 'add a retry' });
+      expect(sendText).not.toHaveBeenCalled();
+      expect(io.speak).toHaveBeenCalledWith('Starting in HCCI');
+      expect(screen.queryByLabelText('Command review')).toBeNull();
+      expect(screen.getByText(/Listening for/)).toBeTruthy();
+    });
+
+    it('cancel closes the card without launching', async () => {
+      vi.useFakeTimers();
+      const launch = vi.fn(async (_a: unknown) => {});
+      const { say } = await setup(launch);
+      await say('Freddie, for HCCI, add a retry');
+      await say('cancel');
+      expect(screen.queryByLabelText('Command review')).toBeNull();
+      expect(launch).not.toHaveBeenCalled();
+    });
+
+    it('keeps the card open and shows the error when launch fails', async () => {
+      vi.useFakeTimers();
+      const { say, io } = await setup(vi.fn(async () => { throw new Error('no folder'); }));
+      await say('Freddie, in HCCI, add a retry');
+      await say('send it');
+      expect(screen.getByRole('alert').textContent).toContain('no folder');
+      expect(screen.getByLabelText('Command review')).toBeTruthy();
+      expect(io.speak).toHaveBeenCalledWith(expect.stringContaining('no folder'));
+    });
+  });
 });

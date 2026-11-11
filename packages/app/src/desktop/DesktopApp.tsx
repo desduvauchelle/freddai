@@ -18,6 +18,7 @@ import { browserThreadRecencyTracker } from "../thread-recency";
 import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
 import { MessageQueue } from "./MessageQueue";
+import { hasSpeech } from "../conversation/voiceCallMarkup";
 import { listenNativeDrops } from "./native-drops";
 import { projectDropTarget } from "./project-drop";
 import { OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, RECENT_FINISHED_MAX, compareThreadRecency, sanitizeRecentCount, splitOlderThreads, groupThreadsByDay, bucketThreads, attentionCount, threadListStatus, threadVisibility, threadCapabilities } from "./types";
@@ -266,6 +267,13 @@ function SendButton({ threadId, label, blocked }: { threadId: string; label: str
   );
 }
 // One conversation (header, transcript, composer). Drafts, attachments and agent controls arrive as props keyed by thread in the parent.
+/** Deletes still-queued messages carrying the live-call marker (meaningless once the call ended). Returns whether any were deleted. */
+async function purgeVoiceQueued(queue: { session: string; messages: { id: string; prompt: string }[] } | undefined): Promise<boolean> {
+  const ids = (queue?.messages ?? []).filter(m => m.prompt.includes("<voice-call>")).map(m => m.id);
+  for (const id of ids) await invoke("queue_action", { session: queue!.session, action: "delete", message: id, prompt: null });
+  return ids.length > 0;
+}
+
 function ConversationPane({
   task, db, read, native, working, staging, standalone = false, split, side, focused, canToggleSplit, composerRef,
   attachments, onAttachments, permission, onPermission, selection, onSelection,
@@ -308,6 +316,7 @@ function ConversationPane({
       isBusy: () => busy(task),
       stopTurn: async () => { await invoke("stop", { session: task.id }); await refresh(); },
       sendText: onSendText,
+      purgeVoiceQueue: async () => { if (await purgeVoiceQueued(db.queues?.find(q => q.session === task.id))) await refresh(); },
     },
     view: { busy: busy(task), messages: task.messages },
   });
@@ -905,6 +914,7 @@ function DesktopWorkspace() {
   /** Dashboard cluster / mic / plus: continue Commander's thread, or start one in the commander project. */
   async function sendToCommander(text: string) {
     if (!native) throw new Error("Open the Freddai desktop app to message Commander.");
+    if (!hasSpeech(text)) return;
     const state = await commanderApi.state();
     if (state.thread_id) { await invoke("queue_message", { session: state.thread_id, prompt: text, options: { request_id: crypto.randomUUID() } }); await refresh(); }
     else await createHomeThread(state.project.id, text);
@@ -1220,6 +1230,24 @@ function DesktopWorkspace() {
       return prompt.trim().split("\n")[0].slice(0, 100);
     } finally { actionLock.current = false; setWorking(false); }
   }
+  /** Dashboard command center launch: new thread in the project with the card's agent/model/difficulty. Never goes through Commander. */
+  async function launchCommand({ projectId, accountId, model, effort, prompt }: { projectId: string; accountId: string; model: string; effort: string; prompt: string }) {
+    if (!native) throw new Error("Open the Freddai desktop app to start threads.");
+    const account = db.accounts.find(a => a.id === accountId);
+    if (!account) throw new Error("The selected agent account no longer exists.");
+    const base = resolveHomeLaunch(db, projectId, permissionMode, {}, accountId);
+    if (!base.ok) throw new Error(base.reason);
+    if (actionLock.current) throw new Error("Another action is still running.");
+    actionLock.current = true; setWorking(true); setError("");
+    try {
+      const requestId = crypto.randomUUID();
+      await launchThread({
+        project: projectId, account: accountId, prompt, attachments: [], requestId, select: false,
+        options: { permission_mode: base.permission_mode, worktree: base.worktree, model: model.trim() || null, effort: effort === "default" || !["codex", "claude"].includes(account.provider) ? null : effort, attachments: [], request_id: requestId },
+      });
+      await refresh();
+    } finally { actionLock.current = false; setWorking(false); }
+  }
   async function respondHome(thread: Session, allow: boolean, answers: Record<string, unknown>) {
     await invoke("respond", { session: thread.id, requestId: JSON.stringify(thread.pending?.request_id ?? thread.pending?.id), allow, answers });
     await refresh().catch(() => {});
@@ -1320,6 +1348,12 @@ function DesktopWorkspace() {
     });
   }
   async function queueActionFor(task: Session, queueAction: string, message?: string, prompt?: string) {
+    if (queueAction === "delete") {
+      // Not gated by the global action lock/working flag: deleting must work while a turn or another action runs. Errors propagate to the queue UI.
+      await invoke("queue_action", { session: task.id, action: "delete", message: message || null, prompt: null });
+      await refresh();
+      return true;
+    }
     return action(async () => {
       await invoke("queue_action", { session: task.id, action: queueAction, message: message || null, prompt: prompt ?? null });
       await refresh();
@@ -1617,7 +1651,8 @@ function DesktopWorkspace() {
           <ThreadStats sessions={db.sessions.filter(t =>
             (!activeWorkspace || activeWorkspace.projects.includes(t.project)) &&
             (projectFilter === "all" || t.project === projectFilter))} />
-          {native && <DashboardCall onActive={setDashboardCallActive} visible={homeActive && !settingsVisible} enabled={!!commanderData.state?.project.account || db.accounts.length > 0} sendText={sendToCommander}
+          {native && <DashboardCall onActive={setDashboardCallActive} visible={homeActive && !settingsVisible} enabled={!!commanderData.state?.project.account || db.accounts.length > 0} sendText={sendToCommander} purgeVoiceQueue={async () => { if (await purgeVoiceQueued(db.queues?.find(q => q.session === commanderData.state?.thread_id))) await refresh(); }}
+            commandCenter={{ projects: db.projects, accounts: db.accounts, native, homeAccountId: homeAccount || undefined, homeSelections, launch: launchCommand }}
             view={{ busy: db.sessions.some(t => t.id === commanderData.state?.thread_id && busy(t)), messages: db.sessions.find(t => t.id === commanderData.state?.thread_id)?.messages ?? [] }} />}
           <Button
             variant="ghost"
