@@ -186,9 +186,9 @@ it('lists hidden background work in the avatar sheet and opens it from there', a
   const readSnapshot = client.snapshot;
   client.snapshot = async (...args) => { const data = await readSnapshot(...args); return { ...data, threads: [...data.threads, bg] }; };
   render(<MobileApp client={client} />);
-  await screen.findByRole('button', { name: 'Commander-in-Chief' });
+  await screen.findByRole('button', { name: 'Commander' });
   expect(screen.queryByText('Background research')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Commander-in-Chief' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Commander' }));
   const header = await screen.findByRole('banner', { name: 'Commander-in-Chief header' });
   fireEvent.click(within(header).getByRole('button', { name: /open To-dos/ }));
   fireEvent.click(screen.getByRole('tab', { name: 'Sub-threads' }));

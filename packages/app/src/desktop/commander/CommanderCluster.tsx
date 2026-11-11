@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Loader2, Mic, MicOff, Plus, Send, X } from "lucide-react";
 import { Dormouse } from "../Dormouse";
 import { MASCOT_PRIORITY } from "../mascot-state";
@@ -10,10 +10,12 @@ import "./commander.css";
 export const statusText = (s: { needs_you: number; running: number; done_today: number }) => `${s.needs_you} needs you · ${s.running} running · ${s.done_today} done`;
 
 /** Dashboard presence: avatar circle + mic circle (bottom-left) + plus circle (bottom-right) + status pill. */
-export function CommanderCluster({ onOpen, onSend }: {
+export function CommanderCluster({ onOpen, onSend, bugWalk }: {
   onOpen: () => void;
   /** Sends a message to Commander (existing thread, or a new one in the commander project). */
   onSend: (text: string) => Promise<void>;
+  /** Optional bug-walk control (desktop native only), rendered as a third circle. */
+  bugWalk?: ReactNode;
 }) {
   const { state, error } = useCommander({ todos: false });
   const voice = useVoice();
@@ -46,7 +48,7 @@ export function CommanderCluster({ onOpen, onSend }: {
     <div className="commander-circles">
       <div className="commander-avatar-circle" data-state={working ? "working" : "ready"}>
         <span className="commander-avatar-art" aria-hidden="true">
-          <Dormouse size={108} priority={MASCOT_PRIORITY.hero} mood={working ? 2 : status.needs_you ? 4 : 0} label={working ? "Working" : "Ready"} pauseControl={false} />
+          <Dormouse size={108} priority={MASCOT_PRIORITY.hero} mood={working ? 2 : status.needs_you ? 4 : 0} label={working ? "Working" : "Ready"} pauseControl={false} antics />
         </span>
         <button type="button" className="commander-avatar-open" aria-label={`Open ${name}`} title={`Open ${name}`} onClick={onOpen} />
       </div>
@@ -54,6 +56,7 @@ export function CommanderCluster({ onOpen, onSend }: {
         ? <div className="commander-circle commander-mic" data-pos="left"><MicButton target={false} label={`Dictate to ${name}`} className="commander-circle-button" onText={t => void deliver(t)} /></div>
         : <button type="button" className="commander-circle commander-mic commander-circle-button" data-pos="left" disabled
           aria-label={`Dictate to ${name}`} title="Dictation isn't ready. Set it up in Settings → Voice."><MicOff size={18} aria-hidden="true" /></button>}
+      {bugWalk && <div className="commander-circle commander-bug-walk" data-pos="top-left">{bugWalk}</div>}
       <button ref={plus} type="button" className="commander-circle commander-plus commander-circle-button" data-pos="right"
         aria-label={`Message ${name}`} aria-expanded={composer} title={`Message ${name}`} onClick={() => setComposer(v => !v)}>
         {composer ? <X size={18} aria-hidden="true" /> : <Plus size={18} aria-hidden="true" />}

@@ -1,7 +1,7 @@
 /* Commander-in-Chief. Uses the desktop theme tokens (--background, --card, --border, --primary, --muted-foreground, --foreground). */
 .commander-cluster { --cmd-size: 124px; position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 4px; }
 .commander-circles { position: relative; width: calc(var(--cmd-size) + 44px); height: calc(var(--cmd-size) + 12px); display: flex; justify-content: center; }
-.commander-avatar-circle { position: relative; width: var(--cmd-size); height: var(--cmd-size); border-radius: 50%; display: grid; place-items: center; overflow: hidden;
+.commander-avatar-circle { position: relative; width: var(--cmd-size); height: var(--cmd-size); border-radius: 50%; display: grid; place-items: center;
   background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 22px color-mix(in oklab, var(--foreground) 12%, transparent); }
 .commander-avatar-art { pointer-events: none; display: grid; place-items: center; animation: commander-breathe 4.2s ease-in-out infinite; transform-origin: 50% 70%; }
 .commander-avatar-circle[data-state="working"] .commander-avatar-art { animation-duration: 1.4s; }
@@ -14,6 +14,7 @@
 .commander-circle { position: absolute; bottom: 0; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; z-index: 1; }
 .commander-circle[data-pos="left"] { left: 0; }
 .commander-circle[data-pos="right"] { right: 0; }
+.commander-circle[data-pos="top-left"] { left: 0; bottom: auto; top: 0; }
 .commander-circle .commander-circle-button, button.commander-circle-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
   background: var(--card); color: var(--foreground); border: 1px solid var(--border); box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
 button.commander-circle-button:hover:not(:disabled), .commander-circle .commander-circle-button:hover { background: var(--accent, var(--muted)); }

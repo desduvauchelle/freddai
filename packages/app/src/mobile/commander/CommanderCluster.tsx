@@ -37,7 +37,7 @@ export function CommanderCluster({ client, name, status, error, connected, onOpe
     <div className="commander-circles">
       <div className="commander-avatar-circle" data-state={working ? 'working' : 'ready'}>
         <span className="commander-avatar-art" aria-hidden="true">
-          <Dormouse size={108} priority={MASCOT_PRIORITY.hero} mood={working ? 2 : shown.needs_you ? 4 : 0} label={working ? 'Working' : 'Ready'} pauseControl={false} />
+          <Dormouse size={108} priority={MASCOT_PRIORITY.hero} mood={working ? 2 : shown.needs_you ? 4 : 0} label={working ? 'Working' : 'Ready'} pauseControl={false} antics />
         </span>
         <button type="button" className="commander-avatar-open" aria-label={`Open ${name}`} onClick={onOpen} />
       </div>

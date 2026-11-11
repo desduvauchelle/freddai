@@ -194,11 +194,80 @@ star_nodes=[star(n,*a) for n,a in STARS.items()]
 for s_ in star_nodes:
     s_.props['opacity']=0
 
-breath=v.N('Breath',(627,1080),[art])
+# ---- Antic props (moods 9-14). Everything defaults to opacity 0 and is reset by `base`.
+CORAL='FFE98A7A'
+GREEN='FF7DBF6B'
+GREEN2='FFB4D96A'
+def smp(total,step,fn):
+    """Linear-sampled keys for smooth periodic motion."""
+    return [v.kf(fr,fn(fr),'linear') for fr in range(0,total+1,step)]
+def parent_of(node,target=None):
+    target=target or node
+    stack=[art]
+    while stack:
+        n=stack.pop()
+        if isinstance(n,v.S): continue
+        if target in n.kids: return n
+        stack+=n.kids
+# Hula: grass skirt + flower lei (ride with the body, inside Groove)
+SKIRT_N=10
+strand_nodes=[]
+for i in range(SKIRT_N):
+    x=418+i*(418/(SKIRT_N-1))
+    col=GREEN if i%2==0 else GREEN2
+    d=f'M{x-12:.1f} 960L{x+12:.1f} 960Q{x+10:.1f} 1060 {x+2:.1f} 1165Q{x:.1f} 1175 {x-2:.1f} 1165Q{x-10:.1f} 1060 {x-12:.1f} 960Z'
+    strand_nodes.append(v.N(f'Strand{i}',(x,960),[v.S(f'StrandShape{i}',[d],col,INK,sw=5)]))
+skirt=v.N('Skirt',(627,960),strand_nodes+[v.S('SkirtBand',fill=CORAL,stroke=INK,sw=9,rect=(627,958,470,42,21))])
+LEI_COLS=[CORAL,GOLD,'FFFFFFFF',WATER,CORAL,GOLD,'FFFFFFFF',WATER]
+lei_kids=[]
+for i in range(8):
+    a=math.radians(20+i*(140/7))
+    cx,cy=627+140*math.cos(a),815+64*math.sin(a)
+    lei_kids.append(v.S(f'LeiFlower{i}',fill=LEI_COLS[i],stroke=INK,sw=7,ell=(cx,cy,22,22)))
+lei=v.N('Lei',(627,815),lei_kids)
+# Skate: board under the feet, plus speed lines
+deck_d='M452 1078Q468 1098 498 1098L756 1098Q786 1098 802 1078Q812 1104 782 1128L472 1128Q442 1104 452 1078Z'
+board=v.N('Board',(627,1112),[
+    v.N('WheelB',(520,1152),[v.S('WheelBShape',fill='cream',stroke=INK,sw=10,ell=(520,1152,26,26)),v.S('WheelBHub',fill=INK,ell=(532,1152,6,6))]),
+    v.N('WheelF',(734,1152),[v.S('WheelFShape',fill='cream',stroke=INK,sw=10,ell=(734,1152,26,26)),v.S('WheelFHub',fill=INK,ell=(746,1152,6,6))]),
+    v.S('BoardDeck',[deck_d],CORAL,INK,sw=11)])
+speed_nodes=[v.N('Speed'+n,(x0,y0),[v.S('SpeedLine'+n,[f'M{x0} {y0}L{x0+L} {y0}'],None,INK,sw=9)]) for n,x0,y0,L in (('A',110,800,200),('B',60,885,240),('C',150,970,170))]
+# Gaming: controller sits in the character tree just under the arms so the paws draw on top of it
+CTRL=(627,915)
+controller=v.N('Controller',CTRL,[
+    v.S('CtrlGripL',fill='cream',stroke=INK,sw=14,ell=(505,1000,60,76)),
+    v.S('CtrlGripR',fill='cream',stroke=INK,sw=14,ell=(749,1000,60,76)),
+    v.S('CtrlBody',fill='cream',stroke=INK,sw=14,rect=(627,915,370,180,64)),
+    v.S('DpadH',fill=INK,rect=(525,930,72,24,8)),v.S('DpadV',fill=INK,rect=(525,930,24,72,8)),
+    v.S('BtnA',fill=CORAL,stroke=INK,sw=6,ell=(735,895,16,16)),v.S('BtnB',fill=GOLD,stroke=INK,sw=6,ell=(735,963,16,16)),
+    v.S('BtnC',fill=WATER,stroke=INK,sw=6,ell=(701,929,16,16)),v.S('BtnD',fill=GREEN,stroke=INK,sw=6,ell=(769,929,16,16))],opacity=0)
+_arm=v.BY_NAME['ArmL']; _par=parent_of(_arm)
+_par.kids.insert(_par.kids.index(_arm),controller)
+# Snooze: held closed lashes (separate from the idle blink) and floating Zs
+head.kids.append(v.N('SleepEyes',(627,509),[v.S('SleepLeft',['M424 516Q470 550 516 516'],None,INK,sw=13),v.S('SleepRight',['M742 516Q788 550 834 516'],None,INK,sw=13)],opacity=0))
+def zglyph(name,cx,cy,s):
+    return v.N(name,(cx,cy),[v.S(name+'Shape',[f'M{cx-s} {cy-s}L{cx+s} {cy-s}L{cx-s} {cy+s}L{cx+s} {cy+s}'],None,INK,sw=16)],opacity=0)
+zs=[zglyph('ZA',1010,215,24),zglyph('ZB',1070,140,34),zglyph('ZC',1125,60,46)]
+# Juggle
+BALLS=[('Ball1',GOLD),('Ball2',WATER),('Ball3',CORAL)]
+ball_nodes=[v.N(n,(320,880),[v.S(n+'Shape',fill=c,stroke=INK,sw=10,ell=(320,880,60,60)),v.S(n+'Glint',fill='FFFFFFFF',ell=(298,858,15,15))]) for n,c in BALLS]
+# Jam: headphones on the head, floating notes
+head.kids.append(v.N('Headphones',(627,360),[
+    v.S('PhoneBand',['M404 330C390 50 864 50 850 330'],None,INK,sw=22),
+    v.S('PhoneCupL',fill=CORAL,stroke=INK,sw=12,rect=(404,360,92,112,34)),
+    v.S('PhoneCupR',fill=CORAL,stroke=INK,sw=12,rect=(850,360,92,112,34))],opacity=0))
+def note(name,cx,cy):
+    return v.N(name,(cx,cy),[v.S(name+'Head',fill=INK,ell=(cx,cy,24,18)),
+        v.S(name+'Stem',[f'M{cx+20} {cy}L{cx+20} {cy-95}'],None,INK,sw=10),
+        v.S(name+'Flag',[f'M{cx+20} {cy-95}Q{cx+66} {cy-80} {cx+52} {cy-42}'],None,INK,sw=10)])
+notes=[note('NoteA',150,420),note('NoteB',1040,380),note('NoteC',215,230)]
+
+groove=v.N('Groove',(627,1080),[board,art,skirt,lei])
+breath=v.N('Breath',(627,1080),[groove])
 hop=v.N('Hop',(627,1080),[breath])
 sway=v.N('Sway',(627,1080),[hop])
 poke=v.N('Poke',(627,1080),[sway])
-world=v.N('World',(0,0),[poke,think,qb,pause,sweat]+star_nodes)
+world=v.N('World',(0,0),[poke,think,qb,pause,sweat]+star_nodes+speed_nodes+zs+ball_nodes+notes)
 
 def locals_(node, parent=(0,0)):
     if isinstance(node,v.S):
@@ -224,6 +293,16 @@ base={'HeadPose':{'rotation':0,'y':0},'Hop':{'y':0},
       'ThinkBubble':{'opacity':0,'y':0},'QBubble':{'opacity':0,'y':0,'scaleX':1,'scaleY':1},
       'PauseIcon':{'opacity':0,'scaleX':1,'scaleY':1},'SweatDrop':{'opacity':0,'y':0,'scaleX':1,'scaleY':1},
       'Dot1':{'scaleX':1,'scaleY':1},'Dot2':{'scaleX':1,'scaleY':1},'Dot3':{'scaleX':1,'scaleY':1}}
+base.update({'Groove':{'x':0,'y':0,'rotation':0,'scaleX':1,'scaleY':1},
+  'Smile':{'opacity':0,'scaleX':1,'scaleY':1},
+  'Skirt':{'opacity':0},'Lei':{'opacity':0},
+  'Board':{'opacity':0,'rotation':0},'WheelB':{'rotation':0},'WheelF':{'rotation':0},
+  'Controller':{'opacity':0,'rotation':0},'SleepEyes':{'opacity':0},'Headphones':{'opacity':0}})
+for _i in range(SKIRT_N): base[f'Strand{_i}']={'rotation':0}
+for _n in 'ABC': base['Speed'+_n]={'opacity':0,'x':0}
+for _n in zs: base[_n.name]={'opacity':0,'x':0,'y':0,'scaleX':1,'scaleY':1}
+for _n in ball_nodes: base[_n.name]={'opacity':0,'x':0,'y':0}
+for _n in notes: base[_n.name]={'opacity':0,'x':0,'y':0}
 v.MOOD_PROPS={(o,p):val for o,ps in base.items() for p,val in ps.items()}
 for (o,p),val in v.MOOD_PROPS.items():
     if p not in ('y',):
@@ -375,6 +454,162 @@ failed=merge({
               'y':track([(0,0),(30,-10),(108,34)],'soft')},
 })
 
+# ================= Antic moods 9-14 (random idle anticks; all loop) =================
+def sw(period,hi,lo,total,phase=0):
+    """Alternating hi/lo every `period` frames (total must be a whole number of 2*period)."""
+    return track([(i*period,hi if (i+phase)%2==0 else lo) for i in range(total//period+1)])
+def const(val): return [k(0,val)]
+HAPPY={'eye-left':{'opacity':hold([(0,0)])},'eye-right':{'opacity':hold([(0,0)])},
+       'HappyEyes':{'opacity':hold([(0,1)])},'ClosedWrap':{'opacity':hold([(0,0)])}}
+SMILE={'mouth':{'opacity':[k(0,0)]},'Smile':{'opacity':[k(0,1)]}}
+
+# ---- 9 Hula
+HULA=144
+def hula_arm(sign_r):
+    return [(0,-1.2*sign_r,.8),(36,1.2*sign_r,.8),(72,-1.2*sign_r,.8),(108,1.2*sign_r,.8),(144,-1.2*sign_r,.8)]
+hula_tracks={
+ 'Groove':{'x':track([(0,-18),(36,18),(72,-18),(108,18),(144,-18)]),'rotation':track([(0,.06),(36,-.06),(72,.06),(108,-.06),(144,.06)])},
+ 'Skirt':{'opacity':[k(0,1)]},'Lei':{'opacity':[k(0,1)]},
+ 'EarPoseL':{'rotation':[k(0,.12)],'y':[k(0,-20)]},'EarPoseR':{'rotation':[k(0,-.12)],'y':[k(0,-20)]},
+ 'tail':{'rotation':sw(18,.2,-.2,HULA)},
+ 'HeadPose':{'rotation':track([(0,-.04),(36,.04),(72,-.04),(108,.04),(144,-.04)])},
+ 'brows':{'y':[k(0,-8)]},
+}
+for i in range(SKIRT_N):
+    lag=10+i*3
+    hula_tracks[f'Strand{i}']={'rotation':smp(HULA,4,lambda f,lag=lag:.26*math.sin(2*math.pi*(f-lag-9)/72))}
+hula=merge(arms('L',hula_arm(1)),arms('R',hula_arm(-1)),HAPPY,SMILE,hula_tracks)
+
+# ---- 10 Skate
+SKATE=180
+def speed_keys(ph):
+    def op(f):
+        s=(f-ph)%36
+        env=max(0,min(1,f/12,(130-f)/12))
+        return env*math.sin(math.pi*s/36)
+    def xo(f): return -60*((f-ph)%36)/36
+    return smp(SKATE,4,op),smp(SKATE,4,xo)
+skate_tracks={
+ 'Groove':{'x':track([(0,-60),(130,60),(180,-60)]),
+   'rotation':track([(0,.08),(92,.08),(108,-.15),(124,.1),(134,.08),(142,-.05),(166,-.05),(180,.08)]),
+   'y':[k(0,0),k(16,0),k(21,8),k(28,0),k(56,0),k(61,8),k(68,0),k(94,0),k(100,10,'out'),k(112,-110,'in'),k(128,6),k(134,0),k(180,0)],
+   'scaleY':track([(0,1),(16,1),(21,.97),(28,1),(56,1),(61,.97),(68,1),(94,1),(100,.93),(108,1.03),(128,.94),(136,1),(180,1)])},
+ 'Board':{'opacity':[k(0,1)],'rotation':track([(0,0),(104,0),(112,-.18),(124,.1),(134,0),(180,0)])},
+ 'WheelB':{'rotation':[k(0,0,'linear'),k(SKATE,4*math.pi,'linear')]},'WheelF':{'rotation':[k(0,0,'linear'),k(SKATE,4*math.pi,'linear')]},
+ 'EarPoseL':{'rotation':track([(0,-.25),(134,-.25),(142,.15),(166,.15),(180,-.25)])},
+ 'EarPoseR':{'rotation':track([(0,-.25),(134,-.25),(142,.15),(166,.15),(180,-.25)])},
+ 'tail':{'rotation':track([(0,.1),(90,-.1),(180,.1)])},
+}
+for n,ph in zip('ABC',(0,12,24)):
+    o,x_=speed_keys(ph)
+    skate_tracks['Speed'+n]={'opacity':o,'x':x_}
+skate_arm=[(0,.7,.35),(96,.7,.35),(110,1.2,.5),(130,.7,.35),(180,.7,.35)]
+skate=merge(arms('LR',skate_arm),SMILE,skate_tracks)
+
+# ---- 11 Gaming
+GAME=144
+game_tracks={
+ 'Controller':{'opacity':[k(0,1)],'rotation':sw(12,.05,-.05,GAME)},
+ 'paw-left':{'x':[k(0,135)],'y':sw(6,29,41,GAME),'rotation':sw(6,-.1,.1,GAME)},
+ 'paw-right':{'x':[k(0,-135)],'y':sw(6,41,29,GAME),'rotation':sw(6,.1,-.1,GAME)},
+ 'pupil-left':{'x':sw(18,-12,12,GAME),'y':[k(0,10)]},'pupil-right':{'x':sw(18,-12,12,GAME),'y':[k(0,10)]},
+ 'brows':{'y':[k(0,10)]},
+ 'mouth':{'opacity':hold([(0,0)])},
+ 'Thought':{'opacity':hold([(0,1),(120,0),(144,1)])},
+ 'Smile':{'opacity':hold([(0,0),(120,1),(144,0)])},
+ 'Groove':{'rotation':track([(0,0),(40,.04),(60,0),(110,-.04),(130,0),(144,0)])},
+ 'Hop':{'y':track([(0,0),(120,0),(130,-40),(144,0)])},
+ 'HeadPose':{'y':sw(12,4,0,GAME)},
+ 'EarPoseL':{'rotation':track([(0,0),(120,0),(128,.14),(144,0)]),'y':track([(0,0),(120,0),(128,-22),(144,0)])},
+ 'EarPoseR':{'rotation':track([(0,0),(120,0),(128,-.14),(144,0)]),'y':track([(0,0),(120,0),(128,-22),(144,0)])},
+ 'eye-left':{'opacity':hold([(0,1),(120,0),(144,1)])},'eye-right':{'opacity':hold([(0,1),(120,0),(144,1)])},
+ 'HappyEyes':{'opacity':hold([(0,0),(120,1),(144,0)])},'ClosedWrap':{'opacity':hold([(0,1),(120,0),(144,1)])},
+ 'tail':{'rotation':sw(12,.06,-.06,GAME)},
+}
+gaming=merge(game_tracks)
+
+# ---- 12 Snooze
+SNOOZE=240
+snooze_tracks={
+ 'SleepEyes':{'opacity':[k(0,1)]},
+ 'eye-left':{'opacity':hold([(0,0)])},'eye-right':{'opacity':hold([(0,0)])},'ClosedWrap':{'opacity':hold([(0,0)])},
+ 'HeadPose':{'rotation':[k(0,.12)],'y':track([(0,30),(120,38),(240,30)])},
+ 'EarPoseL':{'rotation':[k(0,-.3)],'y':[k(0,20)]},'EarPoseR':{'rotation':[k(0,.3)],'y':[k(0,20)]},
+ 'brows':{'y':[k(0,8)]},
+ 'mouth':{'opacity':[k(0,0)]},'Smile':{'opacity':[k(0,.7)],'scaleX':[k(0,.6)],'scaleY':[k(0,.5)]},
+ 'Groove':{'scaleY':track([(0,1),(120,1.03),(240,1)])},
+ 'paw-left':{'x':[k(0,95)],'y':[k(0,22)]},'paw-right':{'x':[k(0,-95)],'y':[k(0,22)]},
+ 'tail':{'rotation':[k(0,-.2)]},
+}
+for i,n in enumerate(('ZA','ZB','ZC')):
+    t=i*40
+    snooze_tracks[n]={'opacity':track([(t,0),(t+20,1),(t+110,1),(t+140,0),(SNOOZE,0)]),
+      'x':track([(t,0),(t+140,30),(SNOOZE,30)],'out'),'y':track([(t,0),(t+140,-30),(SNOOZE,-30)],'out'),
+      'scaleX':track([(t,.7),(t+60,1),(t+140,1.1)]),'scaleY':track([(t,.7),(t+60,1),(t+140,1.1)])}
+snooze=merge(snooze_tracks)
+
+# ---- 13 Juggle
+JUG=120
+JPEAK=770
+def ball_keys(phase):
+    def pos(f):
+        s=(f-phase)%120; leg=s//60; u=(s%60)/60
+        x=580*u if leg==0 else 580*(1-u)
+        return x,-JPEAK*4*u*(1-u)
+    xs=smp(JUG,4,lambda f:pos(f)[0]); ys=smp(JUG,4,lambda f:pos(f)[1])
+    return xs,ys
+def toss(times,first):
+    out=[(0,first)]
+    for t in times:
+        out+=[(t-8,(.7,.4)),(t,(1.3,.8,'back')),(t+12,(.85,.5))]
+    return out
+def flat(keys):
+    seen={}
+    for fr,val in keys: seen[fr]=val
+    res=[]
+    for fr,val in sorted(seen.items()):
+        res.append((fr,)+tuple(val))
+    return res
+L_keys=flat(toss((8,48,88),(.7,.4))+[(JUG,(.7,.4))])
+R_keys=flat(toss((28,68,108),(.85,.5))+[(JUG,(.85,.5))])
+jug_tracks={
+ 'Groove':{'rotation':sw(20,.03,-.03,JUG)},
+ 'brows':{'y':[k(0,-10)]},
+ 'HeadPose':{'y':[k(0,-12)],'rotation':sw(20,-.04,.04,JUG)},
+ 'pupil-left':{'x':sw(10,-8,8,JUG),'y':[k(0,-14)]},'pupil-right':{'x':sw(10,-8,8,JUG),'y':[k(0,-14)]},
+ 'EarPoseL':{'rotation':[k(0,.12)],'y':[k(0,-18)]},'EarPoseR':{'rotation':[k(0,-.12)],'y':[k(0,-18)]},
+ 'tail':{'rotation':sw(10,.1,-.1,JUG)},
+}
+for n,ph in zip(('Ball1','Ball2','Ball3'),(8,48,88)):
+    xs,ys=ball_keys(ph)
+    jug_tracks[n]={'opacity':[k(0,1)],'x':xs,'y':ys}
+PF_L=[(0,.2)]+[p for t in (8,48,88) for p in ((t-8,.3),(t,-.7),(t+12,0))]+[(JUG,.3)]
+PF_R=[(0,0)]+[p for t in (28,68,108) for p in ((t-8,.3),(t,-.7),(t+12,0))]+[(JUG,0)]
+def pf(lst):
+    d={};[d.__setitem__(a,b) for a,b in lst]; return sorted(d.items())
+juggle=merge(arms('L',L_keys,paw_flap=pf(PF_L)),arms('R',R_keys,paw_flap=pf(PF_R)),SMILE,jug_tracks)
+
+# ---- 14 Jam
+JAM=96
+def note_keys(ph):
+    def op(f):
+        s=(f-ph)%96
+        return min(1,s/10)*(1 if s<60 else max(0,1-(s-60)/30))
+    return smp(JAM,4,op),smp(JAM,4,lambda f:-110*((f-ph)%96)/96),smp(JAM,4,lambda f:14*math.sin(2*math.pi*(f-ph)/96))
+jam_tracks={
+ 'Headphones':{'opacity':[k(0,1)]},
+ 'HeadPose':{'y':track([(0,0),(12,40),(24,0),(36,40),(48,0),(60,40),(72,0),(84,40),(96,0)]),'rotation':sw(24,-.05,.05,JAM)},
+ 'Groove':{'rotation':sw(24,-.04,.04,JAM)},
+ 'paw-left':{'x':[k(0,115)],'y':sw(12,150,126,JAM)},'paw-right':{'x':[k(0,-115)],'y':sw(12,126,150,JAM)},
+ 'EarPoseL':{'y':track([(0,0),(12,-12),(24,0),(36,-12),(48,0),(60,-12),(72,0),(84,-12),(96,0)])},
+ 'EarPoseR':{'y':track([(0,0),(12,-12),(24,0),(36,-12),(48,0),(60,-12),(72,0),(84,-12),(96,0)])},
+ 'tail':{'rotation':sw(6,.22,-.22,JAM)},
+}
+for n,ph in zip(('NoteA','NoteB','NoteC'),(0,32,64)):
+    o,y_,x_=note_keys(ph)
+    jam_tracks[n]={'opacity':o,'y':y_,'x':x_}
+jam=merge(HAPPY,SMILE,jam_tracks)
+
 specs=[
  ('Idle',1,False,{}),
  ('Listening',180,True,{'HeadPose':{'rotation':track([(0,-.025),(90,.025),(180,-.025)])},'brows':{'y':[k(0,-8)]}}),
@@ -385,6 +620,12 @@ specs=[
  ('Done',150,False,done),
  ('Interrupted',90,False,interrupted),
  ('Failed',108,False,failed),
+ ('Hula',HULA,True,hula),
+ ('Skate',SKATE,True,skate),
+ ('Gaming',GAME,True,gaming),
+ ('Snooze',SNOOZE,True,snooze),
+ ('Juggle',JUG,True,juggle),
+ ('Jam',JAM,True,jam),
 ]
 moods={i:(name,make(name,dur,loop,tracks,True)) for i,(name,dur,loop,tracks) in enumerate(specs)}
 a_poke=make('Poke',58,False,{'Poke':{'scaleX':track([(0,1),(10,1.035),(23,.985),(40,1)]),'scaleY':track([(0,1),(10,.965),(23,1.015),(40,1)])}})
@@ -427,7 +668,7 @@ def layer(name,body):
 idle_state=v.nid()
 sm_xml=f'<StateMachine name="Main" id="{sm}">'+layer('IdleLife',f'<EntryState x="0" y="0"><StateTransition stateToId="{idle_state}"/></EntryState><AnimationState id="{idle_state}" x="200" y="0" animationId="{a_idle}"/>')
 states={i:v.nid() for i in moods}
-MIX={4:320,6:140}
+MIX={4:320,6:140,**{i:200 for i in range(9,15)}}
 sm_xml+='<StateMachineLayer name="Mood"><AnyState x="0" y="-140">'
 for i in moods:
     sm_xml+=f'<StateTransition stateToId="{states[i]}" duration="{MIX.get(i,180)}">{condition(pm,i)}</StateTransition>'

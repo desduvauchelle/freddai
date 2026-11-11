@@ -6,6 +6,8 @@ import wasmUrl from "@rive-app/canvas/rive.wasm?url";
 import fallbackWasmUrl from "@rive-app/canvas/rive_fallback.wasm?url";
 import mascotUrl from "../../../../assets/brand/dormouse/freddai-dormouse.riv?url";
 import staticUrl from "../../../../assets/brand/dormouse/dormouse-v3.svg?url";
+import { playAntic, useAntic } from "./mascot-antics";
+import { readPaused, subscribePaused, togglePaused } from "./mascot-pause";
 
 // Every asset is bundled locally, including both WASM variants. No CDN requests.
 RuntimeLoader.setWasmUrl(wasmUrl);
@@ -50,7 +52,7 @@ function unbindGaze() {
   document.removeEventListener("mouseout", onGazeOut);
 }
 
-function AnimatedDormouse({ mood, label, onError }: { mood: number; label: string; onError: () => void }) {
+function AnimatedDormouse({ mood, label, onError, onPoke }: { mood: number; label: string; onError: () => void; onPoke?: () => void }) {
   const { rive, RiveComponent } = useRive({
     src: mascotUrl,
     artboard: "Freddai",
@@ -78,24 +80,9 @@ function AnimatedDormouse({ mood, label, onError }: { mood: number; label: strin
     return () => { gazers.delete(el); unbindGaze(); };
   }, [setLookX, setLookY]);
   return <button ref={root} className="dormouse-circle" type="button" aria-label={`Freddai: ${label}. Say hello to the dormouse`} title={`${label} · Say hello`}
-    onClick={() => poke?.()}>
+    onClick={() => { poke?.(); onPoke?.(); }}>
     <span className="dormouse-art" aria-hidden="true"><RiveComponent /></span>
   </button>;
-}
-
-// The pause toggle is global: every instance shares one localStorage flag and re-renders together
-// (same-window via a custom event, other windows via the storage event).
-const PAUSE_KEY = "freddai.mascotPaused", PAUSE_EVENT = "freddai:mascot-paused";
-const readPaused = () => { try { return localStorage.getItem(PAUSE_KEY) === "true"; } catch { return false; } };
-const subscribePaused = (notify: () => void) => {
-  const onStorage = (event: StorageEvent) => { if (event.key === null || event.key === PAUSE_KEY) notify(); };
-  window.addEventListener(PAUSE_EVENT, notify);
-  window.addEventListener("storage", onStorage);
-  return () => { window.removeEventListener(PAUSE_EVENT, notify); window.removeEventListener("storage", onStorage); };
-};
-function togglePaused() {
-  try { localStorage.setItem(PAUSE_KEY, String(!readPaused())); } catch { /* storage unavailable: nothing to persist */ }
-  window.dispatchEvent(new Event(PAUSE_EVENT));
 }
 
 // At most MAX_ANIMATED instances run Rive. Higher priority wins a slot (ties: earliest mounted); the rest render static art.
@@ -129,9 +116,11 @@ type DormouseProps = {
   className?: string;
   /** Rive slot priority; higher wins when more than 3 instances are mounted. Default 1. */
   priority?: number;
+  /** Idle antics: at base mood 0 the mouse occasionally does a random trick, and a click triggers one. Default false. */
+  antics?: boolean;
 };
 
-export function Dormouse({ mood, label, compact = false, size, pauseControl = true, className, priority = 1 }: DormouseProps) {
+export function Dormouse({ mood, label, compact = false, size, pauseControl = true, className, priority = 1, antics = false }: DormouseProps) {
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const paused = useSyncExternalStore(subscribePaused, readPaused);
   const [failed, setFailed] = useState(false);
@@ -144,16 +133,19 @@ export function Dormouse({ mood, label, compact = false, size, pauseControl = tr
   }, []);
   const sized = size !== undefined, small = compact || sized;
   const isStatic = reduced || paused || failed || !slot;
+  const antic = useAntic(antics && mood === 0 && !isStatic);
+  const shownMood = antic?.mood ?? mood, shownLabel = antic?.label ?? label;
   const classes = ["dormouse-companion", compact ? "dormouse-compact" : "", sized ? "dormouse-sized" : "", sized && size < 48 ? "dormouse-small" : "", className ?? ""].filter(Boolean).join(" ");
-  return <div className={classes} style={sized ? { "--dm-size": `${size}px` } as CSSProperties : undefined} title={small ? label : undefined} data-mascot-state={mood}
+  return <div className={classes} style={sized ? { "--dm-size": `${size}px` } as CSSProperties : undefined} title={small ? shownLabel : undefined} data-mascot-state={shownMood} data-mascot-antic={antic?.name}
     data-mascot-mode={failed ? "fallback" : isStatic ? "static" : "animated"}>
     {isStatic
-      ? <div className="dormouse-circle" role="img" aria-label={`Freddai dormouse: ${label}`}><img className="dormouse-static" src={staticUrl} alt="" /></div>
-      : <AnimatedDormouse mood={mood} label={label} onError={() => setFailed(true)} />}
+      ? <div className="dormouse-circle" role="img" aria-label={`Freddai dormouse: ${shownLabel}`}><img className="dormouse-static" src={staticUrl} alt="" /></div>
+      : <AnimatedDormouse mood={shownMood} label={shownLabel} onError={() => setFailed(true)}
+        onPoke={antics && mood === 0 && !antic ? () => playAntic() : undefined} />}
     {pauseControl && !reduced && !failed && <button type="button" className="dormouse-motion" aria-label={paused ? "Play mascot animations" : "Pause mascot animations"} aria-pressed={paused}
       onClick={togglePaused}>
       {paused ? <Play size={10} /> : <Pause size={10} />}
     </button>}
-    {!small && <span className="dormouse-caption">{label}</span>}
+    {!small && <span className="dormouse-caption">{shownLabel}</span>}
   </div>;
 }

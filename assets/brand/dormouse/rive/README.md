@@ -38,8 +38,14 @@ Artboard: `Freddai`. State machine: `Main`. Bound view model: `Pet`.
 | 6 | Done | Reaction then held: two big hops, both paws up, happy ^ ^ eyes, sparkle stars pop; settles to a held content pose (smile, ^ ^ eyes, paws at chest) while stars twinkle and the body sways | Finished and read |
 | 7 | Interrupted | Held pause stance: slumped, half-lidded, flat mouth, ears slightly down, paws down, "pause" mark | Interrupted |
 | 8 | Failed | Held: frown, droopy ears, tail down, sweat drop | Failed |
+| 9 | Hula | Loop (144 f): hip sway via `Groove`, arms sweep side to side, grass skirt strands lag the sway, flower lei, happy eyes, wagging tail | App mapping: random idle antic |
+| 10 | Skate | Loop (180 f): rides a skateboard (wheels spin, speed lines), drifts across, leans, kick-pushes and one ollie, ears pinned back | App mapping: random idle antic |
+| 11 | Gaming | Loop (144 f): holds a controller, paws tap, pupils dart, focused brows, brief happy "win" hop | App mapping: random idle antic |
+| 12 | Snooze | Loop (240 f): eyes closed, head tilted and drooped, slow breath, tucked paws, rising Z glyphs | App mapping: random idle antic |
+| 13 | Juggle | Loop (120 f): three-ball cascade above the head, arms alternate small tosses, eyes look up | App mapping: random idle antic |
+| 14 | Jam | Loop (96 f): headphones, head bangs on the beat, paws drum the belly, rising music notes | App mapping: random idle antic |
 
-Moods 2 and 4 loop. 3, 4-settle, 7 and 8 hold their final pose; 6 holds a content pose and keeps looping sparkles and sway on a separate `Celebrate` layer (it starts when mood becomes 6 and resets when mood leaves 6). Reaction 5 finishes neutral. The host should set mood 0 and then 6 again to replay the Done reaction. Do not continuously resend completion events during renders. Gaze and poke are independent layers and work on top of every mood. Overlay props (bubbles, sparkles, drop, pause mark) sit near the artboard corners; the app lets the animated art overflow the circular disc so they are not clipped.
+Moods 2, 4 and 9-14 loop. Moods 9-14 are playful anticks: every prop (skirt, board, controller, headphones, glyphs) is opacity 0 in all other moods; `Groove` is a body wrapper between `Breath` and the art that every mood resets. 3, 4-settle, 7 and 8 hold their final pose; 6 holds a content pose and keeps looping sparkles and sway on a separate `Celebrate` layer (it starts when mood becomes 6 and resets when mood leaves 6). Reaction 5 finishes neutral. The host should set mood 0 and then 6 again to replay the Done reaction. Do not continuously resend completion events during renders. Gaze and poke are independent layers and work on top of every mood. Overlay props (bubbles, sparkles, drop, pause mark) sit near the artboard corners; the app lets the animated art overflow the circular disc so they are not clipped.
 
 Review sheets: `python3 render_moods.py [out_dir]` renders several frames per mood at 240, 148 and 38 px (`mascot3-moods-*.png`).
 

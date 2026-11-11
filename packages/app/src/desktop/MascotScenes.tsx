@@ -49,7 +49,7 @@ export function ConversationMascotChip({ thread, sessions, read }: { thread: Ses
 /** Large friendly dormouse that tops an empty state. Existing copy and controls stay beneath it. */
 export function MascotHero({ line, size = MASCOT_SIZES.hero }: { line: string; size?: number }) {
   return <div className="mascot-hero">
-    <Dormouse size={size} priority={MASCOT_PRIORITY.hero} mood={0} label="Ready" />
+    <Dormouse size={size} priority={MASCOT_PRIORITY.hero} mood={0} label="Ready" antics />
     <p className="mascot-hero-line">{line}</p>
   </div>;
 }

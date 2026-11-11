@@ -26,6 +26,12 @@ MOODS = [
     ('6 Done', 6, [10, 22, 36, 52, 75, 110, 200, 400]),
     ('7 Interrupted', 7, [10, 30, 60, 120]),
     ('8 Failed', 8, [10, 30, 60, 150]),
+    ('9 Hula', 9, [10, 28, 46, 64, 100]),
+    ('10 Skate', 10, [20, 60, 100, 112, 150]),
+    ('11 Gaming', 11, [20, 40, 70, 126, 135]),
+    ('12 Snooze', 12, [30, 70, 120, 170, 220]),
+    ('13 Juggle', 13, [10, 30, 50, 70, 90]),
+    ('14 Jam', 14, [8, 20, 32, 44, 70]),
 ]
 BG = '#F6F1E7'  # warm light, like the app header; dark variant is checked in the app screenshots
 
@@ -58,6 +64,13 @@ def sheet(size, name, dark=False, zoom=1):
         for c, f in enumerate(frames):
             src = Image.open(OUT / f'm{mood}_{f:04d}.png').convert('RGBA')
             tile = Image.new('RGBA', src.size, bg)
+            # The headless capture is opaque on #1D1D1D; key it out so dark-ink props stay visible on the light sheet.
+            px = src.load()
+            for yy in range(src.height):
+                for xx in range(src.width):
+                    r_, g_, b_, a_ = px[xx, yy]
+                    if abs(r_ - 29) < 3 and abs(g_ - 29) < 3 and abs(b_ - 29) < 3:
+                        px[xx, yy] = (0, 0, 0, 0)
             tile.alpha_composite(src)
             tile = tile.convert('RGB').resize((cell, cell), Image.LANCZOS)
             img.paste(tile, (label_w + pad + c * (cell + pad), y))
