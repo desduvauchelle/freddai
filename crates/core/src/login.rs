@@ -9,6 +9,15 @@ use std::{
 pub struct LoginState {
     pub status: String,
     pub error: Option<String>,
+    /// Browser sign-in link printed by the CLI, so it can be opened in a different browser.
+    pub url: Option<String>,
+}
+/// First https URL in a line of CLI output (Codex prints "navigate to this URL to authenticate:" then the link).
+pub fn find_url(line: &str) -> Option<String> {
+    let i = line.find("https://")?;
+    // Strip terminal colour codes that may trail the link.
+    let url: String = line[i..].chars().take_while(|c| !c.is_whitespace() && *c != '\u{1b}').collect();
+    (url.len() > 12).then_some(url)
 }
 struct Entry {
     state: LoginState,
@@ -62,13 +71,21 @@ impl LoginManager {
         timeout: Duration,
         verify: impl FnOnce() -> Result<bool, String> + Send + 'static,
     ) -> Result<(), String> {
+        // Starting again for the same account replaces an abandoned sign-in: kill the old one first.
+        if self.pending(&id) {
+            self.cancel(&id);
+            for _ in 0..50 {
+                if !self.pending(&id) { break; }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
         let mut entries = self.0.lock().unwrap();
         if entries.values().any(|e| e.state.status == "pending") {
             return Err("A sign-in is already open. Complete or cancel it before signing in to another account.".into());
         }
         cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -81,17 +98,35 @@ impl LoginManager {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Could not start sign-in: {e}"))?;
+        let streams: (Option<Box<dyn std::io::Read + Send>>, Option<Box<dyn std::io::Read + Send>>) = (
+            child.stdout.take().map(|s| Box::new(s) as _),
+            child.stderr.take().map(|s| Box::new(s) as _),
+        );
         entries.insert(
             id.clone(),
             Entry {
                 state: LoginState {
                     status: "pending".into(),
                     error: None,
+                    url: None,
                 },
                 cancel: false,
             },
         );
         drop(entries);
+        for stream in [streams.0, streams.1].into_iter().flatten() {
+            let (manager, id) = (self.clone(), id.clone());
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                for line in std::io::BufReader::new(stream).lines().map_while(Result::ok) {
+                    if let Some(url) = find_url(&line) {
+                        if let Some(e) = manager.0.lock().unwrap().get_mut(&id) {
+                            if e.state.status == "pending" { e.state.url = Some(url); }
+                        }
+                    }
+                }
+            });
+        }
         let manager = self.clone();
         std::thread::spawn(move || {
             #[cfg(windows)]
@@ -152,6 +187,7 @@ impl LoginManager {
                 e.state = LoginState {
                     status: result.0.into(),
                     error: result.1,
+                    url: None,
                 };
             }
         });
@@ -204,6 +240,21 @@ mod tests {
         assert!(m.start("b".into(), cmd("exit 0"), || Ok(true)).is_err());
         m.cancel("a");
         assert_eq!(wait(&m).status, "cancelled");
+    }
+    #[test]
+    fn captures_sign_in_url_and_restart_replaces_pending_login() {
+        let m = LoginManager::default();
+        m.start("a".into(), cmd("echo 'navigate to this URL:'; echo 'https://auth.example.com/oauth?x=1'; sleep 30"), || Ok(true)).unwrap();
+        let mut url = None;
+        for _ in 0..100 {
+            url = m.state("a").and_then(|s| s.url);
+            if url.is_some() { break; }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(url.as_deref(), Some("https://auth.example.com/oauth?x=1"));
+        // Restarting the same account kills the abandoned login instead of failing.
+        m.start("a".into(), cmd("exit 0"), || Ok(true)).unwrap();
+        assert_eq!(wait(&m).status, "ready");
     }
     #[test]
     fn login_timeout_is_actionable() {

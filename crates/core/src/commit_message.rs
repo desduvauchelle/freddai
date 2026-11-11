@@ -88,11 +88,12 @@ pub fn generate(
             account.provider
         ),
     );
+    let (model, effort) = crate::model_levels::resolve(&db.preferences.model_configuration, &account.provider, None, None, &|| make_cmd(account))?;
     let cmd = make_cmd(account).map_err(|e| format!("{} is unavailable: {e}", account.provider))?;
     let prompt = build_prompt(stat, diff);
     let raw = match account.provider.as_str() {
-        "codex" => side_codex(cmd, &p.path, &prompt, SIDE_TIMEOUT),
-        _ => side_claude(cmd, &p.path, &prompt, SIDE_TIMEOUT),
+        "codex" => side_codex(cmd, &p.path, &prompt, SIDE_TIMEOUT, model.as_deref(), effort.as_deref()),
+        _ => side_claude(cmd, &p.path, &prompt, SIDE_TIMEOUT, model.as_deref(), effort.as_deref()),
     }
     .map_err(|e| format!("{} request failed: {e}", account.provider))?;
     let msg = clean(&raw);

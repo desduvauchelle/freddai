@@ -297,7 +297,7 @@ fn dispatch_inner(
     let project_filter = args["project"].as_str().or(context.project.as_deref());
     match name {
         "freddai_context" => Ok(
-            json!({"context":context.value(),"project":context.project.as_ref().and_then(|id|db.projects.iter().find(|p|&p.id==id)).map(|p|json!({"id":p.id,"name":p.name,"objective":p.objective})),"bridge_version":1,"providers":["codex","claude","gemini","antigravity","grok","opencode","cursor"]}),
+            json!({"context":context.value(),"project":context.project.as_ref().and_then(|id|db.projects.iter().find(|p|&p.id==id)).map(|p|json!({"id":p.id,"name":p.name,"objective":p.objective})),"bridge_version":1,"providers":["codex","claude","gemini","antigravity","grok","opencode","cursor","copilot"]}),
         ),
         "freddai_list_projects" => Ok(
             json!({"projects":db.projects.iter().map(|p|json!({"id":p.id,"name":p.name,"path":p.path,"color":p.color,"objective":p.objective})).collect::<Vec<_>>()}),

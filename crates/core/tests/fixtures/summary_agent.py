@@ -14,6 +14,7 @@ else:
         v = json.loads(line)
         m = v.get('method')
         if m == 'initialize': out({'id': 1, 'result': {}})
+        elif m == 'model/list': out({'id':v['id'],'result':{'data':[{'model':'gpt-6.1-sol','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]}]}})
         elif m == 'thread/start':
             assert v['params']['ephemeral'] is True and v['params']['sandbox'] == 'read-only'
             out({'id': 2, 'result': {'thread': {'id': 'side'}}})

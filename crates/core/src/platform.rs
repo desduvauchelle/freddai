@@ -27,6 +27,7 @@ pub fn cli_dirs() -> Vec<PathBuf> {
             home.join(".local/bin"),
             home.join(".opencode/bin"),
             home.join(".cursor/bin"),
+            home.join(".local/share/gh/copilot"),
         ]);
         #[cfg(windows)]
         dirs.push(home.join("scoop/shims"));

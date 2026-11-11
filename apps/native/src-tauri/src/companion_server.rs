@@ -89,15 +89,15 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,"scheduled":s.schedule_id.is_some() || s.options.scheduled,
             "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
-            "canReply":s.pending.is_none() && s.provider_id.is_some() && db.accounts.iter().any(|a| a.id==s.account),
-            "usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
+            "canReply":s.pending.is_none() && (s.provider_id.is_some() || !s.agent_history.is_empty()) && db.accounts.iter().any(|a| a.id==s.account),
+            "agent":s.account,"usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
             "options":{"model":s.options.model,"effort":s.options.effort,"permission_mode":s.options.permission_mode},
             "queue":queue.map(|q|q.messages.iter().map(|m|json!({"id":m.id,"prompt":m.prompt,"attachments":m.options.attachments.len()})).collect::<Vec<_>>()).unwrap_or_default(),
             "queued":queue.map(|q|q.messages.iter().filter(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX)).count()).unwrap_or(0),
             "queuePaused":queue.is_some_and(|q|q.paused && q.messages.iter().any(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX))),
             "queueError":queue.and_then(|q|q.error.clone())})
     }).collect();
-    json!({"projects":projects,"threads":threads,"schedules":db.schedules,"workspaces":db.preferences.workspaces})
+    json!({"projects":projects,"threads":threads,"schedules":db.schedules,"workspaces":db.preferences.workspaces,"modelConfiguration":db.preferences.model_configuration})
 }
 fn snapshot(root: &Path, scoped: bool, thread: Option<&str>) -> Result<(Database, bool, bool), String> {
     let mut value = if scoped {
@@ -133,7 +133,17 @@ fn snapshot(root: &Path, scoped: bool, thread: Option<&str>) -> Result<(Database
     }
     let workspaces = value["preferences"]["workspaces"].is_array();
     let pins = value["sessions"].as_array().is_some_and(|sessions| sessions.iter().all(|s| s["pinned"].is_boolean()));
-    Ok((serde_json::from_value(value).map_err(|e|e.to_string())?, workspaces, pins))
+    let mut db: Database = serde_json::from_value(value).map_err(|e|e.to_string())?;
+    apply_account_order(root, &mut db);
+    Ok((db, workspaces, pins))
+}
+/// Applies the desktop's saved assistant order once per request; a broken file is loud and leaves host order.
+fn apply_account_order(root: &Path, db: &mut Database) {
+    match crate::thread_list_settings::load_account_order(root) {
+        Ok(Some(order)) => db.accounts = crate::thread_list_settings::order_accounts(std::mem::take(&mut db.accounts), &order),
+        Ok(None) => {}
+        Err(e) => eprintln!("[account_order] unreadable account-order.json: {e}"),
+    }
 }
 fn text<'a>(p: &'a Value, key: &str) -> Result<&'a str, String> {
     p[key].as_str().filter(|s| !s.trim().is_empty()).ok_or_else(||format!("Missing {key}"))
@@ -159,6 +169,7 @@ fn message_options(value: &Value, request_id: &str) -> Result<LaunchOptions, Str
     if !value.is_null() {
         let requested: LaunchOptions = serde_json::from_value(value.clone()).map_err(|_|"Invalid composer settings")?;
         if requested.model.as_ref().is_some_and(|s|s.len()>200) || requested.effort.as_ref().is_some_and(|s|s.len()>40) || requested.attachments.len()>20 { return Err("Composer settings exceed limits".into()); }
+        options.agent = requested.agent;
         options.model = requested.model;
         options.effort = requested.effort;
         options.permission_mode = requested.permission_mode;
@@ -214,6 +225,13 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
             crate::thread_list_settings::save_project_order(root, &order)?;
             Ok(json!(order))
         }
+        "save_model_configuration" => {
+            let config: freddai_core::model_levels::Configuration = serde_json::from_value(input["configuration"].clone()).map_err(|_| "Invalid model configuration")?;
+            freddai_core::model_levels::validate(&config)?;
+            let hello = host::call(root,"hello",json!({}))?;
+            if hello["model_configuration"] != 1 { return Err("The Mac background engine needs its update before saving model configuration. Let active work finish.".into()); }
+            host::call(root,"save_preferences",json!({"patch":{"model_configuration":config}}))
+        }
         "save_workspaces" => {
             let workspaces: Vec<freddai_core::runtime::Workspace> = serde_json::from_value(input["workspaces"].clone()).map_err(|_|"Invalid workspaces")?;
             if workspaces.len() > 200 || workspaces.iter().any(|w| w.id.trim().is_empty() || w.id.len() > 200 || w.name.trim().is_empty() || w.name.len() > 200 || w.color.len() != 7 || !w.color.starts_with('#') || !w.color[1..].bytes().all(|b| b.is_ascii_hexdigit()) || w.projects.len() > db.projects.len() || w.projects.iter().any(|id| !db.projects.iter().any(|p| &p.id == id))) {
@@ -225,7 +243,7 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
         }
         "generated_file" => freddai_core::generated_files::chunk(db, text(input,"thread")?, text(input,"href")?, input["offset"].as_u64().unwrap_or(0)),
         "models" => {
-            let account = if let Some(s)=session {s.account.clone()} else {
+            let account = if let Some(s)=session { input["assistant"].as_str().unwrap_or(&s.account).to_string() } else {
                 let project=db.projects.iter().find(|x|Some(x.id.as_str())==input["project"].as_str()).ok_or("Project not found")?;
                 resolve(db,project,input["assistant"].as_str().map(str::to_owned))?
             };
@@ -477,7 +495,7 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
         "/v1/reply" => {
             let s = db.sessions.iter().find(|s|Some(s.id.as_str())==p["thread"].as_str() && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")?;
             if s.pending.is_some() { return Err("This thread needs a decision on your Mac before continuing.".into()); }
-            if !can_queue_reply(s.provider_id.is_some(), &s.status) { return Err("This conversation cannot be resumed. Start a new thread.".into()); }
+            if !can_queue_reply(s.provider_id.is_some() || !s.agent_history.is_empty(), &s.status) { return Err("This conversation cannot be resumed. Start a new thread.".into()); }
             // Always use the existing persistent FIFO; the host owns execution and retries.
             host::call(root,"queue_message",json!({"session":s.id,"prompt":prompt,"options":options}))
         }
@@ -694,10 +712,20 @@ mod tests {
         assert!(resolve(&db,&db.projects[0],Some("removed".into())).is_err());
         assert!(!v.to_string().contains("test-credentials"));
     }
+    #[test] fn companion_follows_saved_account_order() {
+        let root=std::env::temp_dir().join(format!("fr-acct-order-{}",crate::companion_crypto::random()));
+        crate::thread_list_settings::save_account_order(&root,&["b".to_string(),"a".to_string()]).unwrap();
+        let mut db=Database::default();
+        for id in ["a","b"] { db.accounts.push(serde_json::from_value(json!({"id":id,"name":id,"provider":"codex","color":"#aaa"})).unwrap()); }
+        apply_account_order(&root,&mut db);
+        let ids=|v:&Value|v.as_array().unwrap().iter().map(|a|a["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(ids(&companion_product_usage(&root,&db)),["b","a"]);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn projection_excludes_configuration_and_archived_work() {
         let db=Database::default();
         let v=project_snapshot(&db);
-        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[]}));
+        assert_eq!(v,json!({"projects":[],"threads":[],"schedules":[],"workspaces":[],"modelConfiguration":{}}));
         assert!(v.get("accounts").is_none()); assert!(v.get("preferences").is_none());
         let session=json!({"id":"s1","project":"p1","account":"missing","title":"Synthetic thread","status":"waiting","updated":1,"last_user_message_at":7,"provider_id":null,"messages":[],"pending":{"id":7,"method":"item/tool/requestUserInput"},"error":null});
         let mut archived=session.clone(); archived["id"]=json!("archived"); archived["archived"]=json!(true);
@@ -858,6 +886,21 @@ mod schedule_guard_tests {
         (root, rx, handle)
     }
     #[test]
+    fn companion_model_configuration_only_forwards_validated_mapping() {
+        let config = json!({"claude":{"smart":{"family":"opus","effort":"high"}}});
+        let (root,rx,worker) = fake_host("model-config", vec![("hello",json!({"model_configuration":1})),("save_preferences",Value::Null)]);
+        composer(&root,&Database::default(),&json!({"operation":"save_model_configuration","input":{"configuration":config,"patch":{"fallback":"must-not-forward"}}})).unwrap();
+        assert_eq!(rx.recv().unwrap()["method"],"hello");
+        assert_eq!(rx.recv().unwrap()["params"],json!({"patch":{"model_configuration":config}}));
+        worker.join().unwrap(); fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn companion_model_configuration_rejects_older_host() {
+        let (root,_rx,worker) = fake_host("old-model-config",vec![("hello",json!({"version":"2"}))]);
+        assert!(composer(&root,&Database::default(),&json!({"operation":"save_model_configuration","input":{"configuration":{}}})).unwrap_err().contains("background engine"));
+        worker.join().unwrap(); fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn device_cannot_set_schedule_options_or_run_history() {
         let existing = json!({"permission_mode":"default","worktree":true,"scheduled":true});
         let (root, rx, host) = fake_host("sched-opts", vec![
@@ -946,6 +989,18 @@ mod thread_list_settings_tests {
         let settings: ThreadListSettings = serde_json::from_value(enabled).unwrap();
         assert!(settings.ignore_unread);
         assert_eq!(serde_json::to_value(settings).unwrap()["ignoreUnread"], true);
+    }
+
+    #[test]
+    fn project_name_uppercase_defaults_false_and_round_trips() {
+        let legacy = json!({"projectOrder":[],"grouped":true,"hideRead":true,"recentFinished":5});
+        let settings: ThreadListSettings = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(!settings.project_name_uppercase);
+        let mut enabled = legacy;
+        enabled["projectNameUppercase"] = json!(true);
+        let settings: ThreadListSettings = serde_json::from_value(enabled).unwrap();
+        assert!(settings.project_name_uppercase);
+        assert_eq!(serde_json::to_value(settings).unwrap()["projectNameUppercase"], true);
     }
 }
 

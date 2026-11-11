@@ -124,6 +124,8 @@ pub struct Workspace {
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Preferences {
     #[serde(default)]
+    pub model_configuration: crate::model_levels::Configuration,
+    #[serde(default)]
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub new_thread_policy: Option<NewThreadPolicy>,
@@ -150,8 +152,15 @@ impl PermissionMode {
         }
     }
 }
+/// `Origin.kind` of threads that exist only to be read by the host (Bug walk analysis).
+pub const HIDDEN_ANALYSIS: &str = "bug-walk-analysis";
+fn is_hidden(s: &Session) -> bool {
+    s.origin.as_ref().is_some_and(|o| o.kind == HIDDEN_ANALYSIS)
+}
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct LaunchOptions {
+    #[serde(default)]
+    pub agent: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
     #[serde(default)]
@@ -205,6 +214,8 @@ pub struct SessionBrief {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
+    #[serde(default)]
+    pub agent_history: Vec<(String, Option<String>)>,
     #[serde(default)]
     pub pinned: bool,
     #[serde(default)]
@@ -474,7 +485,7 @@ pub(crate) fn private_dir(path: &Path) -> Result<()> {
 fn is_acp(provider: &str) -> bool {
     matches!(
         provider,
-        "gemini" | "antigravity" | "grok" | "opencode" | "cursor"
+        "gemini" | "antigravity" | "grok" | "opencode" | "cursor" | "copilot"
     )
 }
 fn executable(provider: &str) -> Result<PathBuf> {
@@ -486,6 +497,7 @@ fn executable(provider: &str) -> Result<PathBuf> {
         "grok" => "grok",
         "opencode" => "opencode",
         "cursor" => "agent",
+        "copilot" => "copilot",
         _ => return Err("Unsupported agent".into()),
     };
     crate::platform::executable_in(name, crate::platform::cli_dirs())
@@ -504,6 +516,7 @@ pub fn detect_agents() -> Vec<AgentInstallation> {
         "grok",
         "opencode",
         "cursor",
+        "copilot",
         "gemini",
     ]
     .iter()
@@ -517,6 +530,8 @@ pub fn detect_agents() -> Vec<AgentInstallation> {
 }
 const AUTH_ENV: &[&str] = &[
     "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "COPILOT_HOME",
+    "COPILOT_GITHUB_TOKEN",
     "AGY_ADC_AUTH",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -564,7 +579,7 @@ fn command_with_resolver(
     for key in AUTH_ENV {
         cmd.env_remove(key);
     }
-    if matches!(account.provider.as_str(), "opencode" | "cursor") {
+    if matches!(account.provider.as_str(), "opencode" | "cursor" | "copilot") {
         if account.config_home.is_none() {
             return Err("This harness uses its shared CLI configuration. Connect the current CLI in Accounts.".into());
         }
@@ -611,12 +626,21 @@ fn command_with_resolver(
     Ok(cmd)
 }
 
+static AUTH_EXPIRED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+/// Shared "sign-in expired" marks, set by usage reads and thread runs that hit an auth error.
+fn set_auth_expired(account: &str, expired: bool) {
+    let mut set = AUTH_EXPIRED.get_or_init(Default::default).lock().unwrap();
+    if expired { set.insert(account.to_string()); } else { set.remove(account); }
+}
+pub fn auth_expired_accounts() -> Vec<String> {
+    AUTH_EXPIRED.get_or_init(Default::default).lock().unwrap().iter().cloned().collect()
+}
 fn check_auth(c: Command, provider: &str) -> Result<bool> {
     check_auth_with_timeout(c, provider, Duration::from_secs(10))
 }
 
 fn check_auth_with_timeout(mut c: Command, provider: &str, timeout: Duration) -> Result<bool> {
-    if matches!(provider, "antigravity" | "opencode" | "cursor") {
+    if matches!(provider, "antigravity" | "opencode" | "cursor" | "copilot") {
         return crate::acp::verify_cached(c, provider);
     }
     if provider == "grok" {
@@ -676,7 +700,7 @@ fn local_account_from_env(
         "codex" => ("CODEX_HOME", ".codex"),
         "claude" => ("CLAUDE_CONFIG_DIR", ".claude"),
         "gemini" => ("GEMINI_CLI_HOME", ""),
-        "antigravity" | "opencode" | "cursor" => ("HOME", ""),
+        "antigravity" | "opencode" | "cursor" | "copilot" => ("HOME", ""),
         "grok" => ("GROK_HOME", ".grok"),
         _ => return Err("Unsupported agent".into()),
     };
@@ -718,10 +742,11 @@ pub fn detect_existing_sign_ins() -> Vec<ExistingSignIn> {
         "grok",
         "opencode",
         "cursor",
+        "copilot",
     ]
     .iter()
     .map(|provider| {
-        if matches!(*provider, "antigravity" | "opencode" | "cursor") {
+        if matches!(*provider, "antigravity" | "opencode" | "cursor" | "copilot") {
             return ExistingSignIn {
                 provider: provider.to_string(),
                 signed_in: false,
@@ -947,13 +972,14 @@ impl Runtime {
             );
         }
         let full = !same_host || revision == 0 || revision > current;
-        let total = guard.db.sessions.len();
-        let ids: Vec<String> = guard.db.sessions.iter().map(|s| s.id.clone()).collect();
+        let total = guard.db.sessions.iter().filter(|s| !is_hidden(s)).count();
+        let ids: Vec<String> = guard.db.sessions.iter().filter(|s| !is_hidden(s)).map(|s| s.id.clone()).collect();
         let mut message_ids = HashMap::<String, Vec<String>>::new();
         let sessions: Vec<Session> = guard
             .db
             .sessions
             .iter()
+            .filter(|s| !is_hidden(s))
             .filter(|s| {
                 full || guard
                     .floor
@@ -1055,7 +1081,9 @@ impl Runtime {
         Ok((account, dir))
     }
     pub fn snapshot(&self) -> Database {
-        self.0.lock().unwrap().db.clone()
+        let mut db = self.0.lock().unwrap().db.clone();
+        db.sessions.retain(|s| !is_hidden(s));
+        db
     }
     /// Snapshot with (lock_wait_ms, lock_held_ms) for [stream-timing] diagnostics.
     pub fn snapshot_timed(&self) -> (Database, f64, f64) {
@@ -1063,14 +1091,18 @@ impl Runtime {
         let guard = self.0.lock().unwrap();
         let wait = crate::timing::ms(t0);
         let t1 = std::time::Instant::now();
-        let db = guard.db.clone();
+        let mut db = guard.db.clone();
         let held = crate::timing::ms(t1);
         drop(guard);
+        db.sessions.retain(|s| !is_hidden(s));
         (db, wait, held)
     }
     pub fn account(&self, name: String, provider: String, color: String) -> Result<Account> {
         if matches!(provider.as_str(), "opencode" | "cursor") {
             return Err("Separate logins are unsupported. Sign in in the official CLI, then connect the current CLI.".into());
+        }
+        if provider == "copilot" {
+            return Err("Copilot separate logins are not supported. Sign in with `copilot login`, then Add current connection.".into());
         }
         if provider == "antigravity" {
             return Err("Antigravity separate logins are not supported. Sign in with agy, then Add current connection.".into());
@@ -1356,7 +1388,7 @@ impl Runtime {
     /// Briefs for every non-deleted thread, optionally limited to one project.
     pub fn session_briefs(&self, project: Option<&str>) -> Vec<SessionBrief> {
         let i = self.0.lock().unwrap();
-        i.db.sessions.iter().filter(|s| s.deleted_at.is_none() && project.is_none_or(|p| s.project == p)).map(|s| SessionBrief {
+        i.db.sessions.iter().filter(|s| s.deleted_at.is_none() && !is_hidden(s) && project.is_none_or(|p| s.project == p)).map(|s| SessionBrief {
             id: s.id.clone(),
             project: s.project.clone(),
             title: s.title.clone(),
@@ -1385,6 +1417,7 @@ impl Runtime {
         Self::apply_preferences(&mut i, p, "patch")
     }
     fn apply_preferences(i: &mut Inner, mut p: Preferences, mode: &str) -> Result<()> {
+        crate::model_levels::validate(&p.model_configuration)?;
         p.last = i.db.preferences.last.clone();
         if let Some(account) = &p.last_selected {
             if !i.db.accounts.iter().any(|a| &a.id == account) {
@@ -1414,7 +1447,8 @@ impl Runtime {
                 .iter()
                 .find(|a| a.id == account_id)
                 .ok_or("Account not found")?;
-        if a.config_home.is_some() {
+        // Codex/Grok browser login is safe to re-run against a shared CLI home (it refreshes the same credentials).
+        if a.config_home.is_some() && !matches!(a.provider.as_str(), "codex" | "grok") {
             return Err("This account uses your existing CLI sign-in. Manage sign-in in the CLI, or add a separate account in Freddai.".into());
         }
         if i.db
@@ -1435,7 +1469,7 @@ impl Runtime {
             drop(i);
             return self
                 .1
-                .start(account.clone(), cmd, move || runtime.auth_status(&account));
+                .start(account.clone(), cmd, move || { let ok = runtime.auth_status(&account)?; if ok { set_auth_expired(&account, false); } Ok(ok) });
         }
         let exe = executable(&a.provider)?;
         let home = i.root.join("accounts").join(&a.id);
@@ -1534,13 +1568,38 @@ impl Runtime {
             "claude" => command(&account, &root).and_then(crate::usage::read_claude),
             "codex" => command(&account, &root).and_then(crate::usage::read),
             "antigravity" => command(&account, &root).and_then(crate::usage::read_antigravity),
+            "copilot" => crate::usage::read_copilot(),
             _ => Err(format!("{} does not expose a supported quota reader in Freddai yet. Usage and reset time are unknown.",account.provider)),
         };
         if let Err(e) = &result {
             crate::usage::log_failure(&account.provider, "account_usage", e, "", "");
         }
+        match &result {
+            Ok(_) => set_auth_expired(&account.id, false),
+            Err(e) if crate::usage::is_auth_error(e) => set_auth_expired(&account.id, true),
+            Err(_) => {}
+        }
         *cached = Some((std::time::Instant::now(), result.clone()));
         result
+    }
+
+    /// Real sign-in validation for Settings. For Codex, `codex login status` only checks that credentials exist,
+    /// so the token is validated by a live usage read (which refreshes it). Other providers use `auth_status`.
+    pub fn auth_check(&self, account_id: &str) -> Result<crate::usage::AuthState> {
+        use crate::usage::AuthState;
+        let provider = self.0.lock().unwrap().db.accounts.iter().find(|a| a.id == account_id)
+            .ok_or("Account not found")?.provider.clone();
+        if !self.auth_status(account_id)? {
+            return Ok(AuthState::Required);
+        }
+        if provider != "codex" {
+            return Ok(AuthState::Valid);
+        }
+        let state = crate::usage::classify_validation(&self.account_usage(account_id));
+        if let AuthState::Unverified { error } = &state {
+            eprintln!("[auth_check] ev=auth.unverified account={account_id} error={error:?}");
+        }
+        Ok(state)
     }
 
     pub fn auth_status(&self, account_id: &str) -> Result<bool> {
@@ -1796,6 +1855,43 @@ impl Runtime {
             let _ = write_db(&i);
         }
     }
+    /// Starts a hidden analysis thread (`origin.kind == HIDDEN_ANALYSIS`): never listed by snapshots or MCP.
+    pub fn launch_hidden(&self, project: String, account: Option<String>, prompt: String, mut options: LaunchOptions) -> Result<String> {
+        options.origin = Some(Origin { kind: HIDDEN_ANALYSIS.into(), thread: None });
+        options.attachments.clear();
+        options.worktree = false;
+        // Ask mode: any write or tool approval parks the thread as `waiting`, which `hidden_result` reports as an error.
+        options.permission_mode = Some(PermissionMode::Ask);
+        self.launch_with(project, account, prompt, None, options)
+    }
+    /// Poll a hidden thread: `{state:"running"}` or `{state:"done",text}` or `{state:"error",error}`.
+    pub fn hidden_result(&self, sid: &str) -> Result<Value> {
+        let i = self.0.lock().unwrap();
+        let s = i.db.sessions.iter().find(|s| s.id == sid && is_hidden(s)).ok_or("Hidden thread not found")?;
+        if s.pending.is_some() || s.status == "waiting" {
+            return Ok(json!({"state":"error","error":"The analysis agent asked for permission, which is not allowed for a read-only analysis"}));
+        }
+        match s.status.as_str() {
+            "done" => {
+                let text = s.messages.iter().rev().find(|m| m.role == "assistant").map(|m| m.text.to_string()).unwrap_or_default();
+                if text.trim().is_empty() { Ok(json!({"state":"error","error":"The analysis agent finished without a reply"})) } else { Ok(json!({"state":"done","text":text})) }
+            }
+            "failed" | "interrupted" | "stopped" | "blocked" => Ok(json!({"state":"error","error":s.error.clone().unwrap_or_else(|| format!("The analysis thread ended with status {}", s.status))})),
+            _ => Ok(json!({"state":"running"})),
+        }
+    }
+    /// Permanently removes one hidden thread, or every hidden thread when `sid` is None (crash leftovers).
+    pub fn purge_hidden(&self, sid: Option<&str>) -> Result<usize> {
+        let ids: Vec<String> = {
+            let i = self.0.lock().unwrap();
+            i.db.sessions.iter().filter(|s| is_hidden(s) && sid.is_none_or(|x| x == s.id)).map(|s| s.id.clone()).collect()
+        };
+        for id in &ids {
+            if let Some(tx) = self.0.lock().unwrap().running.get(id) { let _ = tx.send(Control::Cancel); }
+            self.thread_action(id, "purge", None)?;
+        }
+        Ok(ids.len())
+    }
     pub fn stage_attachments(
         &self,
         paths: Vec<String>,
@@ -2041,11 +2137,12 @@ impl Runtime {
             Err(e) => return fail(&format!("command: {e}")),
         };
         crate::timing::log("host", format_args!("ev=thread_title.requested session={sid} provider=codex route=ephemeral_side_thread"));
-        let (rt, sid, cwd, model, thread) = (
+        let (rt, sid, cwd, model, effort, thread) = (
             self.clone(),
             s.id.clone(),
             p.path.clone(),
             s.options.model.clone(),
+            s.options.effort.clone(),
             s.provider_id.clone().unwrap_or_default(),
         );
         let prompt = crate::thread_title::codex_prompt(&users[0], &assistant);
@@ -2054,6 +2151,7 @@ impl Runtime {
                 cmd,
                 &cwd,
                 model.as_deref(),
+                effort.as_deref(),
                 &thread,
                 &prompt,
                 Duration::from_secs(90),
@@ -2120,6 +2218,7 @@ impl Runtime {
         if prompt.trim().is_empty() {
             return Err("Enter a message".into());
         }
+        crate::model_levels::level(options.model.as_deref())?;
         let project_model = self.resolve_project_model(&project_id, explicit.as_deref(), existing.as_deref(), &options);
         let (session, a, p, root, rx, agent_prompt) = {
             let mut i = self.0.lock().unwrap();
@@ -2149,12 +2248,13 @@ impl Runtime {
                 if s.project != p.id {
                     return Err("Thread project cannot change".into());
                 }
-                if s.provider_id.is_none() {
+                if s.provider_id.is_none() && s.agent_history.is_empty() {
                     return Err("This thread never established a provider session. Create a new thread to retry.".into());
                 }
                 s
             } else {
                 Session {
+                    agent_history: vec![],
                     archived: false,
                     pinned: false,
                     deleted_at: None,
@@ -2189,6 +2289,13 @@ impl Runtime {
             };
             if s.archived || s.deleted_at.is_some() {
                 return Err("Restore or unarchive this thread before resuming it.".into());
+            }
+            let switched_agent = options.agent.as_ref().is_some_and(|id| id != &s.account);
+            if switched_agent {
+                let id = options.agent.as_ref().unwrap();
+                if !i.db.accounts.iter().any(|a| &a.id == id) { return Err("Selected agent is unavailable".into()); }
+                if i.running.contains_key(&s.id) { return Err("Queue the message to switch agents after the current turn.".into()); }
+                crate::agent_handoff::change(&mut s, id);
             }
             let a =
                 i.db.accounts
@@ -2290,6 +2397,9 @@ impl Runtime {
                 Some(preface) => format!("{preface}\n\n{prompt}"),
                 None => prompt.clone(),
             };
+            let agent_prompt = if s.provider_id.is_none() && !s.agent_history.is_empty() {
+                crate::agent_handoff::prompt(&s.messages, &agent_prompt)
+            } else { agent_prompt };
             // Codex has no slash command protocol: the host expands its custom prompts (/prompts:name args).
             let agent_prompt = if a.provider == "codex" {
                 crate::commands::expand_codex_prompt(
@@ -2357,6 +2467,10 @@ impl Runtime {
                 let i = rt.0.lock().unwrap();
                 i.db.sessions.iter().find(|x| x.id == session.id).map(|x| (x.status.clone(), x.error.clone())).unwrap_or_default()
             };
+            if let Some(e) = error.as_deref().filter(|e| crate::usage::is_auth_error(e)) {
+                preferences_log(&root, &format!("ev=auth.expired account={} source=thread error={:?}", session.account, e));
+                set_auth_expired(&session.account, true);
+            }
             preferences_log(&root, &format!("ev=turn.finish thread={} status={} error={:?}", session.id, status, error));
             rt.finish_turn(&session.id);
         });
@@ -2364,50 +2478,15 @@ impl Runtime {
     }
     /// Model the project asks for when the caller chose none. `"latest"` is resolved now from the
     /// account's provider catalog; failures are logged and noted for the UI, then the provider default is used.
-    fn resolve_project_model(&self, project_id: &str, explicit: Option<&str>, existing: Option<&str>, options: &LaunchOptions) -> Option<String> {
+    fn resolve_project_model(&self, project_id: &str, _explicit: Option<&str>, _existing: Option<&str>, options: &LaunchOptions) -> Option<String> {
         if options.model.is_some() {
             return None;
         }
-        let (project, account, root) = {
-            let i = self.0.lock().unwrap();
-            let project = i.db.projects.iter().find(|p| p.id == project_id)?.clone();
-            project.model.as_ref()?;
-            let account_id = match existing {
-                Some(sid) => i.db.sessions.iter().find(|s| s.id == sid)?.account.clone(),
-                None => resolve(&i.db, &project, explicit.map(str::to_owned)).ok()?,
-            };
-            let account = i.db.accounts.iter().find(|a| a.id == account_id)?.clone();
-            (project, account, i.root.clone())
-        };
+        let project = self.0.lock().unwrap().db.projects.iter().find(|p| p.id == project_id)?.clone();
         let model = project.model.clone()?;
-        if model != "latest" {
-            return Some(model);
-        }
-        let discovered = if account.provider == "codex" {
-            command(&account, &root).and_then(crate::models::read).and_then(|rows| {
-                crate::models::newest(rows.as_array().map(Vec::as_slice).unwrap_or_default())
-                    .ok_or_else(|| "The provider returned no models.".to_string())
-            })
-        } else {
-            Err(format!("{} does not expose a model catalog in Freddai yet.", account.provider))
-        };
-        match discovered {
-            Ok(id) => {
-                if project.is_commander() {
-                    crate::commander::set_model_notice(&project.path, None);
-                }
-                Some(id)
-            }
-            Err(reason) => {
-                let notice = format!("Could not resolve the latest model ({reason}). Using the provider default.");
-                preferences_log(&root, &format!("ev=commander.model_latest_fallback project={project_id} provider={} reason={reason:?}", account.provider));
-                if project.is_commander() {
-                    crate::commander::set_model_notice(&project.path, Some(&notice));
-                }
-                None
-            }
-        }
+        if model == "latest" { Some("freddai-level:normal".into()) } else { Some(model) }
     }
+
     fn finish_turn(&self, sid: &str) {
         {
             let mut i = self.0.lock().unwrap();
@@ -2430,6 +2509,7 @@ impl Runtime {
         prompt: String,
         mut options: LaunchOptions,
     ) -> Result<()> {
+        crate::model_levels::level(options.model.as_deref())?;
         let _guard = QUEUE_LOCK.lock().unwrap();
         if prompt.trim().is_empty() {
             return Err("Enter a message".into());
@@ -2442,6 +2522,9 @@ impl Runtime {
                 .ok_or("Thread not found")?;
         if session.status == "archived" || session.archived || session.deleted_at.is_some() {
             return Err("Restore or unarchive this thread before queueing messages.".into());
+        }
+        if options.agent.as_ref().is_some_and(|id| !i.db.accounts.iter().any(|a| &a.id == id)) {
+            return Err("Selected agent is unavailable".into());
         }
         if !i.db.accounts.iter().any(|a| a.id == session.account) {
             return Err("Account was removed".into());
@@ -2514,6 +2597,11 @@ impl Runtime {
         write_db(&i)
     }
     pub fn steer_message(&self, sid: &str, prompt: String, options: LaunchOptions) -> Result<()> {
+        if let Some(agent) = &options.agent {
+            if self.0.lock().unwrap().db.sessions.iter().any(|s| s.id == sid && &s.account != agent) {
+                return Err("Queue this message to change agents after the current turn.".into());
+            }
+        }
         let _guard = QUEUE_LOCK.lock().unwrap();
         self.send_steering(
             sid,
@@ -2536,6 +2624,9 @@ impl Runtime {
                     .iter()
                     .find(|s| s.id == sid)
                     .ok_or("Thread not found")?;
+            if message.options.agent.as_ref().is_some_and(|agent| agent != &session.account) {
+                return Err("Queue this message to change agents after the current turn.".into());
+            }
             if session.requests.contains(&message.id) {
                 return Ok(());
             }
@@ -2900,6 +2991,12 @@ impl Runtime {
         if a.provider == "gemini" && !self.auth_status(&a.id)? {
             return Err("Sign in to Gemini in Accounts before starting this thread.".into());
         }
+        let mut resolved = s.clone();
+        let config = self.0.lock().unwrap().db.preferences.model_configuration.clone();
+        let (model, effort) = crate::model_levels::resolve(&config, &a.provider, s.options.model.as_deref(), s.options.effort.as_deref(), &|| command(a, root))?;
+        resolved.options.model = model;
+        resolved.options.effort = effort;
+        let s = &resolved;
         let mut cmd = command(a, root)?;
         cmd.current_dir(&p.path)
             .stdin(Stdio::piped())
@@ -2910,12 +3007,14 @@ impl Runtime {
             // threads on these providers rely on CLAUDE.md/AGENTS.md ("never edit code") and Ask mode.
             if matches!(a.provider.as_str(), "antigravity" | "opencode" | "cursor") {
                 cmd.arg("acp");
+            } else if a.provider == "copilot" {
+                cmd.args(["--acp", "--no-auto-update"]);
             } else if a.provider == "gemini" {
                 cmd.arg("--acp");
             } else {
                 cmd.args(["agent", "--no-leader"]);
             }
-            if !matches!(a.provider.as_str(), "antigravity" | "opencode" | "cursor") {
+            if !matches!(a.provider.as_str(), "antigravity" | "opencode" | "cursor" | "copilot") {
                 if let Some(model) = &s.options.model {
                     cmd.args(["--model", model]);
                 }
@@ -3250,7 +3349,7 @@ impl Runtime {
                                 // browser sign-in from a background turn.
                                 if matches!(
                                     a.provider.as_str(),
-                                    "antigravity" | "opencode" | "cursor"
+                                    "antigravity" | "opencode" | "cursor" | "copilot"
                                 ) {
                                     send(
                                         &mut stdin,
@@ -3288,7 +3387,7 @@ impl Runtime {
                                 self.update(&s.id, |s| s.provider_id = Some(acp_session.clone()));
                                 if matches!(
                                     a.provider.as_str(),
-                                    "antigravity" | "opencode" | "cursor"
+                                    "antigravity" | "opencode" | "cursor" | "copilot"
                                 ) {
                                     if let Some(model) = &s.options.model {
                                         send(
@@ -3305,11 +3404,11 @@ impl Runtime {
                             let session_ready = v["id"] == 103
                                 && !(matches!(
                                     a.provider.as_str(),
-                                    "antigravity" | "opencode" | "cursor"
+                                    "antigravity" | "opencode" | "cursor" | "copilot"
                                 ) && s.options.model.is_some());
                             let model_ready = matches!(
                                 a.provider.as_str(),
-                                "antigravity" | "opencode" | "cursor"
+                                "antigravity" | "opencode" | "cursor" | "copilot"
                             ) && s.options.model.is_some()
                                 && v["id"] == 105;
                             if (session_ready || model_ready) && !v["result"].is_null() {
@@ -5048,6 +5147,7 @@ mod tests {
                 })
                 .collect(),
             preferences: Preferences {
+                model_configuration: Default::default(),
                 workspaces: Vec::new(),
                 new_thread_policy: None,
                 last_selected: None,
@@ -5351,6 +5451,7 @@ mod tests {
         {
             let mut i = rt.0.lock().unwrap();
             i.db.sessions.push(Session {
+                agent_history: vec![],
                 archived: false,
                     pinned: false,
                 deleted_at: None,
@@ -5567,6 +5668,8 @@ mod tests {
         let rt = Runtime::open(root.clone()).unwrap();
         let mut a = db().accounts[0].clone();
         a.config_home = Some(root.join("external"));
+        // Codex/Grok may re-run browser login on a shared home; other providers may not.
+        a.provider = "claude".into();
         rt.0.lock().unwrap().db.accounts.push(a);
         assert!(rt
             .login("a")
@@ -5645,6 +5748,7 @@ mod tests {
             .unwrap();
         fs::remove_file(sample).unwrap();
         let s = Session {
+            agent_history: vec![],
             archived: false,
                     pinned: false,
             deleted_at: None,
@@ -5661,7 +5765,7 @@ mod tests {
             updated: 0,
             last_user_message_at: None,
             turn_started_at: None,
-            provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor") {
+            provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor" | "copilot") {
                 Some("provider-session".into())
             } else {
                 None
@@ -5832,6 +5936,7 @@ mod tests {
             "grok",
             "opencode",
             "cursor",
+            "copilot",
         ] {
             steering_fixture(provider, "normal");
         }
@@ -5854,6 +5959,7 @@ mod tests {
             .unwrap();
         fs::remove_file(sample).unwrap();
         let s = Session {
+            agent_history: vec![],
             archived: false,
                     pinned: false,
             deleted_at: None,
@@ -5870,7 +5976,7 @@ mod tests {
             updated: 0,
             last_user_message_at: None,
             turn_started_at: None,
-            provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor") {
+            provider_id: if matches!(provider, "codex" | "antigravity" | "opencode" | "cursor" | "copilot") {
                 Some("provider-session".into())
             } else {
                 None
@@ -6026,7 +6132,7 @@ mod tests {
     }
     #[test]
     fn new_harnesses_resume_approve_and_cancel() {
-        for provider in ["opencode", "cursor"] {
+        for provider in ["opencode", "cursor", "copilot"] {
             protocol_fixture(provider, false);
             protocol_fixture(provider, true);
         }
@@ -6214,6 +6320,49 @@ mod tests {
         rt.0.lock().unwrap().db.sessions =
             vec![delta_session("a"), delta_session("b"), delta_session("c")];
         (rt, root)
+    }
+    #[test]
+    fn central_model_configuration_persists_and_unrelated_patches_preserve_it() {
+        let (rt,root)=delta_runtime();
+        let mapping=json!({"claude":{"smart":{"family":"opus","effort":"high"}}});
+        rt.preferences_patch(json!({"model_configuration":mapping})).unwrap();
+        rt.preferences_patch(json!({"use_worktree":true})).unwrap();
+        assert_eq!(serde_json::to_value(rt.snapshot().preferences.model_configuration).unwrap(),mapping);
+        let disk:Value=serde_json::from_slice(&fs::read(root.join("workspace.json")).unwrap()).unwrap();
+        assert_eq!(disk["preferences"]["model_configuration"],mapping);
+        assert!(rt.preferences_patch(json!({"model_configuration":{"claude":{"smart":{"family":"opus","effort":"invalid"}}}})).is_err());
+        assert_eq!(serde_json::to_value(rt.snapshot().preferences.model_configuration).unwrap(),mapping);
+        let _=fs::remove_dir_all(root);
+    }
+    #[test]
+    fn hidden_analysis_threads_are_unlisted_readable_and_purgeable() {
+        let (rt, root) = delta_runtime();
+        {
+            let mut i = rt.0.lock().unwrap();
+            let mut h = delta_session("hid");
+            h.origin = Some(Origin { kind: HIDDEN_ANALYSIS.into(), thread: None });
+            h.status = "running".into();
+            i.db.sessions.push(h);
+        }
+        assert_eq!(rt.snapshot().sessions.len(), 3);
+        assert_eq!(rt.snapshot_timed().0.sessions.len(), 3);
+        let (full, ..) = rt.snapshot_since(0, None);
+        assert_eq!(ids(&full, "sessionIds"), ["a", "b", "c"]);
+        assert_eq!(ids(&full, "sessions"), ["a", "b", "c"]);
+        assert_eq!(rt.hidden_result("hid").unwrap()["state"], "running");
+        assert!(rt.hidden_result("a").is_err(), "visible threads are not readable through the hidden API");
+        {
+            let mut i = rt.0.lock().unwrap();
+            let h = i.db.sessions.iter_mut().find(|s| s.id == "hid").unwrap();
+            h.status = "done".into();
+            h.messages.push(Message { id: "m".into(), role: "assistant".into(), text: "{\"items\":[]}".into(), attachments: vec![] });
+        }
+        let r = rt.hidden_result("hid").unwrap();
+        assert_eq!((r["state"].as_str(), r["text"].as_str()), (Some("done"), Some("{\"items\":[]}")));
+        assert_eq!(rt.purge_hidden(None).unwrap(), 1);
+        assert!(rt.hidden_result("hid").is_err());
+        assert_eq!(rt.0.lock().unwrap().db.sessions.len(), 3);
+        let _ = fs::remove_dir_all(root);
     }
     fn ids(v: &Value, key: &str) -> Vec<String> {
         v[key]

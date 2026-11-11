@@ -86,7 +86,7 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
     }
     Ok(match method {
         "hello" => {
-            json!({"version":VERSION,"schedule_end_dates":true,"schedule_run_limits":true,"schedule_delivery":true,"mcp_bridge":1,"google_accounts":1,"build":std::env::current_exe().ok().map(|p|p.to_string_lossy().into_owned())})
+            json!({"version":VERSION,"schedule_end_dates":true,"schedule_run_limits":true,"schedule_delivery":true,"mcp_bridge":1,"google_accounts":1,"model_configuration":1,"build":std::env::current_exe().ok().map(|p|p.to_string_lossy().into_owned())})
         }
         "upgrade_idle" => {
             rt.prepare_upgrade()?;
@@ -214,6 +214,12 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             rt.cancel_login(&text(&p, "account")?);
             Value::Null
         }
+        "auth_check" => {
+            let state = serde_json::to_value(rt.auth_check(&text(&p, "account")?)?).map_err(|e| e.to_string())?;
+            let mut state = state;
+            state["expired_accounts"] = json!(crate::runtime::auth_expired_accounts());
+            state
+        }
         "auth_status" => json!(rt.auth_status(&text(&p, "account")?)?),
         "launch" => json!(rt.launch_with(
             text(&p, "project")?,
@@ -228,6 +234,14 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             )
             .map_err(|e| e.to_string())?
         )?),
+        "hidden_launch" => json!(rt.launch_hidden(
+            text(&p, "project")?,
+            optional(&p, "account"),
+            text(&p, "prompt")?,
+            serde_json::from_value(p.get("options").filter(|x| !x.is_null()).cloned().unwrap_or(json!({}))).map_err(|e| e.to_string())?
+        )?),
+        "hidden_result" => rt.hidden_result(&text(&p, "session")?)?,
+        "hidden_purge" => json!(rt.purge_hidden(p["session"].as_str())?),
         "list_slash_commands" => {
             let (account, dir) = rt.composer_context(
                 optional(&p, "session").as_deref(),

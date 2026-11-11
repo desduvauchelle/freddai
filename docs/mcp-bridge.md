@@ -106,6 +106,6 @@ The bridge does not expose account creation/sign-in, approval responses, arbitra
 
 ## Provider connections
 
-Codex receives session-local `-c mcp_servers` settings; Claude receives one merged `--mcp-config` argument. Gemini, Antigravity, Grok, OpenCode and Cursor receive both `freddai` and the existing `freddai_computer` server in ACP `session/new` and `session/load`. The computer server is included when the signed macOS helper is present. User account/project MCP configuration is not edited. Provider wiring is covered by offline tests; discovery and tool execution in each installed provider/subscription must be tested by the user, not inferred from those tests.
+Codex receives session-local `-c mcp_servers` settings; Claude receives one merged `--mcp-config` argument. Gemini, Antigravity, Grok, OpenCode, Cursor and Copilot receive both `freddai` and the existing `freddai_computer` server in ACP `session/new` and `session/load`. The computer server is included when the signed macOS helper is present. User account/project MCP configuration is not edited. Provider wiring is covered by offline tests; discovery and tool execution in each installed provider/subscription must be tested by the user, not inferred from those tests.
 
 Protocol references: [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle), [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools), [ACP session setup](https://agentclientprotocol.com/protocol/v1/session-setup).

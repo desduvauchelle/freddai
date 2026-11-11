@@ -228,7 +228,7 @@ fn query_rpc(
             } else if v["id"] == 3 && refreshed {
                 if !v["error"].is_null() || v["result"]["account"].is_null() {
                     *raw_error.borrow_mut() = v["error"]["message"].as_str().unwrap_or("account/read returned no account").to_string();
-                    return Err("Codex sign-in expired. Reconnect this account in Manage accounts.".into());
+                    return Err(AUTH_EXPIRED_COPY.into());
                 }
                 request_id = 4;
                 send(json!({"id":request_id,"method":method,"params":params}))?;
@@ -237,14 +237,14 @@ fn query_rpc(
                     *raw_error.borrow_mut() = v["error"]["message"].as_str().unwrap_or("").to_string();
                     // Classify internally; never expose raw provider bodies or credentials.
                     let message = v["error"]["message"].as_str().unwrap_or("").to_ascii_lowercase();
-                    let unauthorized = message.contains("401") || message.contains("token_expired") || message.contains("unauthorized");
+                    let unauthorized = is_auth_error(&message);
                     if unauthorized && !refreshed && method == "account/rateLimits/read" {
                         refreshed = true;
                         send(json!({"id":3,"method":"account/read","params":{"refreshToken":true}}))?;
                         continue;
                     }
                     if unauthorized {
-                        return Err("Codex sign-in expired. Reconnect this account in Manage accounts.".into());
+                        return Err(AUTH_EXPIRED_COPY.into());
                     }
                     if message.contains("429") || message.contains("too many requests") {
                         return Err("Codex usage requests are temporarily rate limited. Try again shortly.".into());
@@ -315,6 +315,36 @@ fn redact(text: &str) -> String {
     }
     out.join(" ")
 }
+/// Stable user-facing copy for an expired provider sign-in. The UI matches on `sign-in needed`
+/// (see `isAuthError` in packages/app/src/desktop/reconnect.ts) and shows a Reconnect button.
+pub const AUTH_EXPIRED_COPY: &str = "Codex sign-in needed. Reconnect this account.";
+/// True when a provider error means the stored sign-in is no longer valid.
+pub fn is_auth_error(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    ["refresh token was already used", "token_expired", "401", "unauthorized", "sign in again", "log out and sign in", "sign-in expired", "sign-in needed", "authentication required", "not logged in", "returned no account"]
+        .iter()
+        .any(|needle| m.contains(needle))
+}
+/// Result of really validating a provider sign-in (not just checking that credentials exist).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AuthState {
+    Valid,
+    /// Credentials are missing or the provider says the sign-in is signed out.
+    Required,
+    /// The provider rejected the stored token (dead refresh token). Reconnect needed.
+    Expired { error: String },
+    /// The check itself failed (network, timeout, CLI error). Status unknown, not "expired".
+    Unverified { error: String },
+}
+/// Classify the outcome of a real token-validating read (usage / account read).
+pub fn classify_validation<T>(result: &Result<T, String>) -> AuthState {
+    match result {
+        Ok(_) => AuthState::Valid,
+        Err(e) if is_auth_error(e) => AuthState::Expired { error: e.clone() },
+        Err(e) => AuthState::Unverified { error: e.clone() },
+    }
+}
 /// Structured, redacted failure event for quota reads. Never silent.
 pub fn log_failure(provider: &str, method: &str, error: &str, raw: &str, stderr: &str) {
     let raw: String = redact(raw).chars().take(300).collect();
@@ -324,6 +354,32 @@ pub fn log_failure(provider: &str, method: &str, error: &str, raw: &str, stderr:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn validation_classifies_valid_expired_and_unverifiable() {
+        assert_eq!(classify_validation::<()>(&Ok(())), AuthState::Valid);
+        let dead = "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.";
+        assert!(matches!(classify_validation::<()>(&Err(dead.into())), AuthState::Expired { .. }));
+        assert!(matches!(classify_validation::<()>(&Err(AUTH_EXPIRED_COPY.into())), AuthState::Expired { .. }));
+        assert!(matches!(classify_validation::<()>(&Err("Usage request timed out. Try refreshing.".into())), AuthState::Unverified { .. }));
+        assert!(matches!(classify_validation::<()>(&Err("connection refused".into())), AuthState::Unverified { .. }));
+    }
+    #[test]
+    fn classifies_auth_errors_but_not_other_failures() {
+        for m in [
+            "Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.",
+            "401 Unauthorized: token_expired",
+            "Please sign in again",
+            "codex account authentication required to read rate limits",
+            "Not logged in",
+            "account/read returned no account",
+            AUTH_EXPIRED_COPY,
+        ] {
+            assert!(is_auth_error(m), "{m}");
+        }
+        for m in ["429 too many requests", "Usage request timed out. Try refreshing.", "model not found"] {
+            assert!(!is_auth_error(m), "{m}");
+        }
+    }
     #[test]
     fn quota_windows_preserve_zero_and_unknown_reset_and_multiple_buckets() {
         let v = json!({"rateLimitsByLimitId":{
@@ -641,6 +697,99 @@ pub fn parse_antigravity(data: &Value) -> Result<AccountUsage, String> {
             .as_millis() as u64,
     })
 }
+const COPILOT_NEEDS_GH: &str = "Copilot usage needs the GitHub CLI: install gh and run `gh auth login`.";
+/// Read Copilot's monthly premium-request quota via `gh api copilot_internal/user`. No model turn.
+pub fn read_copilot() -> Result<AccountUsage, String> {
+    const METHOD: &str = "gh api copilot_internal/user";
+    let result = (|| -> Result<(AccountUsage, String), (String, String, String)> {
+        let fail = |msg: &str, raw: String, err: String| (msg.to_string(), raw, err);
+        let gh = crate::platform::executable_in("gh", crate::platform::cli_dirs())
+            .ok_or_else(|| fail(COPILOT_NEEDS_GH, String::new(), "gh not found".into()))?;
+        let mut cmd = crate::platform::quiet_command(gh);
+        if let Ok(path) = crate::platform::cli_path() {
+            cmd.env("PATH", path);
+        }
+        cmd.args(["api", "copilot_internal/user"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| fail(COPILOT_NEEDS_GH, String::new(), e.to_string()))?;
+        let stderr_tail = capture_stderr(&mut child);
+        let mut stdout = child.stdout.take().ok_or_else(|| fail(COPILOT_NEEDS_GH, String::new(), "no stdout".into()))?;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut body = String::new();
+            let _ = std::io::Read::read_to_string(&mut stdout, &mut body);
+            let _ = tx.send(body);
+        });
+        let body = match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(b) => b,
+            Err(_) => {
+                crate::runtime::terminate(&mut child);
+                return Err(fail("Copilot usage request timed out. Try refreshing.", String::new(), last_stderr(&stderr_tail)));
+            }
+        };
+        let status = child.wait().map_err(|e| fail(COPILOT_NEEDS_GH, body.clone(), e.to_string()))?;
+        if !status.success() {
+            return Err(fail(COPILOT_NEEDS_GH, body, last_stderr(&stderr_tail)));
+        }
+        let v: Value = serde_json::from_str(&body)
+            .map_err(|e| fail("Copilot returned an unreadable usage report.", body.clone(), e.to_string()))?;
+        parse_copilot(&v)
+            .map(|u| (u, String::new()))
+            .map_err(|e| fail(&e, body, String::new()))
+    })();
+    match result {
+        Ok((u, _)) => Ok(u),
+        Err((msg, raw, stderr)) => {
+            log_failure("copilot", METHOD, &msg, &raw, &stderr);
+            Err(msg)
+        }
+    }
+}
+/// `v` is the response of `gh api copilot_internal/user`.
+pub fn parse_copilot(v: &Value) -> Result<AccountUsage, String> {
+    let q = &v["quota_snapshots"]["premium_interactions"];
+    if !q.is_object() {
+        return Err("Copilot did not report premium request quota".into());
+    }
+    let (used_percent, resets_at) = if q["unlimited"].as_bool() == Some(true) {
+        (0.0, None)
+    } else {
+        let remaining = q["percent_remaining"]
+            .as_f64()
+            .filter(|n| n.is_finite())
+            .ok_or("Copilot did not report premium request quota")?;
+        (
+            (100.0 - remaining).clamp(0.0, 100.0),
+            v["quota_reset_date_utc"]
+                .as_str()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.timestamp()),
+        )
+    };
+    Ok(AccountUsage {
+        windows: vec![UsageWindow {
+            label: "Premium requests".into(),
+            window: "other".into(),
+            used_percent,
+            resets_at,
+        }],
+        plan: v["copilot_plan"].as_str().map(str::to_owned),
+        reset_credits: None,
+        checked_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    })
+}
 pub fn parse_claude(report: &Value) -> Result<AccountUsage, String> {
     let rows = report["rate_limits"]["limits"]
         .as_array()
@@ -776,5 +925,33 @@ print(json.dumps({'event':'command_result','command':{'name':'usage','data':{'gr
             cmd.process_group(0);
         }
         assert_eq!(read_antigravity(cmd).unwrap().windows[0].used_percent, 50.);
+    }
+}
+#[cfg(test)]
+mod copilot_tests {
+    use super::*;
+    #[test]
+    fn parses_premium_interactions() {
+        let v = json!({"copilot_plan":"individual_pro","quota_reset_date_utc":"2026-12-01T00:00:00.000Z","quota_snapshots":{"premium_interactions":{"percent_remaining":98.2,"quota_remaining":1474.0,"unlimited":false,"entitlement":1500,"remaining":1474,"credits_used":26,"quota_id":"premium_interactions"},"chat":{"unlimited":true},"completions":{"unlimited":true}}});
+        let u = parse_copilot(&v).unwrap();
+        assert_eq!(u.plan.as_deref(), Some("individual_pro"));
+        assert_eq!(u.windows.len(), 1);
+        assert_eq!(u.windows[0].label, "Premium requests");
+        assert!((u.windows[0].used_percent - 1.8).abs() < 1e-9);
+        assert_eq!(u.windows[0].resets_at, Some(1796083200));
+    }
+    #[test]
+    fn unlimited_reports_zero_without_reset() {
+        let v = json!({"copilot_plan":"business","quota_reset_date_utc":"2026-12-01T00:00:00.000Z","quota_snapshots":{"premium_interactions":{"unlimited":true}}});
+        let u = parse_copilot(&v).unwrap();
+        assert_eq!(u.windows[0].used_percent, 0.0);
+        assert_eq!(u.windows[0].resets_at, None);
+    }
+    #[test]
+    fn missing_quota_is_an_error() {
+        assert_eq!(
+            parse_copilot(&json!({"quota_snapshots":{}})).unwrap_err(),
+            "Copilot did not report premium request quota"
+        );
     }
 }

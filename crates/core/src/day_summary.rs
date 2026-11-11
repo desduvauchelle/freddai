@@ -268,6 +268,8 @@ pub(crate) fn side_codex(
     cwd: &str,
     prompt: &str,
     timeout: Duration,
+    model: Option<&str>,
+    effort: Option<&str>,
 ) -> Result<String, String> {
     cmd.args(["app-server", "--stdio"]);
     if !cwd.is_empty() {
@@ -335,7 +337,7 @@ pub(crate) fn side_codex(
                 Some(1) => {
                     send(json!({"method":"initialized","params":{}}))?;
                     send(
-                        json!({"id":2,"method":"thread/start","params":{"cwd":cwd,"ephemeral":true,"approvalPolicy":"never","sandbox":"read-only","baseInstructions":"You write concise daily work summaries. Never use tools."}}),
+                        json!({"id":2,"method":"thread/start","params":{"cwd":cwd,"model":model,"ephemeral":true,"approvalPolicy":"never","sandbox":"read-only","baseInstructions":"You write concise daily work summaries. Never use tools."}}),
                     )?;
                 }
                 Some(2) if !v["error"].is_null() => return Err(failed("thread/start")),
@@ -345,7 +347,7 @@ pub(crate) fn side_codex(
                         .ok_or("missing side thread id")?
                         .into();
                     send(
-                        json!({"id":3,"method":"turn/start","params":{"threadId":side,"effort":"low","input":[{"type":"text","text":prompt}]}}),
+                        json!({"id":3,"method":"turn/start","params":{"threadId":side,"effort":effort,"input":[{"type":"text","text":prompt}]}}),
                     )?;
                 }
                 Some(3) if !v["error"].is_null() => return Err(failed("turn/start")),
@@ -381,6 +383,8 @@ pub(crate) fn side_claude(
     cwd: &str,
     prompt: &str,
     timeout: Duration,
+    model: Option<&str>,
+    effort: Option<&str>,
 ) -> Result<String, String> {
     cmd.args([
         "-p",
@@ -390,6 +394,8 @@ pub(crate) fn side_claude(
         "--tools",
         "",
     ]);
+    if let Some(model) = model { cmd.args(["--model",model]); }
+    if let Some(effort) = effort { cmd.args(["--effort",effort]); }
     if !cwd.is_empty() {
         cmd.current_dir(cwd);
     }
@@ -473,11 +479,12 @@ pub fn generate(
     }
     let (account, cwd) = pick_account(db, &threads).map_err(fail)?;
     crate::timing::log("host", format_args!("ev=day_summary.requested date={key} provider={} account={} threads={} route=side_request", account.provider, account.id, threads.len()));
+    let (model, effort) = crate::model_levels::resolve(&db.preferences.model_configuration, &account.provider, None, None, &|| make_cmd(account)).map_err(|e| fail(DayError::new("model_configuration", e)))?;
     let cmd = make_cmd(account).map_err(|e| fail(DayError::new("provider_unavailable", e)))?;
     let prompt = build_prompt(date, &threads, INPUT_CAP);
     let raw = match account.provider.as_str() {
-        "codex" => side_codex(cmd, &cwd, &prompt, SIDE_TIMEOUT),
-        _ => side_claude(cmd, &cwd, &prompt, SIDE_TIMEOUT),
+        "codex" => side_codex(cmd, &cwd, &prompt, SIDE_TIMEOUT, model.as_deref(), effort.as_deref()),
+        _ => side_claude(cmd, &cwd, &prompt, SIDE_TIMEOUT, model.as_deref(), effort.as_deref()),
     }
     .map_err(|e| {
         fail(DayError::new(
@@ -498,7 +505,7 @@ pub fn generate(
         generated_at: now(),
         provider: account.provider.clone(),
         account: account.id.clone(),
-        model: "default".into(),
+        model: model.unwrap_or_else(||"provider default".into()),
         threads: threads.len(),
     };
     write_cache(root, &summary).map_err(|e| fail(DayError::new("cache_write_failed", e)))?;

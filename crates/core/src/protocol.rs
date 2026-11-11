@@ -31,7 +31,7 @@ pub fn approval_response(
 ) -> Result<Value, String> {
     if matches!(
         provider,
-        "gemini" | "antigravity" | "grok" | "opencode" | "cursor"
+        "gemini" | "antigravity" | "grok" | "opencode" | "cursor" | "copilot"
     ) {
         return crate::acp::approval(frame, allow);
     }

@@ -79,27 +79,27 @@ for line in sys.stdin:
    out({'type':'assistant','message':{'id':'message','usage':{'input_tokens':20,'cache_read_input_tokens':80,'cache_creation_input_tokens':10,'output_tokens':5},'content':[{'type':'text','text':'Hello world'}]}})
    out({'type':'result','is_error':False})
 
- elif provider in ['gemini','antigravity','grok','opencode','cursor']:
+ elif provider in ['gemini','antigravity','grok','opencode','cursor','copilot']:
   method=v.get('method')
   if method=='initialize':
    assert v['params']['clientCapabilities']=={}
    out({'jsonrpc':'2.0','id':101,'result':{'protocolVersion':1,'agentCapabilities':{'loadSession':True,'promptCapabilities':{'image':True}},'authMethods':[{'id':'oauth-personal' if provider=='gemini' else 'cached_token'}]}})
   elif method=='authenticate':
-   assert provider not in ['antigravity','opencode','cursor'], 'cached Antigravity sign-in must never open an OAuth flow'
+   assert provider not in ['antigravity','opencode','cursor','copilot'], 'cached Antigravity sign-in must never open an OAuth flow'
    out({'jsonrpc':'2.0','id':102,'result':{}})
   elif method in ['session/new','session/load']:
-   if provider in ['antigravity','opencode','cursor']:
+   if provider in ['antigravity','opencode','cursor','copilot']:
     assert method=='session/load'
     assert v['params']['sessionId']=='provider-session'
    else: assert method=='session/new'
    out({'jsonrpc':'2.0','id':103,'result':{'sessionId':'provider-session','configOptions':[{'id':'account-model','category':'model','type':'select','options':[{'value':'fixture-model','name':'Fixture'}]}]}})
   elif method=='session/set_config_option':
-   assert provider in ['antigravity','opencode','cursor']
+   assert provider in ['antigravity','opencode','cursor','copilot']
    assert v['params']=={'sessionId':'provider-session','configId':'account-model','value':'fixture-model'}
    model_selected=True
    out({'id':105,'result':{}})
   elif method=='session/prompt':
-   if provider in ['antigravity','opencode','cursor']: assert model_selected
+   if provider in ['antigravity','opencode','cursor','copilot']: assert model_selected
    assert 'ATTACHMENT_FIXTURE_CONTENT' in json.dumps(v['params']['prompt'])
    assert v['params']['sessionId']=='provider-session'
    out({'method':'session/update','params':{'sessionId':'wrong-thread','update':{'sessionUpdate':'session_info_update','title':'Wrong title'}}})

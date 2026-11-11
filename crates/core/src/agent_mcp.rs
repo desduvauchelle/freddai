@@ -70,6 +70,7 @@ mod tests {
             "grok",
             "opencode",
             "cursor",
+            "copilot",
         ] {
             let mut cmd = Command::new("unused");
             cmd.arg("existing");

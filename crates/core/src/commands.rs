@@ -367,7 +367,7 @@ pub fn discover(
             v
         }
         "codex" => home.map(codex_commands).unwrap_or_default(),
-        "gemini" | "antigravity" | "grok" | "opencode" | "cursor" => {
+        "gemini" | "antigravity" | "grok" | "opencode" | "cursor" | "copilot" => {
             let mut v = session
                 .map(|s| recorded(&format!("session:{s}")))
                 .unwrap_or_default();

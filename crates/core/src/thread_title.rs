@@ -132,6 +132,7 @@ pub fn generate_codex(
     mut cmd: std::process::Command,
     cwd: &str,
     model: Option<&str>,
+    effort: Option<&str>,
     real_thread: &str,
     prompt: &str,
     timeout: std::time::Duration,
@@ -225,7 +226,7 @@ pub fn generate_codex(
                         .ok_or("missing side thread id")?
                         .into();
                     send(
-                        json!({"id":3,"method":"turn/start","params":{"threadId":side,"effort":"low","input":[{"type":"text","text":prompt}]}}),
+                        json!({"id":3,"method":"turn/start","params":{"threadId":side,"effort":effort,"input":[{"type":"text","text":prompt}]}}),
                     )?;
                 }
                 Some(3) if !v["error"].is_null() => return Err(failed("turn/start")),

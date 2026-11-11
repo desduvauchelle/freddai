@@ -103,9 +103,14 @@ pub fn approval(frame: &Value, allow: bool) -> Result<Value, String> {
 }
 // Verify cached Antigravity access with session/new, never authenticate or prompt.
 // Authentication required is an error response, so this cannot start browser login.
-pub fn verify_cached(mut cmd: Command, _provider: &str) -> Result<bool, String> {
-    cmd.arg("acp")
-        .stdin(Stdio::piped())
+pub fn verify_cached(mut cmd: Command, provider: &str) -> Result<bool, String> {
+    if provider == "copilot" {
+        // Copilot starts ACP with flags; never let a GUI-spawned process self-update.
+        cmd.args(["--acp", "--no-auto-update"]);
+    } else {
+        cmd.arg("acp");
+    }
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let cwd = std::env::temp_dir().to_string_lossy().into_owned();
@@ -233,6 +238,25 @@ for line in sys.stdin:
  else: raise RuntimeError('Must never authenticate or send a model prompt')
 "#, if signed_in { "true" } else { "false" }]);
             assert_eq!(verify_cached(cmd, "antigravity").unwrap(), signed_in);
+        }
+    }
+    #[test]
+    fn copilot_checks_cached_session_with_acp_flag_and_no_login() {
+        for signed_in in [true, false] {
+            let mut cmd = Command::new("python3");
+            cmd.args(["-c", r#"
+import sys,json
+assert sys.argv[2:] == ['--acp','--no-auto-update'], sys.argv
+for line in sys.stdin:
+ v=json.loads(line)
+ if v['method']=='initialize':
+  print(json.dumps({'id':101,'result':{'protocolVersion':1}}),flush=True)
+ elif v['method']=='session/new':
+  result={'id':103,'result':{'sessionId':'checked'}} if sys.argv[1]=='true' else {'id':103,'error':{'code':-32000,'message':'Authentication required'}}
+  print(json.dumps(result),flush=True)
+ else: raise RuntimeError('Must never authenticate or send a model prompt')
+"#, if signed_in { "true" } else { "false" }]);
+            assert_eq!(verify_cached(cmd, "copilot").unwrap(), signed_in);
         }
     }
     #[test]
