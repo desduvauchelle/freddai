@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
 import { Code2, Terminal, RefreshCw, Settings2 } from "lucide-react";
+import { canReconnect } from "./reconnect";
+import { ReconnectButton } from "./ReconnectButton";
+import { needsReconnect, reportUsageResult, useAccountAuthStore } from "./accountAuth";
 import { resolveAccount, type Database } from "./types";
 
 type Usage = {
@@ -19,6 +22,7 @@ export function AccountOverview({ db, native, onManage }: {
   db: Database; native: boolean; onManage: () => void;
 }) {
   const [results, setResults] = useState<Record<string, Result>>({});
+  const authOf = useAccountAuthStore();
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [refresh, setRefresh] = useState(0);
@@ -65,6 +69,7 @@ export function AccountOverview({ db, native, onManage }: {
         try { result = { usage: await invoke<Usage>("account_usage", { account: account.id }) }; }
         catch (e) { result = { error: String(e) }; }
       }
+      if (native) reportUsageResult(account.id, result.error);
       if (!cancelled && request.current === serial)
         setResults(previous => ({ ...previous, [account.id]: result.usage ? result : { ...previous[account.id], ...result } }));
     })).finally(() => {
@@ -137,6 +142,8 @@ export function AccountOverview({ db, native, onManage }: {
           </> : <div className="account-usage-unavailable" role="status">
             <strong>{result ? "Usage unavailable" : "Loading usage…"}</strong>
             <p>{result?.error || "Retrieving usage and reset times."}</p>
+            {result?.error && canReconnect(account.provider) && needsReconnect(authOf(account.id)) && <ReconnectButton account={account.id} provider={account.provider}
+              onReconnected={() => { setRefresh(n => n + 1); window.dispatchEvent(new Event("freddai:usage-refresh")); }}/>}
             {result && <span>Reset time unavailable</span>}
           </div>}
         </section>;

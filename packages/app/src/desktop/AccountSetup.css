@@ -1,0 +1,6 @@
+/* Flat sortable account list in Settings: drag handle column before the colour dot. */
+.setup-accounts .setup-account { grid-template-columns: auto auto minmax(0, 1fr) auto; background: var(--background, transparent); position: relative; }
+.setup-accounts .setup-account[data-dragging="true"] { z-index: 1; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); }
+.setup-accounts .setup-account > .setup-rename-connection { grid-column: 1 / -1; }
+.setup-accounts .setup-account > .setup-remove-confirm { grid-column: 3 / -1; }
+.setup-account-handle { margin-left: -4px; }

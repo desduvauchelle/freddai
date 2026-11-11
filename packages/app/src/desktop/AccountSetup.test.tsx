@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(
 afterEach(cleanup);
 beforeEach(() => {
   invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => command === "auth_status" ? true : command === "detect_agents" ? [{ provider: "codex", path: "/fixture/codex" }] : command === "detect_existing_sign_ins" ? [] : null);
+  invoke.mockImplementation(async (command: string) => command === "auth_check" ? { state: "valid" } : command === "detect_agents" ? [{ provider: "codex", path: "/fixture/codex" }] : command === "detect_existing_sign_ins" ? [] : null);
 });
 const database = (): Database => ({ ...empty, host_update_pending: true,
   accounts: [{ id: "a", name: "Work", provider: "codex", color: "blue" }],
@@ -53,7 +53,7 @@ it("saves a detected Claude login with a name and color without opening sign-in"
 });
 
 it("requires saving a shared Claude connection before adding a second account", async () => {
-  invoke.mockImplementation(async (command: string) => command === "auth_status" ? true : command === "detect_agents" ? [{ provider: "claude", path: "/fixture/claude" }] : command === "detect_existing_sign_ins" ? [{ provider: "claude", signed_in: true, error: null }] : null);
+  invoke.mockImplementation(async (command: string) => command === "auth_check" ? { state: "valid" } : command === "detect_agents" ? [{ provider: "claude", path: "/fixture/claude" }] : command === "detect_existing_sign_ins" ? [{ provider: "claude", signed_in: true, error: null }] : null);
   render(<AccountSetup db={{ ...empty, accounts: [{ id: "shared", provider: "claude", name: "Personal", color: "#8ec6a2", config_home: "/fixture/shared" }] }} native onRefresh={vi.fn()} />);
   const add = await screen.findByRole("button", { name: "Add Claude Code account" });
   await waitFor(() => expect(add.hasAttribute("disabled")).toBe(false));
@@ -61,4 +61,40 @@ it("requires saving a shared Claude connection before adding a second account", 
   expect(screen.getByRole("menuitem", { name: "Add separate account…" }).hasAttribute("data-disabled")).toBe(true);
   await userEvent.click(screen.getByRole("menuitem", { name: "Save current Terminal login…" }));
   expect((await screen.findByLabelText("Account name") as HTMLInputElement).value).toBe("Personal");
+});
+
+it("shows a Copilot CLI card with the one-click current-connection path", async () => {
+  invoke.mockImplementation(async (command: string) => command === "auth_check" ? { state: "valid" } : command === "detect_agents" ? [{ provider: "copilot", path: "/fixture/copilot" }] : command === "detect_existing_sign_ins" ? [{ provider: "copilot", signed_in: true, error: null }] : null);
+  render(<AccountSetup db={{ ...empty }} native onRefresh={vi.fn().mockResolvedValue(undefined)} />);
+  expect(await screen.findByText("Copilot CLI")).toBeTruthy();
+  const add = await screen.findByRole("button", { name: "Add Copilot CLI account" });
+  await waitFor(() => expect(add.hasAttribute("disabled")).toBe(false));
+  await userEvent.click(add);
+  expect(await screen.findByRole("menuitem", { name: "Use current CLI sign-in" })).toBeTruthy();
+  expect(screen.queryByRole("menuitem", { name: "Add separate account…" })).toBeNull();
+});
+
+it("renders accounts in db order and persists a keyboard reorder", async () => {
+  const onRefresh = vi.fn().mockResolvedValue(undefined);
+  const db = { ...empty, accounts: [
+    { id: "x", name: "First", provider: "codex", color: "#111" },
+    { id: "y", name: "Second", provider: "claude", color: "#222" },
+  ] } as Database;
+  render(<AccountSetup db={db} native onRefresh={onRefresh} />);
+  const handles = await screen.findAllByRole("button", { name: /^Reorder / });
+  expect(handles.map(h => h.getAttribute("aria-label"))).toEqual(["Reorder First", "Reorder Second"]);
+  fireEvent.keyDown(handles[0], { key: "ArrowDown", altKey: true });
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_account_order", { order: ["y", "x"] }));
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+});
+
+it("shows an alert when saving the account order fails", async () => {
+  invoke.mockImplementation(async (command: string) => { if (command === "save_account_order") throw new Error("disk full"); return command === "detect_agents" ? [] : command === "detect_existing_sign_ins" ? [] : null; });
+  const db = { ...empty, accounts: [
+    { id: "x", name: "First", provider: "codex", color: "#111" },
+    { id: "y", name: "Second", provider: "claude", color: "#222" },
+  ] } as Database;
+  render(<AccountSetup db={db} native onRefresh={vi.fn()} />);
+  fireEvent.keyDown((await screen.findAllByRole("button", { name: /^Reorder / }))[0], { key: "ArrowDown", altKey: true });
+  expect((await screen.findByText(/Could not save account order: .*disk full/)).getAttribute("role")).toBe("alert");
 });

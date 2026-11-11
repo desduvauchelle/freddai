@@ -1,16 +1,20 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AccountOverview } from './AccountOverview';
+import { useAccountUsagePoller, resetAccountUsage } from './useAccountUsage';
 import { UsageFooter } from './UsageFooter';
 import { empty, type Account } from './types';
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+
+const PolledFooter = (p: React.ComponentProps<typeof UsageFooter> & { native: boolean }) => { useAccountUsagePoller(p.accounts, p.native); return <UsageFooter {...p}/>; };
+beforeEach(() => resetAccountUsage());
 afterEach(() => { cleanup(); invoke.mockReset(); });
 const accounts: Account[] = [{id:'a',name:'Work',provider:'codex',color:'blue'}];
 const usage = (used: number) => ({windows:[{label:'Weekly',used_percent:used,resets_at:2000000000}],checked_at:Date.now()});
 it('settings refresh updates the footer too', async () => {
   invoke.mockResolvedValue(usage(20));
-  render(<><UsageFooter native accounts={accounts} onOpen={() => {}}/><AccountOverview native db={{...empty,accounts}} onManage={() => {}}/></>);
+  render(<><PolledFooter native accounts={accounts} onOpen={() => {}}/><AccountOverview native db={{...empty,accounts}} onManage={() => {}}/></>);
   const refresh = screen.getByRole('button',{name:'Refresh'});
   await waitFor(() => expect(refresh.hasAttribute('disabled')).toBe(false));
   invoke.mockResolvedValue(usage(40));

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 
 const sections = [
   { id: "settings", label: "Agents & defaults", icon: Bot },
+  { id: "models", label: "Model configuration", icon: SlidersHorizontal },
   { id: "usage", label: "Accounts & usage", icon: ChartNoAxesCombined },
   { id: "projects", label: "Projects", icon: FolderGit2 },
   { id: "import", label: "Import sessions", icon: Download },

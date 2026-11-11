@@ -1,12 +1,20 @@
 import { ColorField } from "./ColorField";
 import { removeConnection } from "./account-removal";
+import { canReconnect } from "./reconnect";
+import { ReconnectButton } from "./ReconnectButton";
+import { checkAccountAuth, needsReconnect, reportLoginSuccess, useAccountAuthStore, type AccountAuth } from "./accountAuth";
 import { agentDisplayName } from "./types";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@freddai/ui/components/button";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from "@freddai/ui/components/dropdown-menu";
 import { Input } from "@freddai/ui/components/input";
-import { Code2, Terminal, Plus, RefreshCw, MoreHorizontal } from "lucide-react";
+import { Code2, Terminal, Plus, RefreshCw, MoreHorizontal, GripVertical } from "lucide-react";
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { ReactNode } from "react";
+import "./AccountSetup.css";
 import type { Account, Database } from "./types";
 const colors = [
   "#b59ae9",
@@ -18,7 +26,30 @@ const colors = [
 ];
 type ExistingSignIn = { provider: string; signed_in: boolean; error: string | null };
 type Installation = { provider: string; path: string | null };
-const names: Record<string, string> = { codex: "Codex", claude: "Claude Code", antigravity: "Antigravity CLI", gemini: "Gemini CLI (legacy)", grok: "Grok", opencode: "OpenCode", cursor: "Cursor CLI" };
+const names: Record<string, string> = { codex: "Codex", claude: "Claude Code", antigravity: "Antigravity CLI", gemini: "Gemini CLI (legacy)", grok: "Grok", opencode: "OpenCode", cursor: "Cursor CLI", copilot: "Copilot CLI" };
+const SHARED_CLI_PROVIDERS = ["antigravity", "opencode", "cursor", "copilot"];
+const SIGNED_LABEL: Record<string, string> = { gemini: "Credentials saved", opencode: "CLI connected", cursor: "CLI connected", copilot: "CLI connected" };
+/** Status text for a row. Derived only from the auth store, so it can never disagree with the Reconnect button. */
+function authLabel(auth: AccountAuth, provider: string) {
+  if (auth.status === "valid") return SIGNED_LABEL[provider] ?? "Signed in";
+  if (auth.status === "expired" || auth.status === "unverified") return auth.message;
+  return "Checking sign-in…";
+}
+function SortableAccount({ id, name, onAltMove, children }: { id: string; name: string; onAltMove: (offset: -1 | 1) => void; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, transition: { duration: 200, easing: "ease" } });
+  return (
+    <li ref={setNodeRef} className="setup-account" data-dragging={isDragging ? "true" : undefined}
+      style={{ transform: CSS.Transform.toString(transform), transition: transition ?? undefined }}>
+      <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners} className="project-drag-handle setup-account-handle"
+        aria-label={`Reorder ${name}`} title="Drag to reorder · Alt+↑/↓ to move"
+        onKeyDown={e => {
+          if (e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); onAltMove(e.key === "ArrowUp" ? -1 : 1); return; }
+          listeners?.onKeyDown?.(e);
+        }}><GripVertical size={13} /></button>
+      {children}
+    </li>
+  );
+}
 export function AccountSetup({
   db,
   native,
@@ -33,13 +64,46 @@ export function AccountSetup({
   const [installed, setInstalled] = useState<Installation[] | null>(null),
     [error, setError] = useState(""),
     [pending, setPending] = useState(false),
-    [statuses, setStatuses] = useState<Record<string, string>>({});
+    [notes, setNotes] = useState<Record<string, string>>({}); // transient sign-in progress/errors; auth state itself lives in accountAuth
   const [adding, setAdding] = useState(""),
     [name, setName] = useState(""),
     [color, setColor] = useState(colors[0]);
   const [removing, setRemoving] = useState("");
   const [renaming, setRenaming] = useState("");
   const [connectionName, setConnectionName] = useState("");
+  // Optimistic account order while the save is in flight; db.accounts comes back already sorted after onRefresh.
+  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
+  const [orderError, setOrderError] = useState("");
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const orderedAccounts = localOrder
+    ? [...db.accounts].sort((x, y) => (localOrder.indexOf(x.id) + 1 || Infinity) - (localOrder.indexOf(y.id) + 1 || Infinity))
+    : db.accounts;
+  async function saveOrder(order: string[]) {
+    setLocalOrder(order);
+    setOrderError("");
+    try {
+      await invoke("save_account_order", { order });
+      await onRefresh();
+    } catch (e) {
+      console.error("[save_account_order] failed", e);
+      setOrderError(`Could not save account order: ${String(e)}`);
+    } finally {
+      if (mounted.current) setLocalOrder(null);
+    }
+  }
+  function moveAccount(id: string, offset: -1 | 1) {
+    const ids = orderedAccounts.map(a => a.id);
+    const from = ids.indexOf(id), to = from + offset;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    void saveOrder(arrayMove(ids, from, to));
+  }
+  function accountDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const ids = orderedAccounts.map(a => a.id);
+    const from = ids.indexOf(String(active.id)), to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    void saveOrder(arrayMove(ids, from, to));
+  }
   const renameTrigger = useRef<HTMLButtonElement | null>(null);
   const menuTriggers = useRef<Record<string, HTMLButtonElement | null>>({});
   function finishRename() {
@@ -58,8 +122,7 @@ export function AccountSetup({
   const [connecting, setConnecting] = useState("");
   const [connectionError, setConnectionError] = useState<{ provider: string; message: string } | null>(null);
   const lock = useRef(false);
-  const [checking, setChecking] = useState<Record<string, boolean>>({});
-  const [checkedAt, setCheckedAt] = useState<Record<string, string>>({});
+  const authOf = useAccountAuthStore();
   const [loginProgress, setLoginProgress] = useState<Record<string, string>>(
     {},
   );
@@ -71,10 +134,13 @@ export function AccountSetup({
       mounted.current = false;
     };
   }, []);
+  function clearNote(id: string) {
+    setNotes((s) => { const rest = { ...s }; delete rest[id]; return rest; });
+  }
   async function checkAccount(id: string) {
     const serial = (requestSerial.current[id] || 0) + 1;
     requestSerial.current[id] = serial;
-    setChecking((s) => ({ ...s, [id]: true }));
+    setError("");
     try {
       const progress = await invoke<{
         status: string;
@@ -83,31 +149,15 @@ export function AccountSetup({
       if (progress?.status === "pending") {
         if (mounted.current && requestSerial.current[id] === serial) {
           setLoginProgress((s) => ({ ...s, [id]: "pending" }));
-          setStatuses((s) => ({
-            ...s,
-            [id]: "Complete sign-in in your browser. Freddai will confirm automatically.",
-          }));
+          setNotes((s) => ({ ...s, [id]: "Complete sign-in in your browser. Freddai will confirm automatically." }));
         }
         return;
       }
-      const signed = await invoke<boolean>("auth_status", { account: id });
-      if (mounted.current && requestSerial.current[id] === serial) {
-        setStatuses((s) => ({
-          ...s,
-          [id]: signed ? (db.accounts.find(a => a.id === id)?.provider === "gemini" ? "Credentials saved" : ["opencode", "cursor"].includes(db.accounts.find(a => a.id === id)?.provider || "") ? "CLI connected" : "Signed in") : "Sign-in required",
-        }));
-        setCheckedAt((s) => ({ ...s, [id]: new Date().toLocaleTimeString() }));
-      }
     } catch (e) {
-      if (mounted.current && requestSerial.current[id] === serial)
-        setStatuses((s) => ({
-          ...s,
-          [id]: `Could not check sign-in: ${String(e)}`,
-        }));
-    } finally {
-      if (mounted.current && requestSerial.current[id] === serial)
-        setChecking((s) => ({ ...s, [id]: false }));
+      console.error("[login_state] failed", id, e);
     }
+    if (mounted.current && requestSerial.current[id] === serial) clearNote(id);
+    await checkAccountAuth(id);
   }
 
   async function run(fn: () => Promise<void>) {
@@ -128,6 +178,7 @@ export function AccountSetup({
     setInstalled(await invoke<Installation[]>("detect_agents"));
     setExisting(null);
     setExisting(await invoke<ExistingSignIn[]>("detect_existing_sign_ins"));
+    for (const a of db.accounts) void checkAccount(a.id);
   }
   useEffect(() => {
     if (!native) return;
@@ -168,23 +219,19 @@ export function AccountSetup({
               if (!progress) return;
               requestSerial.current[a.id] =
                 (requestSerial.current[a.id] || 0) + 1;
-              setChecking((s) => ({ ...s, [a.id]: false }));
               setLoginProgress((s) => ({ ...s, [a.id]: progress.status }));
-              setStatuses((s) => ({
+              if (progress.status === "ready") {
+                // "ready" only proves credentials were written. Verify live; the row text comes from the auth store.
+                clearNote(a.id);
+                void reportLoginSuccess(a.id);
+              } else setNotes((s) => ({
                 ...s,
                 [a.id]:
-                  progress.status === "ready"
-                    ? "Signed in"
-                    : progress.status === "pending"
-                      ? "Complete sign-in in your browser. Freddai will confirm automatically."
-                      : progress.error ||
-                        "Sign-in did not complete. Try again.",
+                  progress.status === "pending"
+                    ? "Complete sign-in in your browser. Freddai will confirm automatically."
+                    : progress.error ||
+                      "Sign-in did not complete. Try again.",
               }));
-              if (progress.status === "ready")
-                setCheckedAt((s) => ({
-                  ...s,
-                  [a.id]: new Date().toLocaleTimeString(),
-                }));
             } catch (e) {
               if (!disposed)
                 setError(`Could not monitor sign-in: ${String(e)}`);
@@ -214,7 +261,7 @@ export function AccountSetup({
       setColor(previous?.color || colors[db.accounts.length % colors.length]);
       return;
     }
-    if (!separate && (current?.signed_in || ["antigravity", "opencode", "cursor"].includes(provider))) {
+    if (!separate && (current?.signed_in || SHARED_CLI_PROVIDERS.includes(provider))) {
       void run(async () => {
         setConnecting(provider);
         setConnectionError(null);
@@ -236,57 +283,58 @@ export function AccountSetup({
   }
   async function login(id: string, provider?: string) {
     requestSerial.current[id] = (requestSerial.current[id] || 0) + 1;
-    setStatuses((s) => ({ ...s, [id]: "Opening sign-in…" }));
+    setNotes((s) => ({ ...s, [id]: "Opening sign-in…" }));
     await invoke("login", { account: id });
     const codex =
       ["codex","grok"].includes(provider || db.accounts.find((a) => a.id === id)?.provider || "");
     if (codex) setLoginProgress((s) => ({ ...s, [id]: "pending" }));
-    setStatuses((s) => ({
+    setNotes((s) => ({
       ...s,
       [id]: codex
         ? "Complete sign-in in your browser. Freddai will confirm automatically."
         : "Complete sign-in in Terminal, then return here.",
     }));
   }
-  const readyAccounts = db.accounts.filter(
-    (a) => ["Signed in", "Credentials saved"].includes(statuses[a.id]),
-  );
+  const readyAccounts = db.accounts.filter((a) => authOf(a.id).status === "valid");
   const defaultAccount = db.preferences.prefer_last
     ? undefined
     : db.accounts.find((a) => a.id === db.preferences.fallback);
   const summary = readyAccounts.length
     ? `${readyAccounts.length} account${readyAccounts.length === 1 ? "" : "s"} ready${
-        defaultAccount && statuses[defaultAccount.id] === "Signed in"
+        defaultAccount && authOf(defaultAccount.id).status === "valid"
           ? ` · New threads use ${agentDisplayName(defaultAccount)}`
           : ""
       }`
     : "No accounts ready yet. Connect an existing sign-in or add an account below.";
   function accountRow(a: Account) {
-    const signed = ["Signed in", "Credentials saved"].includes(statuses[a.id]);
+    const auth = authOf(a.id);
+    const signed = auth.status === "valid";
+    const checking = auth.status === "checking";
     const isPending = loginProgress[a.id] === "pending";
-    const status = checking[a.id]
-      ? "Checking sign-in…"
-      : statuses[a.id] || "Checking sign-in…";
-    const showSignIn = !signed || a.provider === "codex";
+    const status = notes[a.id] || authLabel(auth, a.provider);
+    // Inline Reconnect only when the sign-in is known-bad; a valid sign-in gets "Reconnect…" in the menu instead.
+    const inlineReconnect = canReconnect(a.provider) && !isPending && needsReconnect(auth);
+    const showSignIn = !signed || canReconnect(a.provider);
     const busy = isPending || db.sessions.some(
       (s) => s.account === a.id && ["starting", "running", "waiting"].includes(s.status),
     );
     return (
-      <li key={a.id} className="setup-account">
+      <SortableAccount key={a.id} id={a.id} name={a.name} onAltMove={offset => moveAccount(a.id, offset)}>
         <span className="account-color" style={{ background: a.color }} />
         <div className="setup-account-main">
           <div className="setup-account-name">
             <strong>{agentDisplayName(a)}</strong>
+            <span className="setup-tag">{names[a.provider] ?? a.provider}</span>
             <span className="setup-tag">
               {a.config_home ? "Uses CLI sign-in" : "Separate login"}
             </span>
           </div>
-          <p
+                    <p
             role="status"
-            className={`setup-account-status${signed ? " is-ready" : ""}`}
+            className={`setup-account-status${signed ? " is-ready" : needsReconnect(auth) ? " is-expired inline-error" : ""}`}
             title={
-              checkedAt[a.id] && !checking[a.id]
-                ? `Last checked at ${checkedAt[a.id]}`
+              auth.checkedAt && !checking
+                ? `Last checked at ${new Date(auth.checkedAt).toLocaleTimeString()}`
                 : undefined
             }
           >
@@ -295,6 +343,8 @@ export function AccountSetup({
         </div>
         <div className="setup-account-actions">
           {!db.preferences.prefer_last && db.preferences.fallback === a.id && <span className="setup-default-badge">Default</span>}
+          {inlineReconnect && <ReconnectButton account={a.id} provider={a.provider} variant="default"
+            onReconnected={() => { void onRefresh(); }} />}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="ghost" size="icon-sm"
@@ -311,8 +361,8 @@ export function AccountSetup({
                   setConnectionName(a.name); setError("");
                   requestAnimationFrame(() => setRenaming(a.id));
                 }}>Rename…</DropdownMenuItem>
-              <DropdownMenuItem disabled={pending || !native || checking[a.id]}
-                onSelect={() => void checkAccount(a.id)}>{checking[a.id] ? "Checking…" : "Check connection"}</DropdownMenuItem>
+              <DropdownMenuItem disabled={pending || !native || checking}
+                onSelect={() => void checkAccount(a.id)}>{checking ? "Checking…" : "Check connection"}</DropdownMenuItem>
               {a.config_home ? (
                 <DropdownMenuLabel className="thread-menu-label">Sign-in managed in {names[a.provider]}</DropdownMenuLabel>
               ) : isPending ? (
@@ -320,7 +370,7 @@ export function AccountSetup({
                   onSelect={() => void run(async () => { await invoke("cancel_login", { account: a.id }); })}>Cancel sign-in</DropdownMenuItem>
               ) : showSignIn && <DropdownMenuItem disabled={pending || !native}
                 onSelect={() => void run(() => login(a.id))}>
-                {signed ? "Sign in again" : ["codex", "grok"].includes(a.provider) ? "Sign in with browser" : "Sign in in Terminal"}
+                {signed ? (canReconnect(a.provider) ? "Reconnect…" : "Sign in again") : ["codex", "grok"].includes(a.provider) ? "Sign in with browser" : "Sign in in Terminal"}
               </DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={pending || !native || !signed || (!db.preferences.prefer_last && db.preferences.fallback === a.id)}
@@ -366,7 +416,7 @@ export function AccountSetup({
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => setRemoving("")}>Cancel</Button>
           </div>
         )}
-      </li>
+      </SortableAccount>
     );
   }
   return (
@@ -393,7 +443,15 @@ export function AccountSetup({
           Agent detection is available in the installed macOS app.
         </p>
       )}
-      {["codex", "claude", "antigravity", "grok", "opencode", "cursor", ...(db.accounts.some(a => a.provider === "gemini") ? ["gemini"] : [])].map((provider) => {
+      {!!orderedAccounts.length && (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={accountDragEnd}>
+          <SortableContext items={orderedAccounts.map(a => a.id)} strategy={verticalListSortingStrategy}>
+            <ul className="setup-accounts" aria-label="Accounts, in display order">{orderedAccounts.map(accountRow)}</ul>
+          </SortableContext>
+        </DndContext>
+      )}
+      {orderError && <p role="alert" className="inline-error">{orderError}</p>}
+      {["codex", "claude", "antigravity", "grok", "opencode", "cursor", "copilot", ...(db.accounts.some(a => a.provider === "gemini") ? ["gemini"] : [])].map((provider) => {
         const agent = installed?.find((a) => a.provider === provider);
         const accounts = db.accounts.filter((a) => a.provider === provider);
         const exist = existing?.find((a) => a.provider === provider);
@@ -423,8 +481,9 @@ export function AccountSetup({
               <summary>Setup details</summary>
               {agent?.path && <p className="capture-help">Installation: <code>{agent.path}</code></p>}
               {provider === "antigravity" && <p className="capture-help">Install with <code>brew install --cask antigravity-cli</code>. Sign in with <code>agy</code> in Terminal, then add the current connection. Uses the CLI’s shared Keychain sign-in; switching accounts in Antigravity changes this connection too. Separate subscription logins are not supported. Requires a version supporting <code>agy acp</code>.</p>}
+              {provider === "copilot" && <p className="capture-help">Install with <code>npm install -g @github/copilot</code> (or <code>brew install copilot-cli</code>). Sign in with <code>copilot login</code> in Terminal, then add the current connection. State lives in <code>~/.copilot</code>. Uses the CLI’s shared sign-in; separate subscription logins are not supported. Usage shows your monthly premium-request allowance and needs the GitHub CLI (<code>gh</code>) signed in with <code>gh auth login</code>. Each prompt costs premium requests × the model multiplier shown by Copilot.</p>}
               {provider === "gemini" && <p className="capture-help">Gemini is experimental. Check sign-in detects saved OAuth credentials; the agent verifies them when starting a thread. Sign in using Google in its CLI, then exit the CLI and return here.</p>}
-              {!["antigravity", "opencode", "cursor"].includes(provider) && provider !== "gemini" && <p className="capture-help">Connect the current CLI sign-in or add a separate login for another subscription. {provider === "claude" ? "Saving your Terminal login creates an independent profile, so later Terminal logins do not replace it." : "Shared connections follow account changes in the CLI."}</p>}
+              {!SHARED_CLI_PROVIDERS.includes(provider) && provider !== "gemini" && <p className="capture-help">Connect the current CLI sign-in or add a separate login for another subscription. {provider === "claude" ? "Saving your Terminal login creates an independent profile, so later Terminal logins do not replace it." : "Shared connections follow account changes in the CLI."}</p>}
             </details>
             {missing && (
               <p className="capture-help">
@@ -434,15 +493,12 @@ export function AccountSetup({
             )}
             {agent?.path && (
               <>
-                {!!accounts.length && (
-                  <ul className="setup-accounts">{accounts.map(accountRow)}</ul>
-                )}
                 {!accounts.length && !exist?.signed_in && existing && (
                   <p className="capture-help">
                     No {names[provider]} accounts yet.
                   </p>
                 )}
-                {adding !== provider && (!["antigravity", "opencode", "cursor"].includes(provider) || !hasCli) && <DropdownMenu>
+                {adding !== provider && (!SHARED_CLI_PROVIDERS.includes(provider) || !hasCli) && <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button className="setup-add-button" variant="ghost" size="sm"
                       disabled={pending || !native || !existing} aria-label={`Add ${names[provider]} account`}>
@@ -451,13 +507,13 @@ export function AccountSetup({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="dev-popup account-menu" onEscapeKeyDown={e => e.stopPropagation()} align="start" aria-label={`Add ${names[provider]} account`}>
                     <DropdownMenuLabel className="thread-menu-label">{names[provider]}</DropdownMenuLabel>
-                    <DropdownMenuItem disabled={pending || (hasCli && provider !== "claude") || (!exist?.signed_in && !["antigravity", "opencode", "cursor"].includes(provider))}
+                    <DropdownMenuItem disabled={pending || (hasCli && provider !== "claude") || (!exist?.signed_in && !SHARED_CLI_PROVIDERS.includes(provider))}
                       onSelect={() => requestAnimationFrame(() => add(provider))}>{provider === "claude" ? "Save current Terminal login…" : "Use current CLI sign-in"}</DropdownMenuItem>
                     {hasCli && provider === "claude" && <DropdownMenuLabel className="thread-menu-label">Save your current login before adding another account</DropdownMenuLabel>}
                     {hasCli && provider !== "claude" && <DropdownMenuLabel className="thread-menu-label">Current CLI sign-in is already connected</DropdownMenuLabel>}
-                    {!["antigravity", "opencode", "cursor"].includes(provider) && <DropdownMenuItem disabled={pending || (provider === "claude" && hasCli)}
+                    {!SHARED_CLI_PROVIDERS.includes(provider) && <DropdownMenuItem disabled={pending || (provider === "claude" && hasCli)}
                       onSelect={() => requestAnimationFrame(() => add(provider, true))}>Add separate account…</DropdownMenuItem>}
-                    {["antigravity", "opencode", "cursor"].includes(provider) && <DropdownMenuLabel className="thread-menu-label">Sign in in the official CLI in Terminal first</DropdownMenuLabel>}
+                    {SHARED_CLI_PROVIDERS.includes(provider) && <DropdownMenuLabel className="thread-menu-label">Sign in in the official CLI in Terminal first</DropdownMenuLabel>}
                   </DropdownMenuContent>
                 </DropdownMenu>}
                 {connectionError?.provider === provider && (
@@ -474,7 +530,7 @@ export function AccountSetup({
                   </p>
                 )}
                 {existing &&
-                  !["antigravity", "opencode", "cursor"].includes(provider) &&
+                  !SHARED_CLI_PROVIDERS.includes(provider) &&
                   !exist?.error &&
                   !exist?.signed_in &&
                   !accounts.length && (
@@ -482,7 +538,7 @@ export function AccountSetup({
                       No existing CLI sign-in found.
                     </p>
                   )}
-                {!["antigravity", "opencode", "cursor"].includes(provider) && adding === provider && (
+                {!SHARED_CLI_PROVIDERS.includes(provider) && adding === provider && (
                   <form
                     className="setup-add-account"
                     onSubmit={(e) => {

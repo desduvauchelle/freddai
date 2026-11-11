@@ -11,3 +11,9 @@
   .dashboard-launch-controls { flex-basis: 100%; margin-left: 0; }
   .dashboard-launch-controls .dashboard-picker { max-width: min(180px, 43vw); min-height: 36px; height: 36px; }
 }
+.model-level-editor { min-width: 0; max-width: 100%; font-size: 12px; font-weight: 400; }
+.model-level-editor summary { cursor: pointer; padding: 6px; }
+.model-level-editor fieldset { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; margin: 6px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.model-level-editor label { display: flex; flex: 1 1 110px; flex-direction: column; gap: 4px; min-width: 0; }
+.model-level-editor input, .model-level-editor select { width: 100%; min-width: 0; padding: 6px; background: var(--card, var(--background)); color: var(--foreground); border: 1px solid var(--border); border-radius: 4px; }
+.model-level-editor small { display: block; max-width: 300px; white-space: normal; }

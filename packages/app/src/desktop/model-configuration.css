@@ -1,0 +1,10 @@
+.model-configuration { display: grid; gap: 16px; min-width: 0; }
+.model-configuration-scroll { overflow-x: auto; max-width: 100%; }
+.model-configuration table { width: 100%; border-collapse: collapse; }
+.model-configuration caption { text-align: left; font-weight: 600; margin-bottom: 12px; }
+.model-configuration th, .model-configuration td { padding: 12px; text-align: left; vertical-align: top; border: 1px solid var(--border); }
+.model-configuration td { min-width: 155px; }
+.model-configuration label { display: grid; gap: 4px; margin-bottom: 10px; font-size: 12px; }
+.model-configuration input, .model-configuration select { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); }
+.model-configuration > button { justify-self: start; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; }
+@media(max-width:600px) { .model-configuration th,.model-configuration td { padding: 8px; } .model-configuration-scroll { overscroll-behavior-x: contain; } }

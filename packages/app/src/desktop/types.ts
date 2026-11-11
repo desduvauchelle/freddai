@@ -1,13 +1,13 @@
-export const providerName = (provider: string) => ({codex:"Codex",claude:"Claude Code",antigravity:"Antigravity CLI",gemini:"Gemini CLI (legacy)",grok:"Grok",opencode:"OpenCode",cursor:"Cursor CLI"}[provider] || provider);
+export const providerName = (provider: string) => ({codex:"Codex",claude:"Claude Code",antigravity:"Antigravity CLI",gemini:"Gemini CLI (legacy)",grok:"Grok",opencode:"OpenCode",cursor:"Cursor CLI",copilot:"Copilot CLI"}[provider] || provider);
 /** User-facing identity: coding agent first, followed by the user's connection name. */
 export function agentDisplayName(agent: { provider: string; name: string }): string {
-  const provider = ({ claude: "Claude", gemini: "Gemini", antigravity: "Antigravity", cursor: "Cursor" } as Record<string, string>)[agent.provider] || providerName(agent.provider);
+  const provider = ({ claude: "Claude", gemini: "Gemini", antigravity: "Antigravity", cursor: "Cursor", copilot: "Copilot" } as Record<string, string>)[agent.provider] || providerName(agent.provider);
   return agent.name.trim() ? `${provider} · ${agent.name}` : provider;
 }
 export type Account = {
   id: string;
   name: string;
-  provider: "codex" | "claude" | "gemini" | "antigravity" | "grok" | "opencode" | "cursor";
+  provider: "codex" | "claude" | "gemini" | "antigravity" | "grok" | "opencode" | "cursor" | "copilot";
   config_home?: string;
   color: string;
 };
@@ -25,6 +25,7 @@ export type Project = {
 };
 export type Workspace = { id: string; name: string; color: string; projects: string[] };
 export type Preferences = {
+  model_configuration?: import("./model-levels").ModelConfiguration;
   workspaces?: Workspace[];
   new_thread_policy?: "last_selected" | "project" | "default" | null;
   last_selected?: string | null;
@@ -35,7 +36,7 @@ export type Preferences = {
 };
 export type Attachment = { id: string; name: string; bytes: number; mime: string; sha256: string };
 export type PermissionMode = "ask" | "bypass";
-export type LaunchOptions = { permission_mode?: PermissionMode | null; scheduled?: boolean; update_agent_controls?: boolean; worktree?: boolean; model?: string | null; effort?: string | null; attachments?: string[]; request_id?: string };
+export type LaunchOptions = { agent?: string | null; permission_mode?: PermissionMode | null; scheduled?: boolean; update_agent_controls?: boolean; worktree?: boolean; model?: string | null; effort?: string | null; attachments?: string[]; request_id?: string };
 export type BackgroundTask = { id: string; tool_use_id?: string | null; description: string; kind?: string | null; status: "running" | "completed" | "failed" | "stopped" | string; summary?: string | null };
 export type Message = { toolTextBytes?: number; toolTextHash?: string; delivery?: string; id: string; role: string; text: string; attachments?: Attachment[] };
 export type Pending = {
@@ -68,6 +69,7 @@ export type Session = {
   /** Host-stored read cursor shared with the iPhone: the `updated` value last seen. */
   read_at?: number | null;
   provider_id: string | null;
+  agent_history?: [string, string | null][];
   working_dir?: string | null;
   options?: LaunchOptions;
   messages: Message[];
@@ -129,7 +131,7 @@ export function threadCapabilities(thread: Session, hasAccount: boolean) {
   const archived = !!thread.archived || thread.status === "archived";
   return {
     stop: busy(thread) && !deleted,
-    resume: !busy(thread) && !deleted && !archived && !!thread.provider_id && hasAccount,
+    resume: !busy(thread) && !deleted && !archived && (!!thread.provider_id || !!thread.agent_history?.length) && hasAccount,
     review: !!thread.pending && !deleted,
     change: !busy(thread) && !deleted,
     archive: !deleted && thread.status !== "archived",

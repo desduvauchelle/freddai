@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.tsx",
     "./desktop": "./src/desktop/DesktopApp.tsx",
+    "./bug-walk-pill": "./src/desktop/bug-walk/RecordingPill.tsx",
     "./mobile": "./src/mobile/MobileApp.tsx",
     "./mobile-pairing": "./src/mobile/Pairing.tsx",
     "./mobile-client": "./src/mobile/native-client.ts",
@@ -18,6 +19,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@freddai/ui": "workspace:*",
     "@rive-app/canvas": "2.48.0",
     "@rive-app/react-canvas": "4.38.0",

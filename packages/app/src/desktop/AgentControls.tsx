@@ -1,75 +1,63 @@
-import { DashboardSelect } from "./DashboardSelect";
-import "./dashboard-launch-controls.css";
-import { PopoverDetails } from "./PopoverDetails";
-import { useEffect, useId, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, Cpu } from "lucide-react";
-import { providerName, type Account } from "./types";
+import { useEffect, useId, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { ChevronDown, Cpu } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@freddai/ui/components/select';
+import { DashboardSelect } from './DashboardSelect';
+import { PopoverDetails } from './PopoverDetails';
+import { advancedModelChoices, effortChoices, effortLabel, type AgentSelection, type Model } from './agent-selection';
+import { levelChoices, levelName, selectionLevel } from './model-levels';
+import { providerName, type Account } from './types';
+import './dashboard-launch-controls.css';
+export { defaultSelection } from './agent-selection';
+export type { AgentSelection } from './agent-selection';
 
-export { defaultSelection } from "./agent-selection";
-export type { AgentSelection } from "./agent-selection";
-import { effortChoices, effortLabel, modelChoices, type AgentSelection, type Model } from "./agent-selection";
-
-export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels, iconOnly = false, inline = false, context = "the next message" }: {
+export function AgentControls({ account, native, value, onChange, disabled = false, provider = account?.provider, loadModels, iconOnly = false, inline = false, context = 'this session' }: {
   context?: string; inline?: boolean; iconOnly?: boolean; account?: Account; native: boolean; value: AgentSelection; onChange: (value: AgentSelection) => void; disabled?: boolean; provider?: string; loadModels?: () => Promise<Model[]>;
 }) {
-  const id = useId();
-  const [expanded, setExpanded] = useState(false);
-  const [catalog, setCatalog] = useState<{ account: string; models: Model[] }>();
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const id = useId(), [expanded, setExpanded] = useState(false), [custom, setCustom] = useState(false);
+  const [catalog, setCatalog] = useState<{ key: string; models: Model[] }>(), [error, setError] = useState('');
+  const key = account?.id || provider || '';
+  const level = custom ? 'custom' : selectionLevel(value.model);
   useEffect(() => {
-    if ((!expanded && !inline) || !native || provider !== "codex" || (!loadModels && !account)) return;
+    if ((!(expanded && level === 'custom') && !inline) || level !== 'custom' || !native || provider !== 'codex' || (!loadModels && !account)) return;
     let cancelled = false;
-    setError(""); setLoading(true);
-    (loadModels ? loadModels() : invoke<Model[]>("account_models", { account: account!.id })).then(models => {
-      if (!cancelled) setCatalog({ account: account?.id || provider, models });
-    }).catch(e => { if (!cancelled) setError(String(e)); }).finally(() => { if (!cancelled) setLoading(false); });
+    setError('');
+    (loadModels ? loadModels() : invoke<Model[]>('account_models', { account: account!.id })).then(models => {
+      if (!cancelled) setCatalog({ key, models });
+    }).catch(e => { if (!cancelled) setError(String(e)); });
     return () => { cancelled = true; };
-  }, [expanded, inline, native, account?.id, provider, loadModels]);
-  const models = catalog?.account === (account?.id || provider) ? catalog?.models || [] : [];
-  const choices = modelChoices(provider, models);
-  const known = !value.model || choices.some(m => m.value === value.model);
-  const [custom, setCustom] = useState(false);
-  const efforts = effortChoices(provider || "", value.model, models);
-  const changeModel = (model: string) => {
-    if (model === '__custom') { setCustom(true); return; }
-    setCustom(false); onChange({ model, effort: 'default' });
+  }, [expanded, inline, level, native, key, provider, loadModels]);
+  const models = catalog?.key === key ? catalog.models : [];
+  const choices = advancedModelChoices(provider, models), efforts = effortChoices(provider || '', level === 'custom' && selectionLevel(value.model) === 'custom' ? value.model : '', models);
+  const choose = (next: string) => {
+    setCustom(next === 'custom');
+    if (next !== 'custom') onChange({ ...value, model: next, effort: 'default' });
+    else if (selectionLevel(value.model) !== 'custom') onChange({ ...value, model: choices[0]?.value || 'freddai-custom:', effort: 'default' });
   };
-  if (inline) return <div className="dashboard-agent-controls">
-    <DashboardSelect label="Model" value={custom || !known ? '__custom' : value.model} onChange={changeModel} disabled={disabled || !provider}
-      options={[{ value: '', label: 'Model default' }, ...choices, { value: '__custom', label: 'Custom model…' }]} />
-    {!!efforts.length && <DashboardSelect label="Difficulty" value={value.effort} disabled={disabled || !provider}
-      onChange={effort => onChange({ ...value, effort })} options={[{ value: 'default', label: 'Difficulty default' }, ...[...new Set([...efforts, ...(value.effort !== 'default' ? [value.effort] : [])])].map(effort => ({ value: effort, label: effortLabel(effort) }))]} />}
-    {(custom || !known) && <input className="dashboard-custom-model" aria-label="Custom model ID" placeholder="Custom model ID" value={value.model} onChange={event => onChange({ model: event.target.value, effort: 'default' })} />}
-    {error && <small role="status">Couldn’t load models. Reopen to retry.</small>}
+  const selectedLevel = level === 'custom' ? 'custom' : `freddai-level:${level}`;
+  const customPanel = level === 'custom' && <div className="agent-controls-panel">
+    <label htmlFor={`${id}-model`}>Specific model</label><input id={`${id}-model`} aria-label="Custom model ID" list={`${id}-models`} value={selectionLevel(value.model) === 'custom' && value.model !== 'freddai-custom:' ? value.model : ''} placeholder={`${providerName(provider || '')} model ID`} maxLength={200} disabled={disabled} onChange={e => { setCustom(true); onChange({ ...value, model: e.target.value || 'freddai-custom:', effort: value.effort }); }}/>
+    <datalist id={`${id}-models`}>{choices.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</datalist>
+    {!!efforts.length && <><label htmlFor={`${id}-effort`}>Reasoning effort</label><select id={`${id}-effort`} disabled={disabled} value={value.effort} onChange={e => onChange({ ...value, effort: e.target.value })}><option value="default">Provider default</option>{[...new Set([...efforts, ...(value.effort !== 'default' ? [value.effort] : [])])].map(e => <option key={e} value={e}>{effortLabel(e)}</option>)}</select></>}
+    {error && <small role="status">Couldn’t load available models. You can enter a model ID.</small>}
+    <small>Custom model and effort apply to {context}.</small>
   </div>;
-  const panel = <div className="agent-controls-panel">
-      <p>{provider ? providerName(provider) : "Choose an account"} · Applies to {context}</p>
-      <label htmlFor={`${id}-model`}>Model</label>
-      <select id={`${id}-model`} disabled={disabled || !provider} value={custom || !known ? "__custom" : value.model} onChange={e => {
-        if (e.target.value === "__custom") { setCustom(true); return; }
-        setCustom(false); onChange({ model: e.target.value, effort: "default" });
-      }}>
-        <option value="">Agent default</option>
-        {choices.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-        <option value="__custom">Custom model ID…</option>
-      </select>
-      {(custom || !known) && <input aria-label="Custom model ID" placeholder={`${providerName(provider || "")} model ID`} maxLength={200} value={value.model} disabled={disabled} onChange={e => onChange({ model: e.target.value, effort: "default" })}/>}
-      {!!efforts.length && <><label htmlFor={`${id}-effort`}>{inline ? "Difficulty" : "Reasoning effort"}</label>
-        <select id={`${id}-effort`} disabled={disabled || !provider} value={value.effort} onChange={e => onChange({ ...value, effort: e.target.value })}>
-          <option value="default">Agent default</option>
-          {[...new Set([...efforts, ...(value.effort !== "default" ? [value.effort] : [])])].map(e => <option key={e} value={e}>{effortLabel(e)}</option>)}
-        </select></>}
-      {provider && !["codex", "claude"].includes(provider) && <small>Effort control is unavailable for this provider. Enter its model ID under Custom.</small>}
-      {loading && <small role="status">Loading available models…</small>}
-      {error && <small role="status">Couldn’t load models. You can enter a custom ID. Close and reopen to retry.</small>}
-      <small>Model availability and effort support depend on your provider and subscription.</small>
-    </div>;
-  return <PopoverDetails className={`agent-controls${iconOnly ? " agent-controls-icon" : ""}`} open={expanded} onDismiss={() => setExpanded(false)} onToggle={e => setExpanded(e.currentTarget.open)}>
-    <summary aria-label="Model and effort" aria-disabled={disabled || !provider} onClick={e => { if (disabled || !provider) e.preventDefault(); }}>
-      {iconOnly && <Cpu size={18} aria-hidden="true"/>}<span className="agent-model-label">{choices.find(choice => choice.value === value.model)?.label || value.model || "Model default"}</span>{value.effort !== "default" && <span className="agent-effort-label">{effortLabel(value.effort)}</span>}<ChevronDown size={12} aria-hidden="true"/>
-    </summary>
-    {panel}
-  </PopoverDetails>;
+  const options = [...levelChoices(provider), { value: 'custom', label: 'Custom' }];
+  if (inline) return <div className="dashboard-agent-controls"><DashboardSelect label="Difficulty" value={selectedLevel} onChange={choose} disabled={disabled || !provider} options={options}/>{customPanel}</div>;
+  const label = level === 'custom' ? 'Custom' : levelName(value.model);
+  const customId = selectionLevel(value.model) === 'custom' && value.model !== 'freddai-custom:' ? value.model : '';
+  return <span className="agent-controls-group">
+    <Select value={selectedLevel} onValueChange={choose} disabled={disabled || !provider}>
+      <SelectTrigger size="sm" className={`agent-controls-select${iconOnly ? ' agent-controls-icon' : ''}`} aria-label="Agent difficulty" title={`${providerName(provider || '')} · ${context}`}>
+        {iconOnly && <Cpu size={18}/>}<SelectValue><span className="agent-model-label">{label}</span></SelectValue>
+      </SelectTrigger>
+      <SelectContent className="dev-popup" position="popper" side="top" align="start">
+        {options.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+    {level === 'custom' && <PopoverDetails className="agent-controls agent-controls-custom" open={expanded} onDismiss={() => setExpanded(false)} onToggle={e => setExpanded(e.currentTarget.open)}>
+      <summary aria-label="Custom model" aria-disabled={disabled || !provider} onClick={e => { if (disabled || !provider) e.preventDefault(); }}><span className="agent-model-label">{customId || 'Choose model…'}</span><ChevronDown size={12}/></summary>
+      {customPanel}
+    </PopoverDetails>}
+  </span>;
 }

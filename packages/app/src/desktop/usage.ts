@@ -1,3 +1,4 @@
+import { isAuthError } from "./reconnect";
 export type UsageWindowKind = "session" | "weekly" | "other";
 export type UsageWindow = { label: string; window?: UsageWindowKind; used_percent: number; resets_at: number | null };
 
@@ -27,7 +28,7 @@ export function windowKind(w: UsageWindow): UsageWindowKind {
   return "other";
 }
 
-export type UsageLine = { kind: UsageWindowKind; label: string; remaining: number | null; resetsAt: number | null; resetText: string };
+export type UsageLine = { kind: UsageWindowKind; label: string; remaining: number | null; resetsAt: number | null; resetText: string; relativeReset: string };
 
 const clock = (d: Date) => new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
 
@@ -41,6 +42,17 @@ export function resetLabel(resetsAt: number | null | undefined, now: number): st
   return `resets ${date.getDate()} ${new Intl.DateTimeFormat(undefined, { month: "short" }).format(date)}`;
 }
 
+/** Compact time until reset for the footer: "6 days", "14 hours", "45 min". */
+export function relativeResetLabel(resetsAt: number | null | undefined, now: number): string {
+  if (resetsAt == null || !Number.isFinite(resetsAt)) return "reset unknown";
+  const ms = resetsAt * 1000 - now;
+  if (ms <= 0) return "resetting now";
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  if (ms >= 86400000) return plural(Math.floor(ms / 86400000), "day");
+  if (ms >= 3600000) return plural(Math.floor(ms / 3600000), "hour");
+  return `${Math.max(1, Math.floor(ms / 60000))} min`;
+}
+
 const lowest = (lines: UsageLine[]) => lines.reduce<UsageLine | null>((a, l) =>
   l.remaining === null ? a : !a || l.remaining < (a.remaining as number) ? l : a, null);
 
@@ -52,7 +64,7 @@ export function usageSummary(windows: UsageWindow[], now: number) {
   const order = { session: 0, weekly: 1, other: 2 } as const;
   const lines: UsageLine[] = windows.map(w => ({
     kind: windowKind(w), label: w.label, remaining: remainingPercent(w.used_percent),
-    resetsAt: w.resets_at ?? null, resetText: resetLabel(w.resets_at, now),
+    resetsAt: w.resets_at ?? null, resetText: resetLabel(w.resets_at, now), relativeReset: relativeResetLabel(w.resets_at, now),
   })).map((l, i) => ({ l, i })).sort((a, b) => order[a.l.kind] - order[b.l.kind] || a.i - b.i).map(x => x.l);
   const session = lowest(lines.filter(l => l.kind === "session"));
   const weeklies = lines.filter(l => l.kind === "weekly");
@@ -62,8 +74,8 @@ export function usageSummary(windows: UsageWindow[], now: number) {
 }
 
 export function usageErrorSummary(error: string | null | undefined, provider: string): string {
-  if (/not supported/i.test(error ?? "") || !["claude", "codex", "antigravity"].includes(provider)) return "Usage not supported";
-  if (/expired|reconnect|sign-in/i.test(error ?? "")) return "Sign-in expired · reconnect";
+  if (/not supported/i.test(error ?? "") || !["claude", "codex", "antigravity", "copilot"].includes(provider)) return "Usage not supported";
+  if (isAuthError(error) || /expired|reconnect/i.test(error ?? "")) return "Sign-in expired · reconnect";
   if (/rate limit/i.test(error ?? "")) return "Rate limited · retry later";
   if (/timed out/i.test(error ?? "")) return "Usage timed out";
   return "Usage unavailable";

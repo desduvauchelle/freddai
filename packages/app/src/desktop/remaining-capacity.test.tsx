@@ -1,5 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
+import { useAccountUsagePoller, resetAccountUsage } from "./useAccountUsage";
 import { UsageFooter } from "./UsageFooter";
 import { AccountOverview } from "./AccountOverview";
 import { ConversationUsage } from "./ConversationUsage";
@@ -8,11 +9,14 @@ import { remainingPercent } from "./usage";
 
 const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+
+const PolledFooter = (p: React.ComponentProps<typeof UsageFooter> & { native: boolean }) => { useAccountUsagePoller(p.accounts, p.native); return <UsageFooter {...p}/>; };
+beforeEach(() => resetAccountUsage());
 afterEach(cleanup);
 const account = { id: "fixture", name: "Work", provider: "codex" as const, color: "blue" };
 it("uses remaining capacity consistently for each quota window, footer text and its limiting circle", async () => {
   invoke.mockResolvedValue({ windows: [{ label: "Session", used_percent: 25, resets_at: null }, { label: "Weekly", used_percent: 80, resets_at: null }], checked_at: Date.now(), plan: null });
-  const view = render(<><UsageFooter accounts={[account]} native onOpen={() => {}}/><AccountOverview db={{ ...empty, accounts: [account] }} native onManage={() => {}}/></>);
+  const view = render(<><PolledFooter accounts={[account]} native onOpen={() => {}}/><AccountOverview db={{ ...empty, accounts: [account] }} native onManage={() => {}}/></>);
   const session = await screen.findByRole("progressbar", { name: /Session, remaining capacity/ });
   const weekly = await screen.findByRole("progressbar", { name: /Weekly, remaining capacity/ });
   expect(session.getAttribute("aria-valuenow")).toBe("75");
@@ -23,7 +27,7 @@ it("uses remaining capacity consistently for each quota window, footer text and 
 });
 it("does not describe unknown capacity as empty or exhausted", async () => {
   invoke.mockRejectedValue("Unavailable");
-  const view = render(<UsageFooter accounts={[account]} native onOpen={() => {}}/>);
+  const view = render(<PolledFooter accounts={[account]} native onOpen={() => {}}/>);
   expect(await screen.findByRole("button", { name: /Usage unavailable/ })).toBeTruthy();
   expect(view.container.querySelector('.usage-ring-fill')).toBeNull();
 });

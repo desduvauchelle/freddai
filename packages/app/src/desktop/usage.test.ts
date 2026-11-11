@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resetLabel, usageErrorSummary, usageSummary, windowKind } from "./usage";
+import { relativeResetLabel, resetLabel, usageErrorSummary, usageSummary, windowKind } from "./usage";
 
 const now = new Date(2026, 10, 10, 12, 0, 0).getTime();
 const at = (offsetMs: number) => (now + offsetMs) / 1000;
@@ -29,6 +29,25 @@ describe("resetLabel", () => {
     expect(resetLabel(week, now)).toBe(`resets ${day} ${hm(week)}`);
     const far = at(20 * 86400000);
     expect(resetLabel(far, now)).toMatch(/^resets \d{1,2} \S+$/);
+  });
+});
+
+describe("relativeResetLabel", () => {
+  const H = 3600000, M = 60000;
+  it("floors to days, hours, minutes", () => {
+    expect(relativeResetLabel(at(24 * H), now)).toBe("1 day");
+    expect(relativeResetLabel(at(24 * H - M), now)).toBe("23 hours");
+    expect(relativeResetLabel(at(6.5 * 24 * H), now)).toBe("6 days");
+    expect(relativeResetLabel(at(14 * H + 20 * M), now)).toBe("14 hours");
+    expect(relativeResetLabel(at(H), now)).toBe("1 hour");
+    expect(relativeResetLabel(at(59 * M), now)).toBe("59 min");
+    expect(relativeResetLabel(at(45 * M), now)).toBe("45 min");
+    expect(relativeResetLabel(at(10 * 1000), now)).toBe("1 min");
+  });
+  it("handles past, now and unknown", () => {
+    expect(relativeResetLabel(at(0), now)).toBe("resetting now");
+    expect(relativeResetLabel(at(-5 * M), now)).toBe("resetting now");
+    expect(relativeResetLabel(null, now)).toBe("reset unknown");
   });
 });
 
@@ -63,5 +82,7 @@ describe("usageErrorSummary", () => {
     expect(usageErrorSummary("Rate limit hit", "codex")).toBe("Rate limited · retry later");
     expect(usageErrorSummary("request timed out", "codex")).toBe("Usage timed out");
     expect(usageErrorSummary(null, "antigravity")).toBe("Usage unavailable");
+    expect(usageErrorSummary(null, "copilot")).toBe("Usage unavailable");
+    expect(usageErrorSummary("token expired", "copilot")).toBe("Sign-in expired · reconnect");
   });
 });
