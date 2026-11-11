@@ -187,7 +187,7 @@ it("changes the single shared Home model under Projects", () => {
 it("opens the first-thread prompt for an empty project without opening a missing thread", () => {
   const p = props([]);
   render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "Create first thread in Beta" }));
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
   expect(screen.getByLabelText("Prompt for Beta")).toBeTruthy();
   expect(p.onOpenThread).not.toHaveBeenCalled();
 });
@@ -229,7 +229,8 @@ it('keeps Commander out of ordinary project cards', () => {
   p.projects = [{ ...p.projects[0], id: 'chief', name: 'Ada', kind: 'commander' }, ...p.projects];
   render(<HomeView {...p} commander={{ onOpen: open, onSend: vi.fn(async () => {}) }} />);
   expect(screen.queryByRole('article', { name: 'Project Ada' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: "Boss's office · Ada" }));
+  expect(screen.queryByRole('button', { name: "Boss's office · Ada" })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: "Open Commander" }));
   expect(open).toHaveBeenCalledTimes(1);
 });
 
@@ -339,4 +340,58 @@ it('groups dashboard projects by workspace with shared memberships and unassigne
   expect(within(screen.getByRole('region', { name: 'Personal' })).getByRole('article', { name: 'Project Alpha' })).toBeTruthy();
   expect(within(screen.getByRole('region', { name: 'Other projects' })).getByRole('article', { name: 'Project Other' })).toBeTruthy();
   expect(screen.queryByText('Empty workspace')).toBeNull();
+});
+
+it("shows a Sending row for an in-flight launch and drops it once the real thread arrives", () => {
+  const launch = [{ id: "req", project: "alpha", title: "Fix the build", threadId: "new1" }];
+  const p = props([thread("1")]);
+  const { rerender } = render(<HomeView {...p} pendingLaunches={[{ ...launch[0], threadId: undefined }]} />);
+  const alpha = screen.getByRole("article", { name: "Project Alpha" });
+  expect(within(alpha).getByRole("button", { name: /Fix the build/ })).toBeTruthy();
+  expect(within(alpha).getByRole("img", { name: "Sending…" })).toBeTruthy();
+  expect(within(alpha).getByText("Alpha")).toBeTruthy();
+  rerender(<HomeView {...p} pendingLaunches={launch} sessions={[thread("1"), thread("new1", { title: "Fix the build", status: "running", updated: NOW })]} />);
+  expect(within(alpha).getAllByText("Fix the build")).toHaveLength(1);
+  expect(within(alpha).queryByRole("img", { name: "Sending…" })).toBeNull();
+});
+
+it("labels sending and queued statuses", async () => {
+  const { labelStatus } = await import("./ThreadStatus");
+  expect(labelStatus("sending")).toBe("Sending…");
+  expect(labelStatus("queued")).toBe("Queued");
+});
+
+it("opens a project sheet from the name, shows threads latest first, a thread inside the sheet, and keeps Home mounted", () => {
+  const p = props([thread("old", { title: "Old one", updated: NOW - 9000 }), thread("new", { title: "New one", updated: NOW - 1000 }), thread("other", { project: "beta", title: "Beta one" })]);
+  const renderThread = vi.fn((id: string) => <div data-testid="convo">conversation {id}</div>);
+  render(<HomeView {...p} renderThread={renderThread} />);
+  const home = screen.getByRole("region", { name: "Home" });
+  const tile = screen.getByRole("article", { name: "Project Alpha" });
+  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
+  fireEvent.change(screen.getByLabelText("Prompt for Alpha") as HTMLElement, { target: { value: "keep me" } });
+  fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
+  const list = within(screen.getByRole("dialog")).getByRole("list", { name: "Threads in Alpha" });
+  expect(within(list).getAllByRole("button").map(b => b.textContent)).toEqual([expect.stringContaining("New one"), expect.stringContaining("Old one")]);
+  expect(p.onOpenThread).not.toHaveBeenCalled();
+  fireEvent.click(within(list).getByRole("button", { name: /Old one/ }));
+  expect(screen.getByTestId("convo").textContent).toBe("conversation old");
+  expect(p.onOpenThread).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Back to threads" }));
+  expect(screen.queryByTestId("convo")).toBeNull();
+  expect(screen.getByRole("list", { name: "Threads in Alpha" })).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("region", { name: "Home" })).toBe(home);
+  expect(screen.getByRole("article", { name: "Project Alpha" })).toBe(tile);
+  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("keep me");
+});
+
+it("shows an empty project sheet with a New thread action", () => {
+  const onNewThread = vi.fn();
+  render(<HomeView {...props([])} onNewThread={onNewThread} renderThread={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Show threads in Beta" }));
+  expect(screen.getByText("No threads yet")).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "New thread" }));
+  expect(onNewThread).toHaveBeenCalledWith("beta");
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

@@ -6,16 +6,16 @@ import android.view.Gravity
 import android.widget.TextView
 
 internal fun threadStatusLabel(status: String, unread: Boolean): String =
-    when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (unread) "Unread reply" else "" }
+    when (status) { "sending" -> "Sending…"; "queued" -> "Queued"; "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (unread) "Unread reply" else "" }
 
 internal fun threadStatusIndicator(host: Context, status: String, unread: Boolean): TextView {
     val spoken = threadStatusLabel(status, unread)
     val dot = TextView(host).apply {
             text = if (spoken.isEmpty()) "" else "●"; textSize = 12f; gravity = Gravity.CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            setTextColor(when (status) { "running", "starting" -> 0xffafb3bc.toInt(); "waiting", "interrupted" -> 0xffff9500.toInt(); "failed", "error" -> 0xffff3b30.toInt(); else -> 0xff007aff.toInt() })
+            setTextColor(when (status) { "running", "starting", "sending" -> 0xffafb3bc.toInt(); "queued" -> 0xffff9500.toInt(); "waiting", "interrupted" -> 0xffff9500.toInt(); "failed", "error" -> 0xffff3b30.toInt(); else -> 0xff007aff.toInt() })
         }
-        if (status == "running" || status == "starting") dot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        if (status == "running" || status == "starting" || status == "sending") dot.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             private var pulse: android.animation.ObjectAnimator? = null
             override fun onViewAttachedToWindow(view: View) {
                 if (android.provider.Settings.Global.getFloat(host.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f) return

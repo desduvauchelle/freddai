@@ -24,7 +24,7 @@ it('stops the microphone and sends transcription to the chosen project callback'
   render(<DashboardMic client={{ ...disconnectedClient, voice: async () => ({ enabled: true, ready: true }), transcribeAudio }} project="Project" disabled={false} onText={onText} />);
   fireEvent.click(screen.getByRole('button'));
   await screen.findByRole('button', { name: 'Stop recording in Project' });
-  fireEvent.click(screen.getByRole('button'));
+  fireEvent.click(screen.getByRole('button', { name: 'Send recording' }));
   await waitFor(() => expect(onText).toHaveBeenCalledWith('Build it'));
   expect(stop).toHaveBeenCalled(); expect(transcribeAudio).toHaveBeenCalledWith(expect.any(Blob));
 });
@@ -60,7 +60,7 @@ it.each([false, true])('a browser hold releases to transcribe or cancels without
   render(<DashboardMic client={{ ...disconnectedClient, voice: async () => ({ enabled: true, ready: true }), transcribeAudio }} project="Project" disabled={false} onText={onText} />);
   fireEvent.pointerDown(screen.getByRole('button'), { button: 0 });
   const mic = await screen.findByRole('button', { name: 'Stop recording in Project' });
-  if (cancel) fireEvent.pointerCancel(mic); else fireEvent.pointerUp(mic);
+  if (cancel) fireEvent.pointerCancel(mic); else fireEvent.pointerUp(mic, { clientY: -64 });
   await waitFor(() => expect(stop).toHaveBeenCalled());
   if (cancel) { expect(transcribeAudio).not.toHaveBeenCalled(); expect(onText).not.toHaveBeenCalled(); }
   else await waitFor(() => expect(onText).toHaveBeenCalledWith('A draft'));

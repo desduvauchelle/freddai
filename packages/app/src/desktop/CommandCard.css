@@ -10,3 +10,6 @@
 .command-card-hint { margin: 0; color: #bbb; font-size: 11px; }
 .command-card-error { margin: 0; color: #ff8b8b; font-size: 12px; }
 .dashboard-call-wake { margin: 0 10px 6px; color: #bbb; font-size: 12px; }
+.dashboard-call-island .command-card { box-sizing: border-box; max-width: calc(100% - 12px); }
+.dashboard-call-island { box-sizing: border-box; max-height: calc(var(--companion-viewport-height, 100dvh) - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; }
+.command-card select { max-width: 100%; }

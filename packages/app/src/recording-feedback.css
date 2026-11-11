@@ -1,0 +1,12 @@
+.recording-feedback { position: absolute; z-index: 100; right: 0; bottom: calc(100% + 8px); width: 268px; height: 108px; pointer-events: none; color: var(--foreground); }
+.recording-capsule { position: absolute; right: 44px; bottom: 0; width: 224px; height: 44px; border-radius: 22px; background: var(--background); box-shadow: 0 4px 18px #0003; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 48px; box-sizing: border-box; }
+.recording-capsule [role=timer] { font: 13px monospace; color: #369964; }
+.recording-wave { display: flex; align-items: center; gap: 2px; height: 28px; overflow: hidden; }
+.recording-wave i { width: 2.5px; flex-shrink: 0; background: #369964; border-radius: 2px; }
+.recording-rail { position: absolute; width: 44px; height: 44px; }
+.recording-rail-horizontal { left: 0; bottom: 0; }
+.recording-rail-vertical { right: 0; bottom: 64px; }
+.recording-rail button { pointer-events: auto; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--background); color: var(--foreground); cursor: pointer; border: 0; }
+.recording-rail-horizontal button:not([data-progress="0"]) { color: #d3414c; background: var(--background); }
+.recording-rail-vertical button { background: var(--primary); color: var(--primary-foreground); }
+@media (prefers-reduced-motion: reduce) { .recording-rail button { transform: none !important; } }

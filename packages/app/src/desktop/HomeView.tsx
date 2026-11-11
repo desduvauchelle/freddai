@@ -7,7 +7,7 @@ import { agentDisplayName } from "./types";
 import { AgentControls } from "./AgentControls";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
 import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, GripVertical, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
 import { Permission } from "./AgentRequest";
@@ -22,6 +22,7 @@ import type { HomeLaunchPlan } from "./home-launch";
 import { homeRunState } from "./home-state";
 import { Office, type OfficeProposal, type OfficeSchedule } from "../office/index";
 import { CommanderCluster } from "./commander/CommanderCluster";
+import { ProjectSheet } from "./ProjectSheet";
 import "./home.css";
 import { OfficeOrder } from "../office/OfficeOrder";
 
@@ -30,10 +31,14 @@ export { homeRunState } from "./home-state";
 const isLive = (t: Session) => !t.archived && t.deleted_at == null && t.status !== "archived" && t.status !== "deleted";
 export const startOfLocalDay = (now: number) => { const d = new Date(now); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 
-export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string | null; recent: Session[] };
+export type HomeProject = { project: Project; working: number; done: number; needs: number; failed: number; lastActivity: number; latest: string | null; recent: Session[]; pending: HomeRecent[] };
 
 /** All configured projects in saved order; activity updates change counters only. */
-export function homeProjects(sessions: readonly Session[], projects: readonly Project[], now: number): HomeProject[] {
+export type PendingLaunch = { id: string; project: string; title: string; /** Set once the host returned the thread id, so the row can be deduped against `sessions`. */ threadId?: string; failed?: string };
+export type HomeRecent = { id: string; title: string; status: string; error?: string };
+export const pendingTitle = (prompt: string) => { const line = prompt.trim().split("\n")[0]; return line.length > 60 ? `${line.slice(0, 59)}…` : line; };
+
+export function homeProjects(sessions: readonly Session[], projects: readonly Project[], now: number, pending: readonly PendingLaunch[] = []): HomeProject[] {
   const midnight = startOfLocalDay(now), rows: HomeProject[] = [];
   for (const project of projects) {
     if (project.kind === "commander") continue;
@@ -49,6 +54,8 @@ export function homeProjects(sessions: readonly Session[], projects: readonly Pr
       lastActivity: Math.max(0, ...today.map(t => t.updated)),
       latest: recent[0]?.id ?? null,
       recent,
+      pending: pending.filter(p => p.project === project.id && !(p.threadId && sessions.some(t => t.id === p.threadId)))
+        .map(p => ({ id: `pending:${p.id}`, title: p.title, status: p.failed ? "failed" : "sending", error: p.failed })),
     });
   }
   return rows;
@@ -73,6 +80,8 @@ export type HomeViewProps = {
   /** False in the browser preview or while a launch is already in flight. */
   canCreate: boolean;
   onOpenThread: (id: string) => void;
+  /** Launches in flight (not yet in `sessions`); shown as "Sending…" rows on their project card. */
+  pendingLaunches?: readonly PendingLaunch[];
   onAddProject: () => void;
   /** Opens the full project-scoped composer without starting a thread. */
   onNewThread?: (projectId: string) => void;
@@ -84,6 +93,10 @@ export type HomeViewProps = {
   /** Optional scheduled work, shown at the Office clock shrine. */
   schedules?: OfficeSchedule[];
   /** Commander-in-Chief presence above the project list; omitted when unavailable. */
+  /** Renders one thread live inside the project sheet; without it a row click opens the thread in the main view. */
+  renderThread?: (id: string) => ReactNode;
+  /** Called while a thread is visible in the project sheet so the host can mark it read. */
+  onThreadViewed?: (thread: Session) => void;
   commander?: { onOpen: () => void; onSend: (text: string) => Promise<void>; proposals?: readonly OfficeProposal[]; onProposalRespond?: (id: string, approve: boolean) => Promise<unknown> };
 };
 
@@ -117,8 +130,8 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
     finally { setDictating(false); }
   }
   return <ProjectTile project={project} hasThreads={!!entry.latest} counts={entry}
-    recent={entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))}
-    onOpen={onOpen} onOpenThread={onOpenThread} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
+    recent={[...entry.pending, ...entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))].slice(0, 3)}
+    onOpen={onOpen} onOpenThread={id => { if (!id.startsWith("pending:")) onOpenThread(id); }} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <MicButton target={false} onText={t => void dictate(t)} />
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
           title="New thread" aria-expanded={open} disabled={!canCreate} onClick={onToggle}>
@@ -126,7 +139,6 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
         </Button>
       </div>}>
     {micUsed && <VoiceNotice target />}
-    {dictating && <div className="voice-notice" role="status">Starting thread…</div>}
     {(open || armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
       {plan.ok ? plan.label : plan.reason}</p>}
     {started && <p className="home-started" role="status">{started}</p>}
@@ -141,13 +153,13 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
   </ProjectTile>;
 }
 
-export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, onMoveProject, homeAccount = "", onHomeAccount }: HomeViewProps) {
+export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, homeAccount = "", onHomeAccount }: HomeViewProps) {
   const grid = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; target: string; after: boolean } | null>(null);
   const [drop, setDrop] = useState<{ id: string; target: string; after: boolean } | null>(null);
   const clearDrag = () => { drag.current = null; setDrop(null); };
   const clock = now ?? Date.now();
-  const tiles = useMemo(() => homeProjects(sessions, projects, clock), [sessions, projects, clock]);
+  const tiles = useMemo(() => homeProjects(sessions, projects, clock, pendingLaunches), [sessions, projects, clock, pendingLaunches]);
   const entries = new Map(tiles.map(entry => [entry.project.id, entry]));
   const groups = dashboardProjectGroups({ projects, workspaces });
   const launchAccounts = accounts.filter(account => projects.some(project => { if (project.kind === "commander") return false; const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
@@ -155,6 +167,12 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
   const modelAccounts = selectedAccount ? [selectedAccount] : launchAccounts.slice(0, 1);
   const waiting = useMemo(() => needsYou(sessions), [sessions]);
   const [openProject, setOpenProject] = useState<string | null>(null);
+  // Project sheet state is local so the dashboard behind it stays mounted and untouched.
+  const [sheet, setSheet] = useState<{ project: string; thread: string | null } | null>(null);
+  const sheetThread = sheet?.thread ? sessions.find(t => t.id === sheet.thread) : undefined;
+  useEffect(() => { if (sheetThread && onThreadViewed) onThreadViewed(sheetThread); }, [sheetThread?.id, sheetThread?.status, sheetThread?.updated]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sheetEntry = sheet ? entries.get(sheet.project) : undefined;
+  const sheetSessions = useMemo(() => sheet ? sessions.filter(t => t.project === sheet.project && isLive(t)).sort(compareThreadRecency) : [], [sessions, sheet?.project]);
   const live = sessions.filter(isLive);
   const mood = mascotState(undefined, live);
   const working = live.filter(t => homeRunState(t) === "running").length;
@@ -225,7 +243,7 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
             onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}><GripVertical size={13} /></button>}
           <Tile read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
           onToggle={() => onNewThread ? onNewThread(entry.project.id) : setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
-          onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => { if (entry.latest) onOpenThread(entry.latest); else if (onNewThread) onNewThread(entry.project.id); else setOpenProject(entry.project.id); }} /></div>; })}
+          onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => setSheet({ project: entry.project.id, thread: null })} /></div>; })}
         </div></section>)}
       </div> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
     </section>
@@ -249,5 +267,13 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
     <section className="home-summaries" aria-label="Daily summaries">
       <DaySummaries now={now === undefined ? undefined : new Date(now)} />
     </section>
+
+    {sheet && sheetEntry && <ProjectSheet project={sheetEntry.project} sessions={sheetSessions} pending={sheetEntry.pending} read={read} now={clock}
+      threadId={sheet.thread}
+      onSelectThread={id => renderThread ? setSheet({ project: sheet.project, thread: id }) : (setSheet(null), onOpenThread(id))}
+      onBack={() => setSheet({ project: sheet.project, thread: null })} onClose={() => setSheet(null)}
+      onNewThread={() => { const id = sheet.project; setSheet(null); if (onNewThread) onNewThread(id); else setOpenProject(id); }}
+      onOpenInMain={id => { setSheet(null); onOpenThread(id); }}
+      renderThread={id => renderThread?.(id) ?? null} />}
   </section>;
 }

@@ -15,7 +15,7 @@ export function ProjectTile({ project, hasThreads, counts, recent, actions, onOp
   return <article className="home-tile" aria-label={`Project ${project.name}`}>
     <header>
       <span className="home-project-dot" style={{ background: project.color }} aria-hidden="true" />
-      <button type="button" className="home-tile-open" title={hasThreads ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`} aria-label={openLabel ?? (hasThreads ? `Open latest thread in ${project.name}` : `Create first thread in ${project.name}`)} onClick={onOpen}><strong role={openLabel ? "heading" : undefined} aria-level={openLabel ? 3 : undefined} style={{ color: project.color }}>{project.name}</strong></button>
+      <button type="button" className="home-tile-open" title={openLabel ? (hasThreads ? `Open latest thread in ${project.name}` : `New thread in ${project.name}`) : `Show threads in ${project.name}`} aria-label={openLabel ?? `Show threads in ${project.name}`} onClick={onOpen}><strong role={openLabel ? "heading" : undefined} aria-level={openLabel ? 3 : undefined} style={{ color: project.color }}>{project.name}</strong></button>
       {actions}
     </header>
     <ul className="home-counts" aria-label="Thread status">

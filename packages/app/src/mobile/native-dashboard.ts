@@ -2,12 +2,16 @@ import { compareThreadRecency } from '../desktop/types';
 import { dashboardProjectGroups } from './dashboard-projects';
 import type { CompanionProject, CompanionSnapshot } from './companion';
 import { effortLabel, defaultSelection, type AgentSelection } from '../desktop/agent-selection';
-import { assistantLabel, modelPillLabel } from './native-home';
+import { assistantLabel, lastAssistantFor, modelPillLabel } from './native-home';
+import type { Outgoing } from './outbox';
 import { companionStatusRead } from './companion';
-import { nativeThread, nativeRunState } from './native-threads';
+import { nativeThread, nativeRunState, pendingThreads } from './native-threads';
 
+/** Resolution order: explicit selection, then the agent last used for this project, then the project default, then the first one. */
 export function dashboardAssistantFor(project: CompanionProject, selected: string) {
+  const last = lastAssistantFor(project);
   return project.assistants?.find(a => a.id === selected)
+    ?? project.assistants?.find(a => a.id === last)
     ?? project.assistants?.find(a => a.id === project.defaultAssistant) ?? project.assistants?.[0];
 }
 export function dashboardControlKey(project: CompanionProject, selected: string) {
@@ -22,7 +26,7 @@ function commanderModel(snapshot: CompanionSnapshot) {
   return { sending: false, id: project.id, name: project.name, needsYou: threads.filter(t => nativeRunState(t) === 'waiting').length, running: threads.filter(t => nativeRunState(t) === 'running').length, doneToday: 0 };
 }
 export function buildDashboardModel(snapshot: CompanionSnapshot, connected: boolean, selected: string,
-  controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false, read: Record<string, number> = {}) {
+  controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false, read: Record<string, number> = {}, outbox: Outgoing[] = []) {
   const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
   const controlProject = snapshot.projects.find(p => p.kind !== 'commander' && (!selected || p.assistants?.some(a => a.id === selected)));
   const controlAssistant = controlProject ? dashboardAssistantFor(controlProject, selected) : undefined;
@@ -43,10 +47,12 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
       const needs = threads.filter(t => nativeRunState(t) === 'waiting').length;
       const done = threads.filter(t => t.status === 'done' && !t.pending && t.updated >= midnight.getTime()).length;
       const failed = threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight.getTime()).length;
-      return { sending: false, id: project.id, name: project.name, color: project.color, assistant: assistant?.id || '',
+      const ids = new Set(snapshot.threads.map(t => t.id));
+      const pending = pendingThreads(project.id, outbox, ids, connected, now);
+      return { id: project.id, name: project.name, color: project.color, assistant: assistant?.id || '',
         canStart: connected && !busy && project.canStart && (!project.assistants || !!assistant),
         activity: `${working} working · ${needs} need you · ${done} done today · ${failed} failed today`,
-        recent: [...threads].filter(t => !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).slice(0, 3).map(t => nativeThread(t, companionStatusRead(snapshot, read))),
+        recent: [...pending, ...[...threads].filter(t => !['archived', 'deleted'].includes(t.status)).sort(compareThreadRecency).map(t => nativeThread(t, companionStatusRead(snapshot, read)))].slice(0, 3),
         model: provider ? modelPillLabel(provider, controls[dashboardControlKey(project, selected)]?.selection ?? defaultSelection, []) : '',
       };
     }),

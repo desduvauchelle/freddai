@@ -9,6 +9,31 @@ const LAST_PROJECT_KEY = 'freddai.companion.lastProject';
 export const savedLastProject = (): string => { try { return localStorage.getItem(LAST_PROJECT_KEY) || ''; } catch { return ''; } };
 export const saveLastProject = (id: string) => { try { if (id) localStorage.setItem(LAST_PROJECT_KEY, id); } catch { /* Last-used project is a convenience only. */ } };
 
+const LAST_ASSISTANT_KEY = 'freddai.companion.lastAssistant';
+/** The coding agent last used for a project's new threads; callers must validate it against the project's current assistants. */
+export const savedLastAssistant = (project: string): string => { try { return project ? localStorage.getItem(`${LAST_ASSISTANT_KEY}.${project}`) || '' : ''; } catch { return ''; } };
+export const saveLastAssistant = (project: string, assistant?: string) => { try { if (project && assistant) localStorage.setItem(`${LAST_ASSISTANT_KEY}.${project}`, assistant); } catch { /* Last-used agent is a convenience only. */ } };
+/** Persisted last-used agent for a project, or '' when it is unset or no longer offered. */
+export const lastAssistantFor = (project?: CompanionProject): string => {
+  const id = project ? savedLastAssistant(project.id) : '';
+  return id && project?.assistants?.some(a => a.id === id) ? id : '';
+};
+
+const CONTROLS_KEY = 'freddai.companion.controls';
+/** Model/effort last used per `new:<project>:<assistant>:<provider>` key. */
+export const savedControls = (): Record<string, AgentSelection> => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CONTROLS_KEY) || '{}');
+    return Object.fromEntries(Object.entries(raw as Record<string, AgentSelection>).filter(([k, v]) => k.startsWith('new:') && typeof v?.model === 'string' && typeof v?.effort === 'string'));
+  } catch { return {}; }
+};
+export const saveControls = (controls: Record<string, { selection: AgentSelection }>) => {
+  try {
+    const next = Object.fromEntries(Object.entries(controls).filter(([k]) => k.startsWith('new:')).map(([k, v]) => [k, { model: v.selection.model, effort: v.selection.effort }]));
+    localStorage.setItem(CONTROLS_KEY, JSON.stringify(next));
+  } catch { /* Last-used model is a convenience only. */ }
+};
+
 /** First of the preferred project ids that can start threads, else the first startable project. */
 export function pickNewProject(projects: CompanionProject[], ...preferred: string[]): string {
   return preferred.find(id => !!id && projects.some(p => p.id === id && p.canStart)) ?? projects.find(p => p.canStart)?.id ?? '';

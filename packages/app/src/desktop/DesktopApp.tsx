@@ -28,7 +28,7 @@ import { ThreadError } from "./ThreadError";
 import { ThreadList } from "./ThreadList";
 import { RecentThreadsFooter, ThreadViewToggle } from "../RecentThreadsControls";
 import { THREAD_NAV_VIEW_KEY, asThreadNavView, selectRecentThreads } from "../recentThreads";
-import { HomeView } from "./HomeView";
+import { HomeView, pendingTitle, type PendingLaunch } from "./HomeView";
 import { CommanderView } from "./commander/CommanderView";
 import { CommanderTrailingContext } from "./commander/TrailingContext";
 import { CommanderProfile } from "./commander/CommanderProfile";
@@ -687,6 +687,12 @@ function DesktopWorkspace() {
   const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default");
   const [homeAccount, setHomeAccount] = usePreference<string>("freddai.home-agent-account", "");
   const [homeSelections, setHomeSelections] = usePreference<Record<string, AgentSelection>>("freddai.home-agent-selections", {});
+  // Launches in flight, shown as "Sending…" rows on the project card until the real thread is in the snapshot.
+  const [pendingLaunches, setPendingLaunches] = useState<PendingLaunch[]>([]);
+  const endPending = (id: string) => setPendingLaunches(list => list.filter(p => p.id !== id));
+  // True while the New thread dialog was opened from a Home project card: sending returns to the dashboard.
+  const fromHomeCard = useRef(false);
+  useEffect(() => { if (dialog !== "new") { fromHomeCard.current = false; keepSelection.current = false; } }, [dialog]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
   const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
   const [replySelections, setReplySelections] = useState<Record<string, AgentSelection>>({});
@@ -772,7 +778,8 @@ function DesktopWorkspace() {
     accountId === "default" ? resolveAccount(db, destination) : accountId;
   const newAccount = db.accounts.find(a => a.id === effective);
   const replySelectionFor = (t: Session) => replySelections[t.id] || { model: t.options?.model || "", effort: t.options?.effort || "default" };
-  useEffect(() => { setModel(""); setEffort("default"); }, [newAccount?.provider]);
+  const keepSelection = useRef(false);
+  useEffect(() => { if (keepSelection.current) { keepSelection.current = false; return; } setModel(""); setEffort("default"); }, [newAccount?.provider]);
   const [trackThreadRecency] = useState(browserThreadRecencyTracker);
   const rawSnapshot = useRef<Database>(empty);
   function acceptSnapshot(next: Database) {
@@ -927,12 +934,19 @@ function DesktopWorkspace() {
     setCommanderOpen(false);
     setHome(true);
   }
-  function newThreadInProject(project: string, focus = true) {
+  function newThreadInProject(project: string, focus = true, fromCard = false) {
     setScheduleView(null);
     setWorktree(db.preferences.use_worktree ?? false);
-    setModel(""); setEffort("default");
+    fromHomeCard.current = fromCard;
+    // Agent: the project's last-used account (Project.last, recorded by the runtime), else the Home/project/global resolution.
+    const last = db.projects.find(p => p.id === project)?.last;
+    const plan = resolveHomeTile(project);
+    const agent = db.accounts.find(a => a.id === last)?.id ?? (plan.ok ? plan.account : "default");
+    const selection = homeSelections[agent];
+    keepSelection.current = fromCard && !!selection?.model;
+    setModel(fromCard ? selection?.model ?? "" : ""); setEffort(fromCard ? selection?.effort ?? "default" : "default");
     draftRequest.current = crypto.randomUUID();
-    setAccountId("default");
+    setAccountId(agent);
     setProjectId(project);
     setDialog("new");
     if (focus) setTimeout(() => newPrompt.current?.focus(), 0);
@@ -1136,14 +1150,19 @@ function DesktopWorkspace() {
       return;
     }
     if (!native || working || staging || !newAccount || !destination || !draft.trim()) return;
+    const stayHome = fromHomeCard.current;
+    // From a project card: close the dialog now and return to the dashboard, where the pending row shows the send.
+    if (stayHome) { setDialog(null); setHome(true); }
     await action(async () => {
       await launchThread({
+        select: !stayHome,
         project: projectId, account: effective, prompt: draft, attachments: newAttachments, requestId: draftRequest.current,
         options: { permission_mode: effectivePermissionMode(newAccount?.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" || !["codex","claude"].includes(db.accounts.find(a => a.id === effective)?.provider || "") ? null : effort, attachments: newAttachments.map(f => f.id), request_id: draftRequest.current },
       });
       setDraft("");
       setNewAttachments([]);
       await refresh();
+      endPending(draftRequest.current);
     });
   }
   /** The single launch path: used by the New thread composer and by Home's per-project prompt. */
@@ -1161,11 +1180,13 @@ function DesktopWorkspace() {
     };
     const sentNavigation = navigationRevision.current;
     setLaunching(preview);
+    setPendingLaunches(list => [{ id: requestId, project, title: pendingTitle(prompt) }, ...list]);
     try {
       const commander = db.projects.find(p => p.id === project)?.kind === "commander";
       const existing = commander ? (await commanderApi.state()).thread_id : null;
       const sid = await invoke<string>("launch", { project, account: existing ? null : account, prompt, options, existing });
       onCreated?.(sid);
+      setPendingLaunches(list => list.map(p => p.id === requestId ? { ...p, threadId: sid } : p));
       setLaunching({ ...preview, id: sid });
       if (select && navigationRevision.current === sentNavigation) {
         setSelected(sid);
@@ -1175,6 +1196,7 @@ function DesktopWorkspace() {
       return sid;
     } catch (error) {
       setLaunching(null);
+      endPending(requestId);
       throw error;
     }
   }
@@ -1227,6 +1249,7 @@ function DesktopWorkspace() {
         options: { permission_mode: plan.permission_mode, worktree: plan.worktree, model: plan.model, effort: plan.effort, attachments: [], request_id: requestId },
       });
       await refresh();
+      endPending(requestId);
       return prompt.trim().split("\n")[0].slice(0, 100);
     } finally { actionLock.current = false; setWorking(false); }
   }
@@ -1246,6 +1269,7 @@ function DesktopWorkspace() {
         options: { permission_mode: base.permission_mode, worktree: base.worktree, model: model.trim() || null, effort: effort === "default" || !["codex", "claude"].includes(account.provider) ? null : effort, attachments: [], request_id: requestId },
       });
       await refresh();
+      endPending(requestId);
     } finally { actionLock.current = false; setWorking(false); }
   }
   async function respondHome(thread: Session, allow: boolean, answers: Record<string, unknown>) {
@@ -1579,12 +1603,14 @@ function DesktopWorkspace() {
     );
   }
   // One pane of the conversation area; `side` is the pane when split, otherwise the single pane.
-  function conversation(side: SplitSide) {
-    const id = splitActive ? view[side] : selected, thread = db.sessions.find(t => t.id === id);
-    const focused = !splitActive || view.focus === side;
-    const toggle = { canToggleSplit: !windowThread && !narrow && (!splitActive || side === "right"), onToggleSplit: () => setView(toggleSplit) };
-    const onFocus = () => setView(current => focusPane(current, side));
+  // `forId` renders an arbitrary thread as a standalone pane (the Home project sheet) without touching selection or split state.
+  function conversation(side: SplitSide, forId?: string) {
+    const id = forId ?? (splitActive ? view[side] : selected), thread = db.sessions.find(t => t.id === id);
+    const focused = forId ? true : !splitActive || view.focus === side;
+    const toggle = { canToggleSplit: !forId && !windowThread && !narrow && (!splitActive || side === "right"), onToggleSplit: () => setView(toggleSplit) };
+    const onFocus = () => { if (!forId) setView(current => focusPane(current, side)); };
     const onClose = () => {
+      if (forId) return;
       if (windowThread) { void action(() => getCurrentWindow().close()); return; }
       if (splitActive) setView(current => closePane(current, side));
       else setSelected("");
@@ -1596,8 +1622,8 @@ function DesktopWorkspace() {
         key={thread.id}
         standalone={!!windowThread}
         task={thread} db={db} read={read} native={native} working={working} staging={staging}
-        split={splitActive} side={side} focused={focused} {...toggle}
-        composerRef={focused ? composer : undefined}
+        split={!forId && splitActive} side={side} focused={focused} {...toggle}
+        composerRef={focused && !forId ? composer : undefined}
         attachments={replyAttachments[thread.id] ?? []} onAttachments={files => setReplyAttachments(previous => ({ ...previous, [thread.id]: files }))}
         permission={replyPermissions[thread.id] || savedPermissionMode(thread.options?.permission_mode)}
         onPermission={value => setReplyPermissions(previous => ({ ...previous, [thread.id]: value }))}
@@ -2031,8 +2057,11 @@ function DesktopWorkspace() {
             onMoveProject={moveProjectGroup}
             canCreate={native && !working && !launching}
             onOpenThread={id => { setHome(false); setSelected(id); }}
+            renderThread={id => conversation("left", id)}
+            onThreadViewed={t => { if (t.status === "done" || t.status === "failed") markThreadRead(t); }}
             onAddProject={addProject}
-            onNewThread={newThreadInProject}
+            onNewThread={project => newThreadInProject(project, true, true)}
+            pendingLaunches={pendingLaunches}
             native={native} homeSelections={homeSelections} homeAccount={homeAccount} onHomeAccount={setHomeAccount}
             onHomeSelection={(account, selection) => setHomeSelections(previous => ({ ...previous, [account]: selection }))}
             onCreateThread={createHomeThread}

@@ -13,13 +13,13 @@ use crate::thread_list_settings::ThreadListSettings;
 
 // Quota reads run outside snapshot delivery and never start a model turn.
 fn companion_product_usage(root: &Path, db: &Database) -> Value {
-    type Entry = (Instant, Option<Value>, bool);
+    type Entry = (Instant, Option<Value>, bool, Option<String>);
     static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, Entry>>> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     let mut cache = cache.lock().unwrap();
     Value::Array(db.accounts.iter().map(|account| {
         let key = root.join("usage").join(&account.id);
-        let entry = cache.entry(key.clone()).or_insert((Instant::now() - Duration::from_secs(121), None, false));
+        let entry = cache.entry(key.clone()).or_insert((Instant::now() - Duration::from_secs(121), None, false, None));
         if !entry.2 && entry.0.elapsed() >= Duration::from_secs(120) {
             entry.2 = true;
             let root = root.to_path_buf();
@@ -27,13 +27,16 @@ fn companion_product_usage(root: &Path, db: &Database) -> Value {
             std::thread::spawn(move || {
                 let result = host::call(&root, "account_usage", json!({"account":id}));
                 if let Some(entry) = CACHE.get().unwrap().lock().unwrap().get_mut(&key) {
-                    if let Ok(value) = result { entry.1 = Some(value); }
+                    match result {
+                        Ok(value) => { entry.1 = Some(value); entry.3 = None; }
+                        Err(error) => entry.3 = Some(error),
+                    }
                     entry.0 = Instant::now();
                     entry.2 = false;
                 }
             });
         }
-        json!({"id":account.id,"name":account.name,"provider":account.provider,"color":account.color,"usage":entry.1})
+        json!({"id":account.id,"name":account.name,"provider":account.provider,"color":account.color,"usage":entry.1,"error":entry.3})
     }).collect())
 }
 
@@ -359,6 +362,31 @@ fn preview_open(root: &Path, device: &crate::companion_pairing::Device, input: &
     let relay = crate::companion_pairing::edit(root,|r|Ok(r.relay.clone()))?;
     crate::preview_host::open(&crate::preview_host::RelayAuth{relay:relay.as_deref(),token:&device.mailbox,key:&device.key},port,path,transcript.as_deref())
 }
+/// Devices may edit schedule content but never host-owned fields: launch options (permission mode,
+/// model, attachments), run history and run-now. Old hosts must also not silently drop routine controls.
+fn guard_schedule_save(root: &Path, mut input: Value) -> Result<Value,String> {
+    let schedule = input["schedule"].clone();
+    if !schedule.is_object() { return Ok(input); }
+    if crate::companion_operations::schedule_needs_hello(&schedule) {
+        let hello = host::call(root, "hello", json!({}))?;
+        crate::companion_operations::require_schedule_support(&schedule, &hello)?;
+    }
+    let id = schedule["id"].as_str().unwrap_or("");
+    let host_options = if id.is_empty() { serde_json::to_value(LaunchOptions::default()).map_err(|e| e.to_string())? } else {
+        let db = host::call(root, "snapshot", json!({}))?;
+        let existing = db["schedules"].as_array().and_then(|all| all.iter().find(|s| s["id"] == id))
+            .ok_or("Schedule not found")?;
+        existing["options"].clone()
+    };
+    if !schedule["options"].is_null() && schedule["options"] != host_options {
+        eprintln!("companion.schedule.options_overridden id={id:?} reason=\"device sent options that differ from host-owned options\" sent={}", schedule["options"]);
+    }
+    let target = input["schedule"].as_object_mut().unwrap();
+    target.insert("options".into(), host_options);
+    target.remove("runs");
+    target.remove("run_now");
+    Ok(input)
+}
 pub(crate) fn dispatch_for_device(root: &Path, device: &crate::companion_pairing::Device, route: &str, p: Value) -> Result<Value,String> {
     if route == "/v1/composer" && p["operation"] == "preview_open" { return preview_open(root, device, &p["input"]); }
     dispatch(root, route, p)
@@ -367,7 +395,9 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
         let operation = text(&p,"operation")?;
         if operation == "google_capability" { return Ok(crate::companion_operations::google_capability(&host::call(root, "hello", json!({}))?)); }
-        let mut result = host::call(root, operation, p["input"].clone())?;
+        let mut input = p["input"].clone();
+        if operation == "save_schedule" { input = guard_schedule_save(root, input)?; }
+        let mut result = host::call(root, operation, input)?;
         // The companion snapshot never exposes filesystem paths.
         if operation == "commander_state" { if let Some(project) = result["project"].as_object_mut() { project.remove("path"); } }
         return Ok(result);
@@ -800,6 +830,71 @@ mod schedule_transport_tests {
         }
         assert!(crate::companion_operations::validate("shell").is_err());
         host.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod schedule_guard_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener, sync::mpsc};
+    /// Fake host answering `expected` calls in order; returns (root, requests received, join handle).
+    fn fake_host(tag: &str, replies: Vec<(&'static str, Value)>) -> (PathBuf, mpsc::Receiver<Value>, std::thread::JoinHandle<()>) {
+        let root = std::env::temp_dir().join(format!("fr-{tag}-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            for (method, reply) in replies {
+                let (mut connection, _) = socket.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], method);
+                tx.send(request).unwrap();
+                writeln!(connection, "{}", json!({"result":reply})).unwrap();
+            }
+        });
+        (root, rx, handle)
+    }
+    #[test]
+    fn device_cannot_set_schedule_options_or_run_history() {
+        let existing = json!({"permission_mode":"default","worktree":true,"scheduled":true});
+        let (root, rx, host) = fake_host("sched-opts", vec![
+            ("snapshot", json!({"schedules":[{"id":"s1","options":existing}]})),
+            ("save_schedule", json!(null)),
+            ("save_schedule", json!(null)),
+        ]);
+        let forged = json!({"permission_mode":"bypass"});
+        dispatch(&root, "/v1/composer", json!({"operation":"save_schedule","input":{"schedule":{"id":"s1","name":"n","options":forged,"runs":[{"x":1}],"run_now":5}}})).unwrap();
+        assert_eq!(rx.recv().unwrap()["method"], "snapshot");
+        let saved = rx.recv().unwrap();
+        assert_eq!(saved["params"]["schedule"]["options"], existing);
+        assert_eq!(saved["params"]["schedule"]["name"], "n");
+        assert!(saved["params"]["schedule"].get("runs").is_none());
+        assert!(saved["params"]["schedule"].get("run_now").is_none());
+        dispatch(&root, "/v1/composer", json!({"operation":"save_schedule","input":{"schedule":{"id":"","name":"new","options":forged}}})).unwrap();
+        let created = rx.recv().unwrap();
+        assert_eq!(created["params"]["schedule"]["options"], serde_json::to_value(LaunchOptions::default()).unwrap());
+        assert_ne!(created["params"]["schedule"]["options"]["permission_mode"], "bypass");
+        host.join().unwrap(); fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn older_host_rejects_end_date_without_reaching_save() {
+        let (root, rx, host) = fake_host("sched-old", vec![("hello", json!({"version":"2"}))]);
+        let error = dispatch(&root, "/v1/composer", json!({"operation":"save_schedule","input":{"schedule":{"id":"","name":"n","end_date":"2027-01-01"}}})).unwrap_err();
+        assert!(error.contains("enforce end dates"), "{error}");
+        host.join().unwrap();
+        assert_eq!(rx.recv().unwrap()["method"], "hello");
+        assert!(rx.try_recv().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn schedule_action_passes_through_unchanged() {
+        let (root, rx, host) = fake_host("sched-act", vec![("schedule_action", json!(null))]);
+        dispatch(&root, "/v1/composer", json!({"operation":"schedule_action","input":{"schedule":"s1","action":"pause"}})).unwrap();
+        host.join().unwrap();
+        assert_eq!(rx.recv().unwrap()["params"], json!({"schedule":"s1","action":"pause"}));
         fs::remove_dir_all(root).unwrap();
     }
 }

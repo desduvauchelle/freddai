@@ -576,13 +576,19 @@ final class ComposerView: UIView, UITextViewDelegate {
     recordingCancelButton.tintColor = UIColor.label.resolvedColor(with: traitCollection).mixed(with: UIColor.systemRed.resolvedColor(with: traitCollection), amount: cancelAmount)
     recordingCancelButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.15 * cancelAmount)
     recordingCancelButton.layer.cornerRadius = 22
-    recordingCancelButton.transform = CGAffineTransform(scaleX: 1 + 0.5 * cancelAmount, y: 1 + 0.5 * cancelAmount)
+    let cancelTranslation: CGPoint
+    if active && !Motion.reduced, let finger = finger {
+      cancelTranslation = RecordingSwipe.followTranslation(for: recordingCancelButton, fingerInWindow: finger, sendProgress: cancelAmount, axis: .horizontal)
+    } else { cancelTranslation = .zero }
+    recordingCancelButton.layer.zPosition = cancelAmount > 0 ? 100 : 0
+    recordingCancelButton.transform = CGAffineTransform(translationX: cancelTranslation.x, y: 0).scaledBy(x: 1 + 0.5 * cancelAmount, y: 1 + 0.5 * cancelAmount)
     let scale = 1 + amount
     let following = active && !Motion.reduced && finger != nil && amount > 0 && cancelAmount == 0
     if following, let finger = finger {
       followLifted = RecordingSwipe.liftForFollow(recordingSendCue, already: followLifted)
       let t = RecordingSwipe.followTranslation(for: recordingSendCue, fingerInWindow: finger, sendProgress: amount)
-      recordingSendCue.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: scale, y: scale)
+      let railScale = RecordingSwipe.followScale(for: recordingSendCue, progress: amount)
+      recordingSendCue.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: railScale, y: railScale)
     } else {
       if !followLifted.isEmpty { RecordingSwipe.restoreAfterFollow(recordingSendCue, lifted: followLifted); followLifted = [] }
       recordingSendCue.transform = active ? CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -8 * amount).scaledBy(x: scale, y: scale) : CGAffineTransform(translationX: 0, y: 54)

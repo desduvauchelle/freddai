@@ -7,7 +7,6 @@ struct DashboardModel: Decodable {
     let id: String; let name: String; let color: String; let assistant: String
     let activity: String; let model: String; let canStart: Bool
     var recent: [RecentThread]? = nil
-    var sending: Bool? = nil
   }
   struct ProjectGroup: Decodable { let id: String; let name: String?; let projects: [String] }
   var projectGroups: [ProjectGroup]?
@@ -114,7 +113,8 @@ final class DashboardRecordingBar: UIView {
     if active && !Motion.reduced && finger != nil && send > 0 && cancel == 0, let finger = finger {
       followLifted = RecordingSwipe.liftForFollow(sendCue, already: followLifted)
       let t = RecordingSwipe.followTranslation(for: sendCue, fingerInWindow: finger, sendProgress: send)
-      sendCue.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: scale, y: scale)
+      let railScale = RecordingSwipe.followScale(for: sendCue, progress: send)
+      sendCue.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: railScale, y: railScale)
     } else {
       if !followLifted.isEmpty { RecordingSwipe.restoreAfterFollow(sendCue, lifted: followLifted); followLifted = [] }
       sendCue.transform = CGAffineTransform(translationX: 0, y: Motion.reduced ? 0 : -8 * send).scaledBy(x: scale, y: scale)
@@ -123,7 +123,7 @@ final class DashboardRecordingBar: UIView {
     cancelButton.backgroundColor = UIColor.systemRed.withAlphaComponent(0.15 * cancel)
     if active && !Motion.reduced && cancel > 0, let finger = finger {
       cancelLifted = RecordingSwipe.liftForFollow(cancelButton, already: cancelLifted)
-      let t = RecordingSwipe.followTranslation(for: cancelButton, fingerInWindow: finger, sendProgress: cancel)
+      let t = RecordingSwipe.followTranslation(for: cancelButton, fingerInWindow: finger, sendProgress: cancel, axis: .horizontal)
       cancelButton.transform = CGAffineTransform(translationX: t.x, y: t.y).scaledBy(x: 1 + 0.5 * cancel, y: 1 + 0.5 * cancel)
     } else {
       RecordingSwipe.restoreAfterFollow(cancelButton, lifted: cancelLifted); cancelLifted = []
@@ -457,16 +457,8 @@ final class DashboardView: UIScrollView {
     dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
     dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
-    let title = button(project.sending == true ? "Sending message…" : project.name) { emit("open") }
-    title.accessibilityLabel = project.sending == true ? "Sending message to \(project.name)" : project.name
-    if project.sending == true {
-      let spinner = UIActivityIndicatorView(style: .medium)
-      spinner.transform = CGAffineTransform(scaleX: 0.55, y: 0.55)
-      spinner.translatesAutoresizingMaskIntoConstraints = false
-      dot.backgroundColor = .clear; dot.addSubview(spinner)
-      NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: dot.centerXAnchor), spinner.centerYAnchor.constraint(equalTo: dot.centerYAnchor)])
-      spinner.startAnimating()
-    }
+    let title = button(project.name) { emit("open") }
+    title.accessibilityLabel = project.name
     title.constraints.filter { $0.firstAttribute == .height }.forEach { $0.isActive = false }
     title.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
     title.accessibilityIdentifier = "dashboard-project-" + project.id
@@ -543,7 +535,18 @@ final class DashboardView: UIScrollView {
       title.font = Self.scaled(14, .regular, .subheadline)
       title.numberOfLines = 1; title.lineBreakMode = .byTruncatingTail
       title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-      let content = UIStackView(arrangedSubviews: [title, indicator])
+      var rowViews: [UIView] = [title]
+      if thread.status == "sending" || thread.status == "queued" {
+        let state = UILabel()
+        state.text = thread.status == "sending" ? "Sending…" : "Queued"
+        state.font = Self.scaled(12, .regular, .caption1)
+        state.textColor = .secondaryLabel
+        state.setContentHuggingPriority(.required, for: .horizontal)
+        state.setContentCompressionResistancePriority(.required, for: .horizontal)
+        rowViews.append(state)
+      }
+      rowViews.append(indicator)
+      let content = UIStackView(arrangedSubviews: rowViews)
       content.alignment = .center; content.spacing = 4
       content.isUserInteractionEnabled = false; content.translatesAutoresizingMaskIntoConstraints = false
       link.addSubview(content)

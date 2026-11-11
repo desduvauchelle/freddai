@@ -17,12 +17,16 @@ import { Button } from '@freddai/ui/components/button';
 import { labelStatus } from '../desktop/ThreadStatus';
 import { compareThreadRecency, threadListStatus } from '../desktop/types';
 import { assistantLabel } from './native-home';
-import { companionThreadFaded, nativeRunState } from './native-threads';
+import { companionThreadFaded, nativeRunState, pendingThreads } from './native-threads';
+import type { Outgoing } from './outbox';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@freddai/ui/components/sheet';
 
 type Props = {
-  sendingProjects?: string[];
+  /** Messages still being delivered as new threads; shown as pending rows under their project. */
+  outbox?: Outgoing[];
   nativeCards?: boolean;
+  /** When set, the owner shows the project's threads (one shared sheet state machine); otherwise this component's own Sheet is used. */
+  onProject?: (project: string) => void;
   nativeContent?: boolean;
   onOfficeHeightChange?: (height: number) => void;
   onOfficeExpandedChange?: (expanded: boolean) => void;
@@ -48,12 +52,12 @@ function ProjectCard({ project, snapshot, now, onProject, ...props }: Props & { 
     needs: threads.filter(t => nativeRunState(t) === 'waiting').length,
     failed: threads.filter(t => nativeRunState(t) === 'failed' && t.updated >= midnight).length,
   };
+  const pending = pendingThreads(project.id, props.outbox ?? [], new Set(snapshot.threads.map(t => t.id)), props.connected, now);
   return <ProjectTile openLabel={`Open project ${project.name}`} project={project} hasThreads={threads.length > 0} counts={counts}
-    recent={[...threads].sort(compareThreadRecency).slice(0, 3).map(t => ({ id: t.id, title: t.title, status: threadListStatus(t, companionStatusRead(snapshot, props.read ?? {})) }))}
+    recent={[...pending.map(t => ({ id: t.id, title: t.title, status: t.status as ReturnType<typeof threadListStatus> })),
+      ...[...threads].sort(compareThreadRecency).map(t => ({ id: t.id, title: t.title, status: threadListStatus(t, companionStatusRead(snapshot, props.read ?? {})) }))].slice(0, 3)}
     onOpen={onProject} onOpenThread={props.onOpen}
-    actions={<ProjectActions {...props} compact project={project} snapshot={snapshot} />}>
-    {props.sendingProjects?.includes(project.id) && <p role="status">Sending message…</p>}
-  </ProjectTile>;
+    actions={<ProjectActions {...props} compact project={project} snapshot={snapshot} />} />;
 }
 
 function ProjectActions({ project, connected, client, onNew, onDictation,
@@ -159,7 +163,7 @@ export function CompanionDashboard(props: Props) {
     </section>}
     {dashboardProjectGroups(snapshot).map(group => <section key={group.id} aria-label={group.name ?? undefined}>
       {group.name && <h3 className="companion-workspace-heading">{group.name}</h3>}
-      <div className="companion-project-grid">{group.projects.map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => setOpenProject(project.id)} />)}</div>
+      <div className="companion-project-grid">{group.projects.map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => props.onProject ? props.onProject(project.id) : setOpenProject(project.id)} />)}</div>
     </section>)}
     <Sheet open={!!activeProject} onOpenChange={open => { if (!open) setOpenProject(null); }}>
       <SheetContent className="companion-project-panel">

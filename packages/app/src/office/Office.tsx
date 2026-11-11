@@ -2,7 +2,7 @@ import { createPortal } from "react-dom";
 import { Eye, EyeOff, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Project, Session } from "../desktop/types";
-import { officeModel, STATE_CUE, STATE_LABEL, totalsLabel, type OfficeAgent, type OfficeAgentState, type OfficeCard, type OfficeModel, type OfficeProposal, type OfficeSchedule } from "./officeModel";
+import { officeModel, STATE_CUE, STATE_LABEL, type OfficeAgent, type OfficeAgentState, type OfficeCard, type OfficeModel, type OfficeProposal, type OfficeSchedule } from "./officeModel";
 import { BAND_H, CELL_H, FACE, SIDE, SOUTH, TRAY_COLS, TRAY_MAX, WALL, bestFullLayout, floorPlan, miniCols, type Layout, type PlacedRoom, type PlanProject } from "./officeLayout";
 import { readRecentOnly, recentProjects, writeRecentOnly } from "./officeFilter";
 import { useOfficeStage, type Char, type Stage } from "./officeStage";
@@ -144,15 +144,17 @@ function StickyCard({ x, y, card, actions }: { x: number; y: number; card: Offic
   </g>;
 }
 
-function RoomShell({ r, id, stage, extra, commander, cards, actions }: { r: PlacedRoom; id: string; stage: Stage; extra: { totals: string; overflow: number }; commander: OfficeModel["commander"]; cards: OfficeCard[]; actions: CardActions }) {
+function RoomShell({ r, id, stage, extra, commander, cards, actions }: { r: PlacedRoom; id: string; stage: Stage; extra: { overflow: number }; commander: OfficeModel["commander"]; cards: OfficeCard[]; actions: CardActions }) {
   if (r.project.kind === "commander") return <BossRoom r={r} commander={commander} />;
   const { x, y, w, h, project } = r, color = project.color;
   const door = 34, dx = Math.round(r.doorX - door / 2), floorY = r.floorY;
   const plateW = w - 16, chars = Math.floor((plateW - 12) / 8.1);
+  const name = project.name.trim();
+  const split = name.length > chars ? Math.max(name.lastIndexOf(" ", chars), 0) || chars : name.length;
+  const nameLines = [name.slice(0, split), name.slice(split).trim()].filter(Boolean);
   const rugW = w - 2 * SIDE - 20, rugH = 2 * CELL_H - 26;
   const owners = stage.destinations.owners.get(r.index);
   const charById = new Map(stage.chars.map(c => [c.agent.id, c] as const));
-  const scoreW = extra.overflow ? plateW - 24 : plateW;
   return <g>
     {/* floor, rug */}
     <rect className="office-floor" x={x} y={floorY} width={w} height={h - FACE} fill={`url(#${id}-f${r.index})`} />
@@ -164,15 +166,12 @@ function RoomShell({ r, id, stage, extra, commander, cards, actions }: { r: Plac
     <rect x={x} y={y + h - SOUTH} width={dx - x} height={SOUTH} fill="#2a2536" /><rect x={dx + door} y={y + h - SOUTH} width={x + w - dx - door} height={SOUTH} fill="#2a2536" />
     <rect x={dx - 2} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" /><rect x={dx + door} y={y + h - SOUTH} width={2} height={SOUTH} fill="#8a5f36" />
     <rect x={dx} y={y + h - SOUTH} width={door} height={SOUTH} fill={mix(color, "#1b1a24", 0.5)} opacity={0.55} />
-    {/* name plate and scoreboard on the wall */}
-    <rect className="office-project-plate-border" x={x + 7} y={y + 5} width={plateW + 2} height={18} fill="#1b1a24" /><rect className="office-project-plate" x={x + 8} y={y + 6} width={plateW} height={16} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
-    <text className="office-project-name" x={x + 8 + plateW / 2} y={y + 20} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, chars)}</text>
-    <text className="office-project-name-phone" x={x + 8 + plateW / 2} y={y + 28} textAnchor="middle" fontSize={18} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>{clip(project.name, Math.floor((plateW - 12) / 11.2))}</text>
-    <g className="office-project-scoreboard" role="group" aria-label={`${project.name} scoreboard`}>
-      <rect x={x + 7} y={y + 23} width={scoreW + 2} height={11} fill="#1b1a24" /><rect x={x + 8} y={y + 24} width={scoreW} height={9} fill="#14231c" />
-      <text x={x + 8 + scoreW / 2} y={y + 30.4} textAnchor="middle" fontSize={7.4} fontWeight={700} fill="#7bd88f" fontFamily={MONO} {...(extra.totals.length * 4.5 > scoreW - 6 ? { textLength: scoreW - 6, lengthAdjust: "spacingAndGlyphs" as const } : {})}>{extra.totals}</text>
-      {extra.overflow > 0 && <g><rect x={x + 8 + scoreW + 2} y={y + 21} width={22} height={13} fill="#1b1a24" /><rect x={x + 9 + scoreW + 2} y={y + 22} width={20} height={11} fill="#f2c14e" /><text x={x + 19 + scoreW + 2} y={y + 30.6} textAnchor="middle" fontSize={8} fontWeight={800} fill="#1b1a24" fontFamily={MONO}>+{extra.overflow}</text></g>}
-    </g>
+    {/* Project titles use the whole wall sign on every screen size. */}
+    <rect className="office-project-plate-border" x={x + 7} y={y + 5} width={plateW + 2} height={30} fill="#1b1a24" /><rect className="office-project-plate" x={x + 8} y={y + 6} width={plateW} height={28} fill="#2c2638" /><rect x={x + 8} y={y + 6} width={plateW} height={3} fill={color} />
+    <text className="office-project-name" x={x + 8 + plateW / 2} y={y + (nameLines.length > 1 ? 20 : 27)} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f4f1fa" fontFamily={MONO}>
+      {nameLines.map((line, i) => <tspan key={i} x={x + 8 + plateW / 2} dy={i ? 12 : 0}>{clip(line, chars)}</tspan>)}
+    </text>
+    {extra.overflow > 0 && <g aria-label={`${extra.overflow} more agents`}><rect x={x + w - 30} y={y + 36} width={22} height={13} fill="#1b1a24" /><rect x={x + w - 29} y={y + 37} width={20} height={11} fill="#f2c14e" /><text x={x + w - 19} y={y + 45.6} textAnchor="middle" fontSize={8} fontWeight={800} fill="#1b1a24" fontFamily={MONO}>+{extra.overflow}</text></g>}
     {/* desks: chair, monitor, desk (agents are drawn separately) */}
     {r.desks.map(d => {
       const owner = owners?.get(d.slot), ch = owner ? charById.get(owner.id) : undefined;
@@ -361,7 +360,7 @@ function Scene({ overview, model, layout, variant, now, height, onOpen, onBackgr
           onClick={interactive ? e => { e.stopPropagation(); select(); } : undefined}
           onKeyDown={interactive ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); select(); } } : undefined}>
           <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="transparent" />
-          <RoomShell r={r} id={id} stage={stage} extra={{ totals: totalsLabel(model.rooms[r.index].totals), overflow: stage.destinations.overflow.get(r.index) ?? 0 }} commander={model.commander} cards={model.cards.filter(c => c.projectId === r.project.id)} actions={actions} />
+          <RoomShell r={r} id={id} stage={stage} extra={{ overflow: stage.destinations.overflow.get(r.index) ?? 0 }} commander={model.commander} cards={model.cards.filter(c => c.projectId === r.project.id)} actions={actions} />
         </g>;
       })}
       {listening && selectedRoom && <g className="office-listening" aria-hidden="true">
@@ -469,8 +468,10 @@ export function Office({ sessions, projects: allProjects, schedules, queuedThrea
   const clock = now ?? Date.now();
   const [recentOnly, setRecentOnly] = useState(readRecentOnly);
   const toggleRecent = useCallback(() => setRecentOnly(v => { writeRecentOnly(!v); return !v; }), []);
-  const projects = useMemo(() => (recentOnly ? recentProjects(allProjects, sessions, schedules, clock, queuedThreadIds) : allProjects), [recentOnly, allProjects, sessions, schedules, clock, queuedThreadIds]);
-  const hiddenCount = allProjects.length - projects.length;
+  // Commander already has a dedicated dashboard section outside the workplace.
+  const workplaceProjects = useMemo(() => allProjects.filter(p => p.kind !== "commander"), [allProjects]);
+  const projects = useMemo(() => (recentOnly ? recentProjects(workplaceProjects, sessions, schedules, clock, queuedThreadIds) : workplaceProjects), [recentOnly, workplaceProjects, sessions, schedules, clock, queuedThreadIds]);
+  const hiddenCount = workplaceProjects.length - projects.length;
   const recent: RecentProps = { recentOnly, hidden: hiddenCount, onToggleRecent: toggleRecent };
   const model = useMemo(() => officeModel(sessions, projects, clock, schedules, queuedThreadIds, proposals), [sessions, projects, clock, schedules, queuedThreadIds, proposals]);
   const plan = usePlanProjects(projects);

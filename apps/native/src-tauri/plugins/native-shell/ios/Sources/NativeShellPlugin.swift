@@ -9,6 +9,7 @@ struct SetModeArgs: Decodable {
   var placeholder: String?
   var openDrawer: Bool?
   var threadSheet: Bool?
+  var back: Bool?
 }
 
 struct SetDashboardArgs: Decodable { let model: DashboardModel }
@@ -202,6 +203,7 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
 
     let drawer = ThreadDrawerViewController()
     let container = DrawerContainerViewController(content: nav, drawer: drawer)
+    shell.onBack = { [weak self] in try? self?.trigger("navBack", data: ProjectPayload(project: "")) }
     shell.onMenu = { [weak container, weak drawer] in
       drawer?.refreshTimes()
       container?.toggleThreadList()
@@ -239,6 +241,9 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
     drawer.onShowOlder = { [weak self] project in
       try? self?.trigger("showOlder", data: ProjectPayload(project: project))
     }
+    drawer.onShowLess = { [weak self] project in
+      try? self?.trigger("showLess", data: ProjectPayload(project: project))
+    }
     drawer.onSetView = { [weak self] view in
       try? self?.trigger("setView", data: ViewPayload(view: view))
     }
@@ -272,24 +277,24 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
 
   @objc func ping(_ invoke: Invoke) {
     DispatchQueue.main.async { [weak self] in
-      invoke.resolve(["installed": self?.shell != nil, "nativeDashboardContent": true, "nativeVoiceCall": true])
+      invoke.resolve(["installed": self?.shell != nil, "nativeDashboardContent": true, "nativeVoiceCall": true, "newThreadSheet": true, "projectSheet": true])
     }
   }
 
   @objc func setMode(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SetModeArgs.self)
     DispatchQueue.main.async { [weak self] in
-      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "dashboard" ? .dashboard : .other
-      if args.threadSheet == true && (mode == .conversation || mode == .commander) { self?.openThreadSheet() }
+      let mode: ShellMode = args.mode == "conversation" ? .conversation : args.mode == "commander" ? .commander : args.mode == "new" ? .new : args.mode == "project" ? .project : args.mode == "dashboard" ? .dashboard : .other
+      if args.threadSheet == true && (mode == .conversation || mode == .commander || mode == .new || mode == .project) { self?.openThreadSheet() }  // already open: openThreadSheet no-ops, so apply() below updates the sheet in place
       else if self?.threadSheetOpen == true, let container = self?.container {
         container.dismiss(animated: true) { [weak self] in self?.restoreShell() }
       }
-      self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder)
+      self?.shell?.apply(mode: mode, title: args.title, placeholder: args.placeholder, back: args.back ?? false)
       if args.threadSheet != true {
         self?.sheetDestinationReady = true
         self?.revealSheetDestination()
       }
-      self?.container?.drawerEnabled = mode != .other
+      self?.container?.drawerEnabled = mode != .other && mode != .project && args.back != true
       if mode != .other, args.openDrawer == true {
         self?.drawer?.refreshTimes()
         self?.container?.setOpen(true, animated: true)

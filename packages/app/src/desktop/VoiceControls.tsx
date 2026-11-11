@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { Loader2, Mic, Send, X } from "lucide-react";
+import { Loader2, Mic } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import "./VoiceControls.css";
+import { RecordingFeedback } from "../RecordingFeedback";
+import { recordingGesture } from "../recording-gesture";
 import { Button } from "@freddai/ui/components/button";
 import { holdKeyAction, shortcutLabel, useVoice, voice } from "./voice";
 
@@ -48,6 +50,9 @@ export function MicButton({ target, onText, className = "", label: idleLabel = "
   const snap = useVoice(), active = useRef(false), pressed = useRef<number | null>(null);
   const [mine, setMine] = useState(false), [elapsed, setElapsed] = useState(0), [levels, setLevels] = useState<number[]>([]);
   const button = useRef<HTMLButtonElement>(null);
+  const origin = useRef({ x: 0, y: 0 });
+  const [gesture, setGesture] = useState({ send: 0, cancel: 0 });
+  const [finger, setFinger] = useState<{ x: number; y: number } | null>(null);
   const here = mine || (snap.source === "hotkey" && target);
   const recording = here && snap.phase === "recording", transcribing = here && snap.phase === "transcribing";
   const latestText = useRef(onText); latestText.current = onText;
@@ -86,9 +91,12 @@ export function MicButton({ target, onText, className = "", label: idleLabel = "
     active.current = true; setMine(true);
     void voice.start("button").then(ok => { if (!ok) { active.current = false; pressed.current = null; setMine(false); } });
   }
-  function release() {
+  function release(point?: { x: number; y: number }) {
     const start = pressed.current; pressed.current = null;
-    if (start !== null && Date.now() - start >= 300) void end();
+    const action = point ? recordingGesture(origin.current, point) : null;
+    setGesture({ send: 0, cancel: 0 }); setFinger(null);
+    if (action?.shouldCancel) abort();
+    else if (start !== null && (Date.now() - start >= 300 || action?.shouldSend)) void end();
   }
   if (!snap.status?.ready) return null;
   return <span className="desktop-recording-control" data-state={mode}>
@@ -98,21 +106,17 @@ export function MicButton({ target, onText, className = "", label: idleLabel = "
       disabled={disabled || transcribing || (!here && (snap.phase === "recording" || snap.phase === "transcribing"))}
       onPointerDown={(e: PointerEvent<HTMLButtonElement>) => {
         if (e.button !== 0 || active.current) return;
-        e.currentTarget.setPointerCapture?.(e.pointerId); pressed.current = Date.now(); begin();
+        e.currentTarget.setPointerCapture?.(e.pointerId); origin.current = { x: e.clientX, y: e.clientY }; setGesture({ send: 0, cancel: 0 }); setFinger(null); pressed.current = Date.now(); begin();
       }}
-      onPointerUp={release}
-      onPointerMove={e => { if (pressed.current === null) return; const r = e.currentTarget.getBoundingClientRect(); if (e.clientX < r.left - 32 || e.clientX > r.right + 32 || e.clientY < r.top - 32 || e.clientY > r.bottom + 32) abort(); }}
+      onPointerUp={e => release({ x: e.clientX, y: e.clientY })}
+      onPointerMove={e => { if (pressed.current === null) return; const point = { x: e.clientX, y: e.clientY }; setGesture(recordingGesture(origin.current, point)); setFinger(point); }}
       onPointerCancel={abort} onLostPointerCapture={() => { if (pressed.current !== null) abort(); }}
       onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!e.repeat) { if (active.current) void end(); else { pressed.current = Date.now(); begin(); } } } }}
       onKeyUp={(e: KeyboardEvent<HTMLButtonElement>) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); release(); } }}
       onClick={e => { e.preventDefault(); if (e.detail === 0 && !active.current && !transcribing) begin(); }}
     >{transcribing ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}</Button>
-    {mine && (recording || transcribing) && <span className="desktop-recording-pill" role="group" aria-label="Voice recording">
-      {recording && <button type="button" aria-label="Cancel recording" title="Cancel recording (Escape)" onClick={abort}><X size={16} /></button>}
-      <span className="desktop-recording-time" role="timer">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span>
-      <span className="desktop-recording-wave" aria-hidden="true">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ height: `${3 + 21 * Math.min(1, (levels[i] ?? 0) * 4)}px` }} />)}</span>
-      {recording ? <button type="button" aria-label="Send recording" title="Send recording" onClick={() => void end()}><Send size={16} /></button> : <span role="status">Transcribing…</span>}
-    </span>}
+    {mine && recording && <RecordingFeedback elapsed={elapsed} levels={levels} {...gesture} finger={finger} onCancel={abort} onSend={() => void end()} />}
+    {mine && transcribing && <span className="desktop-recording-pill" role="status">Transcribing…</span>}
   </span>;
 }
 

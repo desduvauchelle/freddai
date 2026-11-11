@@ -196,13 +196,10 @@ class DashboardView(private val activity: AppCompatActivity,
                     contentDescription = "Open ${project.getString("name")}"
                     setOnClickListener { emit(action("open", project)) }
                     val statusDot = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
-                    if (project.optBoolean("sending")) statusDot.addView(ProgressBar(activity).apply {
-                        contentDescription = "Sending message to ${project.getString("name")}"
-                    }, FrameLayout.LayoutParams(dp(12), dp(12), android.view.Gravity.CENTER))
-                    else statusDot.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(projectColor) }
+                    statusDot.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(projectColor) }
                     addView(statusDot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { marginEnd = dp(8) })
                     addView(TextView(activity).apply {
-                        text = if (project.optBoolean("sending")) "Sending message…" else project.getString("name"); textSize = 15f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+                        text = project.getString("name"); textSize = 15f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
                         setTextColor(primaryColor); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
                     }, LinearLayout.LayoutParams(0, -2, 1f))
                 }

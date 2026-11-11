@@ -65,6 +65,8 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private var sheetParams: ViewGroup.LayoutParams? = null
     private var sheetBackdrop: View? = null
     private var sheetDestinationReady = false
+    private var backNav = false
+    private lateinit var menuButton: Button
 
     private fun openThreadSheet() {
         if (threadSheet != null) return
@@ -76,8 +78,15 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         val backdrop = ImageView(host).apply { setImageBitmap(bitmap); scaleType = ImageView.ScaleType.FIT_XY }
         parent.addView(backdrop, sheetIndex, sheetParams); sheetBackdrop = backdrop
         parent.removeView(drawer)
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(host)
+        // System back never dismisses the sheet natively: JS decides (list <-> conversation <-> close) and drives the next set_mode.
+        val dialog = object : com.google.android.material.bottomsheet.BottomSheetDialog(host) {
+            @Deprecated("Routed to JS") override fun onBackPressed() { event("navBack") }
+        }
+        dialog.onBackPressedDispatcher.addCallback(object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { event("navBack") }
+        })
         threadSheet = dialog
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.setContentView(drawer)
         dialog.behavior.apply {
             skipCollapsed = true
@@ -233,11 +242,13 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                 if (contentRoot === content) { resizeDashboardWeb(); updateSidebar() }
             } }
             navigation = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
-            navigation.addView(button("Threads") {
+            menuButton = button("Threads") {
                 composerRecorder?.cancel(); if (::dashboard.isInitialized) dashboard.cancelRecording()
+                if (backNav) { event("navBack"); return@button }
                 if (persistentSidebar) sidebarView.visibility = if (sidebarView.visibility == View.VISIBLE) View.GONE else View.VISIBLE
                 else drawer.openDrawer(Gravity.START)
-            }.apply { text = "☰"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) })
+            }.apply { text = "☰"; layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)) }
+            navigation.addView(menuButton)
             title = TextView(host).apply { textSize = 16f; maxLines = 2; text = oldTitle }
             val heading = column()
             heading.addView(title)
@@ -437,18 +448,24 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         navigation.findViewWithTag<View>("start-call")?.visibility = if (mode == "conversation" || mode == "new" || mode == "dashboard") View.VISIBLE else View.GONE
         navigation.visibility = if (visible) View.VISIBLE else View.GONE
         composer.visibility = if (mode == "conversation" || mode == "new") View.VISIBLE else View.GONE
-        drawer.setDrawerLockMode(if (visible && !persistentSidebar) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
+        if (::menuButton.isInitialized) {
+            menuButton.visibility = if (mode == "project") View.GONE else View.VISIBLE
+            menuButton.text = if (backNav) "←" else "☰"
+            menuButton.contentDescription = if (backNav) "Back" else "Threads"
+        }
+        drawer.setDrawerLockMode(if (visible && !persistentSidebar && mode != "project" && !backNav) DrawerLayout.LOCK_MODE_UNLOCKED else DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
         back?.isEnabled = visible
         updateSidebar()
     }
-    @Command fun ping(invoke: Invoke) { host.runOnUiThread { ensureShell(); invoke.resolve(JSObject().put("installed", installed && drawer.isAttachedToWindow).put("nativeDashboardContent", true)) } }
+    @Command fun ping(invoke: Invoke) { host.runOnUiThread { ensureShell(); invoke.resolve(JSObject().put("installed", installed && drawer.isAttachedToWindow).put("nativeDashboardContent", true).put("threadSheet", true).put("newThreadSheet", true).put("projectSheet", true)) } }
     @Command fun setMode(invoke: Invoke) = ui(invoke) {
         val args = invoke.getArgs()
         if (args.optString("mode", "other") !in listOf("new", "conversation", "commander")) composerRecorder?.cancel()
         // Commander is a conversation with its own web header; Android has no transparent-bar variant, so it uses the plain conversation chrome.
         val nextMode = args.optString("mode", "other")
-        val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("conversation", "commander")
+        val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("new", "conversation", "commander", "project")
         if (wantsSheet) openThreadSheet()
+        backNav = args.optBoolean("back", false)
         mode = args.optString("mode", "other").let { if (it == "commander") "conversation" else it }
         title.text = args.optString("title", "Freddai"); editor.hint = args.optString("placeholder", "Message")
         applyMode()
@@ -457,7 +474,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             threadSheet?.dismiss()
             revealSheetDestination()
         }
-        if (mode != "other" && args.optBoolean("openDrawer")) {
+        if (mode != "other" && mode != "project" && args.optBoolean("openDrawer")) {
             if (persistentSidebar) sidebarView.visibility = View.VISIBLE else drawer.openDrawer(Gravity.START)
         }
     }
@@ -520,7 +537,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private fun addThreadRow(thread: JSONObject, tag: String? = null) {
         val id = thread.getString("id")
                 val status = thread.optString("status")
-        val spoken = when (status) { "running" -> "Running"; "starting" -> "Starting"; "waiting" -> "Needs you"; "interrupted" -> "Interrupted"; "failed", "error" -> "Failed"; else -> if (thread.optBoolean("unread")) "Unread reply" else "" }
+        val spoken = threadStatusLabel(status, thread.optBoolean("unread"))
         val row = LinearLayout(host).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48); isClickable = true; isFocusable = true
             contentDescription = listOf(if (thread.optBoolean("pinned")) "Pinned" else "", thread.getString("title"), tag ?: "", spoken, if (thread.optBoolean("scheduled")) "Scheduled task" else "").filter { it.isNotEmpty() }.joinToString(", ")
@@ -591,25 +608,62 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
                     contentDescription = product.optString("product") + ", " + product.optString("name") + ", " + product.optString("capacity") + ", " + product.optString("reset")
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 }
-                val top = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
-                card.addView(TextView(host).apply {
-                    text = product.optString("product") + " · " + product.optString("name"); textSize = 12f
-                    setTextColor(secondary); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                })
-                top.addView(TextView(host).apply {
-                    text = product.optString("capacity"); textSize = 12f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                    if (product.isNull("remaining")) setTextColor(secondary)
-                })
-                top.addView(TextView(host).apply {
-                    text = if (product.isNull("remaining")) "" else if (product.optBoolean("stale")) "Last known" else product.optString("reset").replace("Resets in ", "Reset ")
-                    textSize = 12f; setTextColor(secondary); gravity = Gravity.END
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-                card.addView(top)
-                card.addView(ProgressBar(host, null, android.R.attr.progressBarStyleHorizontal).apply {
-                    max = 100; progress = product.optDouble("remaining", 0.0).toInt()
-                    progressTintList = android.content.res.ColorStateList.valueOf(if (!product.isNull("remaining") && progress < 20) android.graphics.Color.rgb(222, 150, 36) else secondary)
-                }, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(3); bottomMargin = dp(3) })
+                fun str(key: String): String? = if (product.isNull(key)) null else product.optString(key).takeIf { it.isNotEmpty() && it != "null" }
+                val session = str("session"); val weekly = str("weekly"); val status = str("status")
+                val legacy = session == null && weekly == null && status == null
+                val suffix = if (product.optBoolean("stale")) " · last known" else ""
+                if (!legacy) card.contentDescription = listOfNotNull(
+                    product.optString("product"), product.optString("name"), status,
+                    session?.let { "5 hour, $it" }, weekly?.let { "Week, $it" }
+                ).joinToString(", ")
+                if (!legacy) {
+                    card.addView(TextView(host).apply {
+                        text = product.optString("product") + " · " + product.optString("name"); textSize = 12f
+                        setTextColor(secondary); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    })
+                    if (status != null) {
+                        card.addView(TextView(host).apply {
+                            text = status + suffix; textSize = 12f; setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                            setTextColor(if (status.contains("sign-in expired", ignoreCase = true)) android.graphics.Color.rgb(222, 150, 36) else secondary)
+                        })
+                    } else {
+                        for ((caption, value, key) in listOf(Triple("5h", session, "sessionRemaining"), Triple("Week", weekly, "weeklyRemaining"))) {
+                            if (value == null) continue
+                            val remaining = if (product.isNull(key)) null else product.optDouble(key)
+                            val line = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
+                            line.addView(TextView(host).apply { text = caption; textSize = 12f; setTextColor(secondary); setTypeface(null, android.graphics.Typeface.BOLD) })
+                            line.addView(TextView(host).apply {
+                                text = value + suffix; textSize = 12f; gravity = Gravity.END
+                                setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                            }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(6) })
+                            card.addView(line)
+                            card.addView(ProgressBar(host, null, android.R.attr.progressBarStyleHorizontal).apply {
+                                max = 100; progress = (100 - (remaining ?: 100.0)).coerceIn(0.0, 100.0).toInt()
+                                progressTintList = android.content.res.ColorStateList.valueOf(if (remaining != null && remaining < 20) android.graphics.Color.rgb(222, 150, 36) else secondary)
+                            }, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(2); bottomMargin = dp(3) })
+                        }
+                    }
+                } else {
+                    val top = LinearLayout(host).apply { gravity = Gravity.CENTER_VERTICAL }
+                    card.addView(TextView(host).apply {
+                        text = product.optString("product") + " · " + product.optString("name"); textSize = 12f
+                        setTextColor(secondary); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    })
+                    top.addView(TextView(host).apply {
+                        text = product.optString("capacity"); textSize = 12f
+                        setTypeface(null, android.graphics.Typeface.BOLD)
+                        if (product.isNull("remaining")) setTextColor(secondary)
+                    })
+                    top.addView(TextView(host).apply {
+                        text = if (product.isNull("remaining")) "" else if (product.optBoolean("stale")) "Last known" else product.optString("reset").replace("Resets in ", "Reset ")
+                        textSize = 12f; setTextColor(secondary); gravity = Gravity.END
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    card.addView(top)
+                    card.addView(ProgressBar(host, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        max = 100; progress = product.optDouble("remaining", 0.0).toInt()
+                        progressTintList = android.content.res.ColorStateList.valueOf(if (!product.isNull("remaining") && progress < 20) android.graphics.Color.rgb(222, 150, 36) else secondary)
+                    }, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(3); bottomMargin = dp(3) })
+                }
                 row.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply { if (j > i) leftMargin = dp(8) })
             }
             if (i + 1 == usage.length()) row.addView(View(host), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
@@ -663,7 +717,13 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             for (j in 0 until threads.length()) {
                 addThreadRow(threads.getJSONObject(j))
             }
-            if (group.optInt("olderRemaining") > 0) list.addView(button(group.getString("olderLabel")) { event("showOlder", JSONObject().put("project", project)) })
+            val olderRemaining = group.optInt("olderRemaining") > 0
+            val olderExpanded = group.optBoolean("olderExpanded")
+            if (olderRemaining || olderExpanded) list.addView(LinearLayout(host).apply {
+                orientation = LinearLayout.HORIZONTAL
+                if (olderRemaining) addView(button(group.getString("olderLabel")) { event("showOlder", JSONObject().put("project", project)) })
+                if (olderExpanded) addView(button("Show less") { event("showLess", JSONObject().put("project", project)) })
+            })
         }
     }
     private fun filter(optionsKey: String, field: String) {

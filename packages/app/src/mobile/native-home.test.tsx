@@ -26,7 +26,7 @@ vi.mock('./native-shell', () => ({
   setDashboard: shell.setDashboard, onDashboardAction: shell.on('dashboardAction'),
   setConnection: vi.fn(async () => {}), setThreads: vi.fn(async () => {}), setThreadMeta: vi.fn(async () => {}),
   onNavBack: shell.on('navBack'), onComposerSend: shell.on('composerSend'), onConnectionTap: shell.on('connectionTap'), onThreadAction: shell.on('threadAction'), onSelectThread: shell.on('selectThread'),
-  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onMoveProject: shell.on('moveProject'), onShowOlder: shell.on('showOlder'), onSetView: shell.on('setView'), onRecentPage: shell.on('recentPage'), onDashboard: shell.on('dashboard'),
+  onSearch: shell.on('search'), onSetFilter: shell.on('setFilter'), onNewThread: shell.on('newThread'), onMoveProject: shell.on('moveProject'), onShowOlder: shell.on('showOlder'), onShowLess: shell.on('showLess'), onSetView: shell.on('setView'), onRecentPage: shell.on('recentPage'), onDashboard: shell.on('dashboard'),
 }));
 import { MobileApp } from './MobileApp';
 import { setThreads as sentThreads } from './native-shell';
@@ -223,7 +223,7 @@ it.each(['starting', 'running', 'waiting'])('puts a %s-thread send straight in t
   await send('Queue this immediately');
   const queue = screen.getByRole('region', { name: 'Message queue' });
   expect(within(queue).getByText('Queue this immediately')).toBeTruthy();
-  expect(within(queue).getAllByRole('button').every(button => (button as HTMLButtonElement).disabled)).toBe(true);
+  expect(within(queue).getAllByRole('button').filter(button => !/^(Delete|Clear all)/.test(button.getAttribute('aria-label') ?? '')).every(button => (button as HTMLButtonElement).disabled)).toBe(true);
   expect(screen.queryByRole('article', { name: 'Your message' })).toBeNull();
   await act(async () => { accept(); });
   expect(within(screen.getByRole('region', { name: 'Message queue' })).getByText('Queue this immediately')).toBeTruthy();
@@ -397,9 +397,47 @@ it('opens native Dashboard cards without duplicating web controls and opens proj
   expect(screen.queryByRole('article', { name: 'Project Second' })).toBeNull();
   expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ projects: expect.arrayContaining([expect.objectContaining({ id: 'p2', name: 'Second', canStart: true })]) }));
   await dashboardAction({ action: 'open', project: 'p1' });
-  expect(modeCalls().at(-1)).toEqual(['dashboard', { title: 'Dashboard', openDrawer: true }]);
+  expect(modeCalls().at(-1)).toEqual(['project', { title: 'First', threadSheet: true }]);
   await dashboardAction({ action: 'thread', project: 'p1', thread: 't1' });
   await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('conversation'));
+});
+
+it('opens a project as a sheet: list, conversation, back, close, with the dashboard retained and no dashboard mode in between', async () => {
+  const { container } = await renderNew(<MobileApp client={clientWith()} />);
+  await screen.findByText('What should we work on today?');
+  await act(async () => { shell.handlers.dashboard(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  const dashboardNode = container.querySelector('.companion-dashboard-preserved')!;
+  expect(dashboardNode).toBeTruthy();
+  shell.setMode.mockClear(); shell.setDashboard.mockClear();
+  const sequence = () => modeCalls().reduce<[string, Record<string, unknown>][]>((all, call) => JSON.stringify(all.at(-1)) === JSON.stringify(call) ? all : [...all, call], []);
+
+  await dashboardAction({ action: 'open', project: 'p1' });
+  expect(await screen.findByRole('button', { name: /Old thread/ })).toBeTruthy();
+  expect(container.querySelector('.companion-dashboard-preserved')).toBe(dashboardNode);
+  expect((dashboardNode as HTMLElement).hidden).toBe(true);
+
+  fireEvent.click(screen.getByRole('button', { name: /Old thread/ }));
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('conversation'));
+  expect(container.querySelector('.companion-dashboard-preserved')).toBe(dashboardNode);
+
+  await act(async () => { shell.handlers.navBack(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('project'));
+  expect(screen.getByRole('button', { name: /Old thread/ })).toBeTruthy();
+  expect(container.querySelector('.companion-dashboard-preserved')).toBe(dashboardNode);
+
+  await act(async () => { shell.handlers.navBack(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  expect(sequence()).toEqual([
+    ['project', { title: 'First', threadSheet: true }],
+    ['conversation', expect.objectContaining({ threadSheet: true, back: true })],
+    ['project', { title: 'First', threadSheet: true }],
+    ['dashboard', { title: 'Dashboard' }],
+  ]);
+  expect(container.querySelector('.companion-dashboard-preserved')).toBe(dashboardNode);
+  expect((dashboardNode as HTMLElement).hidden).toBe(false);
+  // Opening and closing the sheet alone never resends an unchanged native dashboard model.
+  expect(shell.setDashboard.mock.calls.length).toBeLessThanOrEqual(1);
 });
 
 it('carries native dashboard project agent, model and effort through the composer launch', async () => {
@@ -459,12 +497,14 @@ it('send-mode dashboard dictation starts a task in the project and stays on the 
   await act(async () => { shell.handlers.dashboard(); });
   shell.setMode.mockClear();
   await dashboardAction({ action: 'voice', project: 'p2', assistant: 'b', path: '/tmp/freddai-attachments/a.m4a', send: true });
+  // While transcribing, the project card shows a pending row; its name is never replaced.
   await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ message: '', projects: expect.arrayContaining([
-    expect.objectContaining({ id: 'p1', sending: false }), expect.objectContaining({ id: 'p2', sending: true }),
+    expect.objectContaining({ id: 'p2', name: 'Second', recent: [expect.objectContaining({ id: expect.stringMatching(/^outbox:/), status: 'sending' })] }),
   ]) })));
+  expect((shell.setDashboard.mock.lastCall![0] as { projects: object[] }).projects.every(p => !('sending' in p))).toBe(true);
   await act(async () => { finishTranscript({ text: 'Ship it', durationMs: 900, model: 'fixture' }); });
   await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p2', assistant: 'b', prompt: 'Ship it' })));
-  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ message: '', projects: expect.arrayContaining([expect.objectContaining({ id: 'p2', sending: false })]) })));
+  expect(localStorage.getItem('freddai.companion.lastAssistant.p2')).toBe('b');
   expect(shell.appendComposerText).not.toHaveBeenCalled();
   expect(modeCalls().some(([mode]) => mode === 'conversation' || mode === 'new')).toBe(false);
 });
@@ -568,6 +608,20 @@ it('keeps global Schedules out of an ordinary native conversation', async () => 
 });
 
 
+it('opens the scheduled tasks screen from the native dashboard action and returns on Back', async () => {
+  const schedule = { id: 's1', name: 'Morning digest', project: 'p1', account: 'a', routing: 'fixed', cron: '0 9 * * 1-5', timezone: 'UTC', prompt: 'x', enabled: true, options: {}, next_due: 0, runs: [] };
+  render(<MobileApp client={clientWith({ scheduleCommand: vi.fn(async () => undefined), snapshot: async () => structuredClone({ ...data, schedules: [schedule] }) })} />);
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  await dashboardAction({ action: 'schedules' });
+  expect(await screen.findByRole('heading', { name: 'Scheduled tasks' })).toBeTruthy();
+  expect(await screen.findByText('Morning digest')).toBeTruthy();
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('other'));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await act(async () => { screen.getByRole('button', { name: 'Back' }).click(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  expect(screen.queryByRole('heading', { name: 'Scheduled tasks' })).toBeNull();
+});
+
 it.each(['thread', 'home', 'away-and-back'])('keeps newer %s navigation when an earlier dictated new-thread send is acknowledged late', async destination => {
   let acknowledge!: (id: string) => void;
   const client = clientWith({ start: vi.fn(() => new Promise<string>(resolve => { acknowledge = resolve; })) });
@@ -616,6 +670,18 @@ it('drives the native drawer Projects/Recent mode, the bottom section and paging
   await waitFor(() => expect(last().recent.expanded).toBe(false));
 });
 
+
+it('resets a project to its default older count on the native showLess event', async () => {
+  const old: CompanionSnapshot = { ...data, threadList: { ignoreUnread: true }, threads: Array.from({ length: 30 }, (_, i) => ({ id: `o${i}`, project: 'p1', title: `Old ${i}`, status: 'done', updated: 100 + i, messages: [], canReply: true, queued: 0, error: null })) };
+  await renderNew(<MobileApp client={clientWith({ snapshot: async () => structuredClone(old) })} />);
+  const last = () => (sentThreads as unknown as { mock: { calls: [any][] } }).mock.calls.at(-1)![0];
+  const fire = (name: string, payload: unknown) => act(async () => { (shell.handlers[name] as (p: unknown) => void)(payload); });
+  await waitFor(() => expect(last().groups.find((g: { project: string }) => g.project === 'p1').olderLabel).toBe('Show older threads (25)'));
+  await fire('showOlder', { project: 'p1' });
+  await waitFor(() => expect(last().groups.find((g: { project: string }) => g.project === 'p1')).toMatchObject({ olderExpanded: true, olderLabel: 'Show more (15)' }));
+  await fire('showLess', { project: 'p1' });
+  await waitFor(() => expect(last().groups.find((g: { project: string }) => g.project === 'p1')).toMatchObject({ olderExpanded: false, olderRemaining: 25 }));
+});
 
 it('does not flash a device backlog while an online message is being submitted', async () => {
   let finish!: (id: string) => void;
@@ -885,4 +951,94 @@ it('opens a conversation thread link as a sheet and returns to the original conv
   await waitFor(() => expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Linked thread', threadSheet: true })]));
   await act(async () => { shell.handlers.navBack(); });
   await waitFor(() => expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Old thread', threadSheet: false })]));
+});
+
+
+it.each(['delete', 'archive'] as const)('closes a dashboard thread sheet after %s without navigating away', async operation => {
+  const action = vi.fn(async () => {});
+  render(<MobileApp client={clientWith({ action })} />);
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  const dashboard = document.querySelector('.companion-dashboard-preserved');
+  await act(async () => { (shell.handlers.dashboardAction as (p: unknown) => void)({ action: 'thread', project: 'p1', thread: 't1' }); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[1]?.threadSheet).toBe(true));
+  await act(async () => { (shell.handlers.threadAction as (p: unknown) => void)({ action: operation }); });
+  await waitFor(() => expect(action).toHaveBeenCalledWith({ thread: 't1', action: operation }));
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  expect(document.querySelector('.companion-dashboard-preserved')).toBe(dashboard);
+  expect(dashboard?.hasAttribute('hidden')).toBe(false);
+});
+
+
+it.each(['delete', 'archive'] as const)('restores the original conversation after %s in a linked-thread sheet', async operation => {
+  const snapshot = structuredClone(data);
+  snapshot.threads[0].messages = [{ id: 'm1', role: 'assistant', text: 'See [Other thread](freddai://thread/t2).' }];
+  snapshot.threads.push({ ...snapshot.threads[0], id: 't2', title: 'Linked thread', messages: [] });
+  const action = vi.fn(async () => { snapshot.threads = snapshot.threads.filter(t => t.id !== 't2'); });
+  render(<MobileApp client={clientWith({ snapshot: async () => structuredClone(snapshot), action })} />);
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  await act(async () => { (shell.handlers.selectThread as (p: unknown) => void)({ id: 't1' }); });
+  fireEvent.click(await screen.findByRole('button', { name: 'Other thread' }));
+  await waitFor(() => expect(modeCalls().at(-1)?.[1]?.threadSheet).toBe(true));
+  await act(async () => { (shell.handlers.threadAction as (p: unknown) => void)({ action: operation }); });
+  await waitFor(() => expect(action).toHaveBeenCalledWith({ thread: 't2', action: operation }));
+  await waitFor(() => expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Old thread', threadSheet: false })]));
+});
+
+
+it('keeps the thread sheet open when deleting fails', async () => {
+  const action = vi.fn(async () => { throw new Error('Host unavailable'); });
+  render(<MobileApp client={clientWith({ action })} />);
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  await act(async () => { (shell.handlers.dashboardAction as (p: unknown) => void)({ action: 'thread', project: 'p1', thread: 't1' }); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[1]?.threadSheet).toBe(true));
+  await act(async () => { (shell.handlers.threadAction as (p: unknown) => void)({ action: 'delete' }); });
+  expect(await screen.findByText('Host unavailable')).toBeTruthy();
+  expect(modeCalls().at(-1)).toEqual(['conversation', expect.objectContaining({ title: 'Old thread', threadSheet: true })]);
+});
+
+it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the iPad dashboard call request into an editable review card before sending: %s', async action => {
+  const snapshot = structuredClone(data);
+  snapshot.projects[0]!.name = 'freddai';
+  if (action === 'unready') snapshot.projects[0]!.canStart = false;
+  snapshot.projects.push({ id: 'chief', name: 'Commander', color: '#777', canStart: true, kind: 'commander' });
+  const client = clientWith({ snapshot: async () => structuredClone(snapshot), transcribe: vi.fn(), reply: vi.fn(), commander: { state: async () => ({ thread_id: null, status: {} }), proposals: async () => [] } as never });
+  render(<MobileApp client={client} />);
+  await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ connected: true, commander: expect.objectContaining({ id: 'chief' }) })));
+  await act(async () => { (shell.handlers.threadAction as (p: { action: string }) => void)({ action: 'call' }); });
+  expect(callIo.start).toHaveBeenCalledTimes(1);
+  await act(async () => { callIo.handler({ type: 'segment', text: 'Freddy, send a request to say hello to the project Freddy to see if this is working.' }); });
+  const card = await screen.findByRole('region', { name: 'Command review' });
+  const instruction = within(card).getByRole('textbox', { name: 'Instruction' });
+  expect((instruction as HTMLTextAreaElement).value).toContain('say hello');
+  expect(client.start).not.toHaveBeenCalled();
+  expect(client.reply).not.toHaveBeenCalled();
+  expect(modeCalls().at(-1)?.[0]).toBe('other');
+  fireEvent.change(instruction, { target: { value: 'Say hello to check this works.' } });
+  if (action === 'agent') fireEvent.change(within(card).getByRole('combobox', { name: 'Agent' }), { target: { value: 'b' } });
+  if (action === 'unready') {
+    expect((within(card).getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await act(async () => { callIo.handler({ type: 'segment', text: 'go' }); });
+    expect(client.start).not.toHaveBeenCalled();
+    expect(within(card).getByRole('alert').textContent).toContain('ready on your Mac');
+    log.mockRestore();
+    fireEvent.click(within(card).getByRole('button', { name: 'Cancel command' }));
+  } else if (action === 'cancel') {
+    await act(async () => { callIo.handler({ type: 'segment', text: 'cancel' }); });
+    expect(client.start).not.toHaveBeenCalled();
+  } else {
+    if (action === 'retry') (client.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Mac disconnected'));
+    await act(async () => {
+      if (action === 'voice') callIo.handler({ type: 'segment', text: 'go' });
+      else within(card).getByRole('button', { name: 'Send' }).click();
+    });
+    if (action === 'retry') {
+      // Delivery goes through the outbox now: the failure is reported loudly on the dashboard instead of in the card.
+      await waitFor(() => expect(shell.setDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringContaining("Couldn't send to freddai: Mac disconnected") })));
+    }
+    await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p1', assistant: action === 'agent' ? 'b' : 'a', prompt: 'Say hello to check this works.' })));
+  }
+  expect(screen.queryByRole('region', { name: 'Command review' })).toBeNull();
+  await act(async () => { screen.getByRole('button', { name: 'End call' }).click(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
 });

@@ -1,5 +1,5 @@
 import { UsageRing } from "./UsageRing";
-import { remainingPercent } from "./usage";
+import { usageSummary, type UsageWindow } from "./usage";
 import { agentDisplayName } from "./types";
 import { availableResets, resetExpiry, resetOutcome, type ResetCredits } from "./reset-credits";
 import { useEffect, useRef, useState } from "react";
@@ -9,21 +9,12 @@ import { Code2, Terminal, RefreshCw, Settings2 } from "lucide-react";
 import { resolveAccount, type Database } from "./types";
 
 type Usage = {
-  windows: { label: string; used_percent: number; resets_at: number | null }[];
+  windows: UsageWindow[];
   plan: string | null;
   checked_at: number;
   reset_credits?: ResetCredits | null;
 };
 type Result = { usage?: Usage; error?: string };
-function resetLabel(seconds: number | null, now: number) {
-  if (seconds === null) return "Reset time unavailable";
-  const minutes = Math.ceil((seconds * 1000 - now) / 60000);
-  if (minutes <= 0) return "Reset time reached · Refresh for current usage";
-  const duration = minutes < 60 ? `${minutes}m` : minutes < 1440
-    ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-    : `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h`;
-  return `Resets in ${duration} · ${new Date(seconds * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" })}`;
-}
 export function AccountOverview({ db, native, onManage }: {
   db: Database; native: boolean; onManage: () => void;
 }) {
@@ -66,7 +57,7 @@ export function AccountOverview({ db, native, onManage }: {
     const serial = ++request.current;
     let cancelled = false;
     setLoading(true);
-    setResults({});
+
     void Promise.all(db.accounts.map(async account => {
       let result: Result;
       if (!native) result = { error: "Open the desktop app to retrieve account usage." };
@@ -75,7 +66,7 @@ export function AccountOverview({ db, native, onManage }: {
         catch (e) { result = { error: String(e) }; }
       }
       if (!cancelled && request.current === serial)
-        setResults(previous => ({ ...previous, [account.id]: result }));
+        setResults(previous => ({ ...previous, [account.id]: result.usage ? result : { ...previous[account.id], ...result } }));
     })).finally(() => {
       if (!cancelled && request.current === serial) { setLoading(false); setNow(Date.now()); }
     });
@@ -88,7 +79,7 @@ export function AccountOverview({ db, native, onManage }: {
   return <div className="account-overview">
     <div className="account-overview-tools">
       <span role="status">{loading ? "Updating usage…" : "Usage reported by your providers"}</span>
-      <Button variant="ghost" size="sm" disabled={loading || usingReset || !native || !db.accounts.length} onClick={() => setRefresh(n => n + 1)}>
+      <Button variant="ghost" size="sm" disabled={loading || usingReset || !native || !db.accounts.length} onClick={() => { setRefresh(n => n + 1); window.dispatchEvent(new Event("freddai:usage-refresh")); }}>
         <RefreshCw size={13}/> Refresh
       </Button>
     </div>
@@ -106,14 +97,15 @@ export function AccountOverview({ db, native, onManage }: {
             {resolveAccount(db) === account.id && <span className="account-default">Default</span>}
           </div>
           {usage ? <>
-            {usage.windows.map((window, index) => {
-              const remaining = remainingPercent(window.used_percent);
+            {result?.error && <p role="status">Last known reading · {result.error}</p>}
+            {usageSummary(usage.windows, now).lines.map((line, index) => {
+              const remaining = line.remaining;
               return <div className="account-usage-window" key={index}>
                 <UsageRing remaining={remaining} color={account.color} size={46}
-                  label={`${agentDisplayName(account)}, ${window.label}, remaining capacity`}/>
+                  label={`${agentDisplayName(account)}, ${line.label}, remaining capacity`}/>
                 <div className="account-usage-window-copy">
-                  <div><span>{window.label}</span><strong>{remaining === null ? "Remaining capacity unavailable" : `${Math.round(remaining)}% left`}</strong></div>
-                  <p>{resetLabel(window.resets_at, now)}</p>
+                  <div><span>{line.label}</span><strong>{remaining === null ? "Remaining capacity unavailable" : `${Math.round(remaining)}% left`}</strong></div>
+                  <p>{line.resetText}</p>
                 </div>
               </div>;
             })}

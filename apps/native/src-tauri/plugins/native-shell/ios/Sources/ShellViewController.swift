@@ -5,7 +5,7 @@ import WebKit
 /// UINavigationController) and an optional native composer that tracks the keyboard.
 /// Every conversation (`conversation` and `commander`) uses the web layer's translucent floating header (avatar + name pill) under a transparent bar;
 /// the native menu and action buttons sit on the same row.
-enum ShellMode { case conversation, commander, new, dashboard, other }
+enum ShellMode { case conversation, commander, new, project, dashboard, other }
 
 struct PickerOption: Decodable {
   let id: String
@@ -47,6 +47,9 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   private var conversation: Bool { mode == .conversation || mode == .commander }
   private var composerVisible: Bool { mode == .conversation || mode == .commander || mode == .new }
   private var barVisible: Bool { mode != .other }
+  var onBack: (() -> Void)?
+  private var menuItem: UIBarButtonItem?
+  private var backItem: UIBarButtonItem?
   private var floatingHeader: Bool { mode == .conversation || mode == .commander }
 
   private var webTopSafe: NSLayoutConstraint!
@@ -148,6 +151,11 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     let menu = UIBarButtonItem(image: UIImage(systemName: "line.3.horizontal"), style: .plain, target: self, action: #selector(menuTapped))
     menu.accessibilityLabel = "Threads"
     menu.accessibilityHint = "Opens the thread list"
+    menuItem = menu
+    let back = UIBarButtonItem(image: UIImage(systemName: "chevron.left"), style: .plain, target: self, action: #selector(backTapped))
+    back.title = "Back"
+    back.accessibilityLabel = "Back"
+    backItem = back
     navigationItem.leftBarButtonItem = menu
     webView.allowsBackForwardNavigationGestures = false
   }
@@ -160,12 +168,13 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   @objc private func callTapped() { onThreadAction?("call") }
 
   @objc private func menuTapped() { onMenu?() }
+  @objc private func backTapped() { onBack?() }
   @objc private func connectionTapped() { onConnectionTap?() }
   @objc private func newThreadTapped() { onNewThread?() }
 
   func setThreadListPresentation(sidebar: Bool, open: Bool) {
-    navigationItem.leftBarButtonItem?.image = UIImage(systemName: sidebar ? "sidebar.left" : "line.3.horizontal")
-    navigationItem.leftBarButtonItem?.accessibilityHint = open ? "Hides the thread list" : "Opens the thread list"
+    menuItem?.image = UIImage(systemName: sidebar ? "sidebar.left" : "line.3.horizontal")
+    menuItem?.accessibilityHint = open ? "Hides the thread list" : "Opens the thread list"
   }
 
   /// Left-aligned thread title and connection/state/project subtitle, without a header avatar.
@@ -305,13 +314,15 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     navigationItem.titleView?.isHidden = floatingHeader
   }
 
-  func apply(mode newMode: ShellMode, title: String?, placeholder: String?) {
+  func apply(mode newMode: ShellMode, title: String?, placeholder: String?, back: Bool = false) {
     let modeChanged = mode != newMode
     if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
     // New threads can begin a call before the first spoken message creates the thread.
     navigationItem.rightBarButtonItems = newMode == .conversation || newMode == .commander ? [actionsItem, callItem, newItem] : newMode == .new ? [callItem] : newMode == .dashboard ? [callItem] : []
+    let left: UIBarButtonItem? = back ? backItem : (newMode == .project ? nil : menuItem)
+    if navigationItem.leftBarButtonItem !== left { navigationItem.leftBarButtonItem = left }
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {
       applyBarStyle()

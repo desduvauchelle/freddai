@@ -8,7 +8,7 @@ it('exposes exactly steer, edit and delete for every visible message', () => {
   const onAction = vi.fn();
   render(<MessageQueue messages={messages} active disabled={false} onAction={onAction}/>);
   expect(screen.getAllByRole('listitem')).toHaveLength(2);
-  expect(screen.getAllByRole('button')).toHaveLength(6);
+  expect(screen.getAllByRole('button')).toHaveLength(7);
   fireEvent.click(screen.getAllByRole('button', { name: 'Steer instead' })[0]);
   expect(onAction).toHaveBeenCalledWith('steer', 'one', undefined);
   fireEvent.click(screen.getByRole('button', { name: 'Delete queued message: Check the tablet' }));
@@ -29,7 +29,7 @@ it('disables mutations offline and announces paused state and errors', () => {
   render(<MessageQueue messages={messages} paused disabled error="Connection lost" onAction={vi.fn()}/>);
   expect(screen.getByRole('status').textContent).toContain('Paused');
   expect(screen.getByRole('alert').textContent).toBe('Connection lost');
-  expect(screen.getAllByRole('button').every(button => (button as HTMLButtonElement).disabled)).toBe(true);
+  expect(screen.getAllByRole('button').filter(button => !/^(Delete|Clear all)/.test(button.getAttribute('aria-label') ?? '')).every(button => (button as HTMLButtonElement).disabled)).toBe(true);
 });
 it('hides an empty queue', () => {
   const { container } = render(<MessageQueue messages={[]} disabled={false} onAction={vi.fn()}/>);

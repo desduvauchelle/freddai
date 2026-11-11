@@ -1,0 +1,31 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AccountOverview } from './AccountOverview';
+import { UsageFooter } from './UsageFooter';
+import { empty, type Account } from './types';
+const invoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+afterEach(() => { cleanup(); invoke.mockReset(); });
+const accounts: Account[] = [{id:'a',name:'Work',provider:'codex',color:'blue'}];
+const usage = (used: number) => ({windows:[{label:'Weekly',used_percent:used,resets_at:2000000000}],checked_at:Date.now()});
+it('settings refresh updates the footer too', async () => {
+  invoke.mockResolvedValue(usage(20));
+  render(<><UsageFooter native accounts={accounts} onOpen={() => {}}/><AccountOverview native db={{...empty,accounts}} onManage={() => {}}/></>);
+  const refresh = screen.getByRole('button',{name:'Refresh'});
+  await waitFor(() => expect(refresh.hasAttribute('disabled')).toBe(false));
+  invoke.mockResolvedValue(usage(40));
+  fireEvent.click(refresh);
+  await waitFor(() => expect(screen.getByRole('button',{name:/Codex · Work, 60% left/})).toBeTruthy());
+});
+it('retains the last reading with an error after a failed refresh', async () => {
+  invoke.mockResolvedValue(usage(20));
+  render(<AccountOverview native db={{...empty,accounts}} onManage={() => {}}/>);
+  await screen.findByText('80% left');
+  const refresh = screen.getByRole('button',{name:'Refresh'});
+  await waitFor(() => expect(refresh.hasAttribute('disabled')).toBe(false));
+  invoke.mockRejectedValue('Usage request timed out');
+  fireEvent.click(refresh);
+  await screen.findByText(/Usage request timed out/);
+  expect(screen.getByText('80% left')).toBeTruthy();
+  expect(screen.getByText(/Last known reading/)).toBeTruthy();
+});

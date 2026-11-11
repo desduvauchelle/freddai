@@ -1,12 +1,13 @@
 import { productUsageCards, type ProductUsageCard } from "./product-usage";
-import { OLDER_PAGE_SIZE, threadListStatus } from '../desktop/types';
+import { threadListStatus } from '../desktop/types';
 import type { CompanionSnapshot, CompanionThread, ThreadFilter } from './companion';
 import { COMPANION_RECENT_PAGING, asThreadNavView, selectRecentThreads, type ThreadNavView } from '../recentThreads';
+import type { Outgoing } from './outbox';
 import { companionStatusRead, groupCompanionThreads, selectThreads, scopeCompanion } from './companion';
 
 /** Compact, serializable model pushed to the native thread drawer (`set_threads`). JS stays the source of truth. */
 export type NativeThread = { scheduled?: boolean; pinned?: boolean; id: string; title: string; status: string; unread: boolean; faded: boolean; updatedAt: number };
-export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; kind?: 'commander'; threads: NativeThread[]; olderRemaining: number; olderLabel: string };
+export type NativeThreadGroup = { project: string; label: string; color: string; canStart: boolean; kind?: 'commander'; threads: NativeThread[]; olderRemaining: number; olderLabel: string; olderExpanded: boolean };
 /** A flat "Recent" row: the usual thread row plus the owning project's name/colour for the small tag. */
 export type NativeRecentThread = NativeThread & { projectLabel: string; projectColor: string };
 export type NativeRecent = { threads: NativeRecentThread[]; remaining: number; expanded: boolean };
@@ -54,6 +55,21 @@ export function nativeThread(thread: CompanionThread, read: Record<string, numbe
   };
 }
 
+/**
+ * Rows for messages that are still being delivered as a NEW thread, so a dashboard card shows them immediately.
+ * Un-acknowledged items are `sending` (or `queued` when blocked/offline/failing); acknowledged ones the snapshot does not list yet keep showing under the real thread id.
+ */
+export function pendingThreads(project: string, outbox: Outgoing[], snapshotIds: ReadonlySet<string>, connected: boolean, now: number): NativeThread[] {
+  return outbox.filter(m => m.project === project && !m.replyTo && (m.thread === '' || (m.acknowledged && !snapshotIds.has(m.thread))))
+    .reverse().map(m => {
+      const text = m.prompt.trim().replace(/\s+/g, ' ');
+      const acknowledged = m.acknowledged && m.thread !== '';
+      return { id: acknowledged ? m.thread : `outbox:${m.id}`, title: text.length > 60 ? `${text.slice(0, 59)}…` : text,
+        status: acknowledged ? 'starting' : m.blocked || m.deliveryError || !connected ? 'queued' : 'sending',
+        unread: false, faded: false, updatedAt: now };
+    });
+}
+
 const isCommanderGroup = (group: { project?: { kind?: string | null } }) => group.project?.kind === 'commander';
 
 /** Builds the drawer model with the same selection, grouping and paging logic as the web list. */
@@ -86,7 +102,8 @@ export function buildThreadsModel(input: {
       ...(group.project && 'kind' in group.project && group.project.kind === 'commander' ? { kind: 'commander' as const } : {}),
       threads: [...group.active, ...group.older].map(t => nativeThread(t, read)),
       olderRemaining: group.remaining,
-      olderLabel: group.pageCount ? `Show ${Math.min(OLDER_PAGE_SIZE, group.remaining)} more (${group.remaining})` : `Show older threads (${group.remaining})`,
+      olderLabel: group.pageCount ? `Show more (${group.remaining})` : `Show older threads (${group.remaining})`,
+      olderExpanded: group.pageCount > 0,
     })),
     selectedId: selected,
     filters: { ...(input.workspace !== undefined ? { workspace: input.workspace } : {}), project, status: filter, query },
@@ -118,6 +135,7 @@ export type ThreadEventActions = {
   setFilters(project: string, status: ThreadFilter): void;
   newThread(project: string): void;
   showOlder(project: string): void;
+  showLess?(project: string): void;
   setView?(view: ThreadNavView): void;
   recentPage?(action: 'more' | 'less', section?: boolean): void;
 };
@@ -134,6 +152,7 @@ export function createThreadEventHandlers(actions: ThreadEventActions) {
     },
     newThread: (payload: { project?: unknown }) => actions.newThread(typeof payload?.project === 'string' ? payload.project : ''),
     showOlder: (payload: { project?: unknown }) => { if (typeof payload?.project === 'string') actions.showOlder(payload.project); },
+    showLess: (payload: { project?: unknown }) => { if (typeof payload?.project === 'string') actions.showLess?.(payload.project); },
     setView: (payload: { view?: unknown }) => actions.setView?.(asThreadNavView(payload?.view)),
     recentPage: (payload: { action?: unknown; section?: unknown }) => { if (payload?.action === 'more' || payload?.action === 'less') actions.recentPage?.(payload.action, payload.section === 'bottom'); },
   };

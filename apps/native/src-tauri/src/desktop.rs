@@ -840,48 +840,12 @@ async fn remove_worktree(h: State<'_, Host>, session: String) -> Result<Value, S
     )
     .await
 }
-fn require_schedule_end_support(hello: &Value) -> Result<(), String> {
-    if hello["schedule_end_dates"] == true { return Ok(()) }
-    Err("The background host needs its update to enforce end dates. Let active work finish so it can update, then save again.".into())
-}
-#[cfg(test)]
-#[test]
-fn schedule_end_support_rejects_older_hosts() {
-    assert!(require_schedule_end_support(&json!({"version":"2"})).is_err());
-    assert!(require_schedule_end_support(&json!({"schedule_end_dates":false})).is_err());
-    assert!(require_schedule_end_support(&json!({"schedule_end_dates":true})).is_ok());
-}
-fn require_schedule_run_limit_support(hello: &Value) -> Result<(), String> {
-    if hello["schedule_run_limits"] == true { return Ok(()) }
-    Err("The background host needs its update to enforce run limits. Let active work finish so it can update, then save again.".into())
-}
-#[cfg(test)]
-#[test]
-fn schedule_run_limit_support_rejects_older_hosts() {
-    assert!(require_schedule_run_limit_support(&json!({"schedule_end_dates":true})).is_err());
-    assert!(require_schedule_run_limit_support(&json!({"schedule_run_limits":true})).is_ok());
-}
-fn require_schedule_delivery_support(hello: &Value) -> Result<(), String> {
-    if hello["schedule_delivery"] == true { return Ok(()) }
-    Err("The background host needs its update for routine notifications and thread reuse. Let active work finish so it can update, then save again.".into())
-}
-#[cfg(test)]
-#[test]
-fn schedule_delivery_support_rejects_older_hosts() {
-    assert!(require_schedule_delivery_support(&json!({"schedule_run_limits":true})).is_err());
-    assert!(require_schedule_delivery_support(&json!({"schedule_delivery":false})).is_err());
-    assert!(require_schedule_delivery_support(&json!({"schedule_delivery":true})).is_ok());
-}
 #[tauri::command]
 async fn save_schedule(h: State<'_, Host>, schedule: Value) -> Result<Value, String> {
     // Old hosts ignore unknown JSON fields; never silently discard routine controls.
-    if !schedule["end_date"].is_null() || !schedule["max_runs"].is_null() || schedule["new_chat"] == false || !schedule["notifications"].is_null() {
+    if crate::companion_operations::schedule_needs_hello(&schedule) {
         let hello = rpc(h.inner().clone(), "hello", json!({})).await?;
-        if !schedule["end_date"].is_null() { require_schedule_end_support(&hello)?; }
-        if !schedule["max_runs"].is_null() { require_schedule_run_limit_support(&hello)?; }
-        if schedule["new_chat"] == false || !schedule["notifications"].is_null() {
-            require_schedule_delivery_support(&hello)?;
-        }
+        crate::companion_operations::require_schedule_support(&schedule, &hello)?;
     }
     rpc(
         h.inner().clone(),

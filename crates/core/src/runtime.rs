@@ -1517,16 +1517,32 @@ impl Runtime {
                 .clone();
         let root = i.root.clone();
         drop(i);
-        if account.provider == "claude" {
-            return crate::usage::read_claude(command(&account, &root)?);
+        // Footer, settings and companions can request the same namespace together.
+        // Serialize its provider/token refresh and briefly share the completed result.
+        type CachedUsage = Option<(std::time::Instant, Result<crate::usage::AccountUsage>)>;
+        type UsageSlot = std::sync::Arc<std::sync::Mutex<CachedUsage>>;
+        static READS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(String, PathBuf), UsageSlot>>> = std::sync::OnceLock::new();
+        let home = account.config_home.clone().unwrap_or_else(|| root.join("accounts").join(&account.id));
+        let key = (account.provider.clone(), home);
+        let slot = READS.get_or_init(Default::default).lock().unwrap()
+            .entry(key).or_default().clone();
+        let mut cached = slot.lock().unwrap();
+        if let Some((at, result)) = cached.as_ref() {
+            if at.elapsed() < Duration::from_secs(2) { return result.clone(); }
         }
-        if account.provider != "codex" {
-            return Err(
-                format!("{} does not expose a supported quota reader in Freddai yet. Usage and reset time are unknown.",account.provider),
-            );
+        let result = match account.provider.as_str() {
+            "claude" => command(&account, &root).and_then(crate::usage::read_claude),
+            "codex" => command(&account, &root).and_then(crate::usage::read),
+            "antigravity" => command(&account, &root).and_then(crate::usage::read_antigravity),
+            _ => Err(format!("{} does not expose a supported quota reader in Freddai yet. Usage and reset time are unknown.",account.provider)),
+        };
+        if let Err(e) = &result {
+            crate::usage::log_failure(&account.provider, "account_usage", e, "", "");
         }
-        crate::usage::read(command(&account, &root)?)
+        *cached = Some((std::time::Instant::now(), result.clone()));
+        result
     }
+
     pub fn auth_status(&self, account_id: &str) -> Result<bool> {
         let i = self.0.lock().unwrap();
         let a =

@@ -49,6 +49,16 @@ it('expands older threads per project and keeps the selected thread live', () =>
   expect(selected.groups[0].olderRemaining).toBe(1);
 });
 
+it('labels expanded older rows "Show more (remaining)" and flags olderExpanded so Show less stays reachable when nothing remains', () => {
+  const read: Record<string, number> = {};
+  const old = Array.from({ length: 12 }, (_, i) => { read[`o${i}`] = i + 1; return thread(`o${i}`, 'a', 'done', i + 1); });
+  const threads = [...recent(read), ...old];
+  const at = (olderPages: Record<string, number>) => buildThreadsModel({ ...base, data: snapshot(threads), read, olderPages }).groups.find(g => g.project === 'a')!;
+  expect(at({})).toMatchObject({ olderExpanded: false, olderLabel: 'Show older threads (12)' });
+  expect(at({ a: 1 })).toMatchObject({ olderExpanded: true, olderRemaining: 2, olderLabel: 'Show more (2)' });
+  expect(at({ a: 2 })).toMatchObject({ olderExpanded: true, olderRemaining: 0 });
+});
+
 it('applies project, status and search filters and reports them back', () => {
   const threads = [thread('x', 'a', 'running', 3, { title: 'Fix login' }), thread('y', 'b', 'done', 2, { title: 'Docs' })];
   const model = buildThreadsModel({ ...base, data: snapshot(threads), query: 'login', filter: 'running', project: 'a' });
@@ -88,6 +98,10 @@ it('maps native events onto the right state changes', () => {
   expect(actions.showOlder).toHaveBeenCalledTimes(1);
   expect(actions.showOlder).toHaveBeenCalledWith('a');
   expect(bumpOlderPage({ a: 1 }, 'a')).toEqual({ a: 2 });
+  const showLess = vi.fn();
+  const less = createThreadEventHandlers({ ...actions, showLess });
+  less.showLess({ project: 'a' }); less.showLess({});
+  expect(showLess.mock.calls).toEqual([['a']]);
 });
 
 it('routes native thread actions to the matching handlers and ignores unknown ones', () => {

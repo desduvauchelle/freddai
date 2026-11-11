@@ -458,7 +458,7 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 
 .footer-account-list { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
 .native-accounts { height: 42px; min-height: 42px; padding: 3px 14px; overflow: hidden; }
-.native-accounts .footer-account-button { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; width: auto; min-width: 0; max-width: 280px; min-height: 0; height: 34px; padding: 2px 6px; border: 0; background: transparent; border-radius: 6px; white-space: nowrap; }
+.native-accounts .footer-account-button { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; width: auto; min-width: 0; max-width: 280px; min-height: 0; height: 42px; padding: 2px 6px; border: 0; background: transparent; border-radius: 6px; white-space: nowrap; }
 .footer-account-button > span { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; color: var(--account-color); }
 .footer-account-button > small { font-size: 11px; color: var(--adaptive-text, #c4c5d1); }
 .account-overview { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
@@ -688,6 +688,13 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 
 .usage-ring-button small { min-width: 0; }
 .usage-ring-button small > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-ring-button small > .footer-usage-row { display: grid; grid-template-columns: 26px auto; align-items: center; column-gap: 4px; position: relative; padding-bottom: 2px; font-size: 10px; line-height: 12px; overflow: visible; }
+.footer-usage-row > em { font-style: normal; color: var(--muted-foreground); }
+.footer-usage-row > .footer-usage-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.footer-usage-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 1px; background: #ffffff1a; overflow: hidden; }
+.footer-usage-bar > b { display: block; height: 100%; background: var(--account-color); }
+.usage-ring-button small > .footer-usage-empty { display: block; }
+.usage-ring-button small > .footer-usage-empty.is-error { color: #e0a95a; }
 .usage-ring-button small > .footer-connection-name { font-size: 11px; color: var(--adaptive-text, #c4c5d1); }
 .native-accounts .footer-account-button:hover { background: #ffffff08; }
 

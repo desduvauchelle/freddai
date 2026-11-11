@@ -148,18 +148,19 @@ class ComposerRecorder(private val activity: AppCompatActivity, private val butt
         target.bringToFront()
         target.translationZ = 24f * activity.resources.displayMetrics.density
     }
-    /** Moves the send button toward the finger by eased progress; at 1 its centre sits under the finger. */
+    /** Project onto the cue rail: cancel is horizontal, send is vertical. */
     private fun follow(rawX: Float, rawY: Float, progress: Float, target: android.view.View? = sendTarget) {
         target ?: return
         if (!followEnabled() || target.visibility != android.view.View.VISIBLE || target.width == 0) return
-        val p = progress * progress * (3 - 2 * progress)
+        val t = progress.coerceIn(0f, 1f)
+        val p = 1 - (1 - t) * (1 - t)
         val loc = IntArray(2)
         target.getLocationOnScreen(loc)
         // getLocationOnScreen includes the current translation and scale-neutral centre; subtract translation for the rest centre.
-        val restX = loc[0] + target.width / 2f - target.translationX
-        val restY = loc[1] + target.height / 2f - target.translationY
-        target.translationX = (rawX - restX) * p
-        target.translationY = (rawY - restY) * p
+        val restX = loc[0] + target.width * target.scaleX / 2f - target.translationX
+        val restY = loc[1] + target.height * target.scaleY / 2f - target.translationY
+        target.translationX = if (target === cancelTarget) (rawX - restX) * p else 0f
+        target.translationY = if (target === cancelTarget) 0f else (rawY - restY) * p
     }
     private fun releaseFollow() {
         cancelTarget?.apply { translationX = 0f; translationY = 0f }

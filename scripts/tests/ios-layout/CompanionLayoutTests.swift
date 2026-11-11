@@ -3,6 +3,28 @@ import UIKit
 
 final class CompanionLayoutTests: XCTestCase {
   @MainActor
+  func testRecordingCuesStayOnTheirAxesAndReturnHome() {
+    for width: CGFloat in [390, 744, 1024, 1366] {
+      let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1000))
+      let bar = DashboardRecordingBar(frame: CGRect(x: 0, y: 400, width: width, height: 160))
+      window.addSubview(bar); bar.layoutIfNeeded()
+      UIView.setAnimationsEnabled(false)
+      defer { UIView.setAnimationsEnabled(true) }
+      bar.update(active: true, destination: "Project")
+      let finger = CGPoint(x: width - 80, y: 490)
+      bar.update(active: true, destination: "Project", sendProgress: 0.5, fingerInWindow: finger)
+      XCTAssertEqual(bar.sendCue.transform.tx, 0, accuracy: 0.01, "Send must stay on its vertical rail")
+      bar.update(active: true, destination: "Project", cancelProgress: 0.5, fingerInWindow: finger)
+      XCTAssertEqual(bar.cancelButton.transform.ty, 0, accuracy: 0.01, "Cancel must stay on its horizontal rail")
+      XCTAssertEqual(bar.sendCue.transform.tx, 0, accuracy: 0.01)
+      XCTAssertEqual(bar.sendCue.transform.ty, 0, accuracy: 0.01)
+      bar.update(active: true, destination: "Project")
+      XCTAssertEqual(bar.cancelButton.transform, .identity)
+      XCTAssertEqual(bar.sendCue.transform, .identity)
+    }
+  }
+
+  @MainActor
   func testDrawerNavigationHierarchyAtPhoneWidths() throws {
     func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
     for width: CGFloat in [280, 353, 430, 768, 1024] {
@@ -409,8 +431,9 @@ final class CompanionLayoutTests: XCTestCase {
         composer.presentRecording(true, armed: true, progress: 1, fingerInWindow: finger)
         let armedCentre = cue.convert(CGPoint(x: cue.bounds.midX, y: cue.bounds.midY), to: nil)
         let safe = window.bounds.inset(by: window.safeAreaInsets)
-        XCTAssertEqual(armedCentre.x, max(safe.minX + 44, min(safe.maxX - 44, finger.x)), accuracy: 0.5)
-        XCTAssertEqual(armedCentre.y, max(safe.minY + 44, min(safe.maxY - 44, finger.y)), accuracy: 0.5)
+        XCTAssertEqual(armedCentre.x, rest.x, accuracy: 0.5)
+        let halfHeight = cue.bounds.height * cue.transform.d / 2
+        XCTAssertEqual(armedCentre.y, max(safe.minY + halfHeight, min(safe.maxY - halfHeight, finger.y)), accuracy: 0.5)
         composer.presentRecording(true, armed: true)
       }
       let actual = try XCTUnwrap(cue.backgroundColor?.cgColor.components)
@@ -530,7 +553,7 @@ final class CompanionLayoutTests: XCTestCase {
         let finger = CGPoint(x: rest.x - 40, y: rest.y - 200)
         dashboard.presentRecordingBar(active: true, destination: "Sample", sendProgress: 1, fingerInWindow: finger)
         let centre = bar.sendCue.convert(CGPoint(x: bar.sendCue.bounds.midX, y: bar.sendCue.bounds.midY), to: nil)
-        XCTAssertEqual(centre.x, finger.x, accuracy: 0.5)
+        XCTAssertEqual(centre.x, rest.x, accuracy: 0.5)
         XCTAssertEqual(centre.y, finger.y, accuracy: 0.5)
       }
       dashboard.presentRecordingBar(active: true, destination: "Sample", cancelProgress: 1)
@@ -541,7 +564,7 @@ final class CompanionLayoutTests: XCTestCase {
         dashboard.presentRecordingBar(active: true, destination: "Sample", cancelProgress: 1, fingerInWindow: finger)
         let centre = bar.cancelButton.convert(CGPoint(x: 22, y: 22), to: nil)
         XCTAssertEqual(centre.x, finger.x, accuracy: 0.5)
-        XCTAssertEqual(centre.y, finger.y, accuracy: 0.5)
+        XCTAssertEqual(centre.y, rest.y, accuracy: 0.5)
       }
       dashboard.presentRecordingBar(active: false, destination: "Sample")
       XCTAssertFalse(bar.presented)

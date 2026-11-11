@@ -121,17 +121,27 @@ enum RecordingSwipe {
     let t = max(0, min(1, sendProgress))
     return 1 - (1 - t) * (1 - t)
   }
+  enum FollowAxis { case horizontal, vertical }
+
+  static func followScale(for view: UIView, progress: CGFloat) -> CGFloat {
+    let scale = 1 + max(0, min(1, progress))
+    guard let window = view.window, let parent = view.superview, view.bounds.width > 0 else { return scale }
+    let safe = window.bounds.inset(by: window.safeAreaInsets)
+    let rest = parent.convert(view.center, to: window)
+    return max(1, min(scale, 2 * min(rest.x - safe.minX, safe.maxX - rest.x) / view.bounds.width))
+  }
   /// Translation (in `view.superview` space) that moves the send cue from rest toward the finger.
   /// `fingerInWindow` is in window coordinates; keep the enlarged cue inside the visible safe area.
-  static func followTranslation(for view: UIView, fingerInWindow: CGPoint, sendProgress: CGFloat) -> CGPoint {
+  static func followTranslation(for view: UIView, fingerInWindow: CGPoint, sendProgress: CGFloat, axis: FollowAxis = .vertical) -> CGPoint {
     guard let superview = view.superview else { return .zero }
     let finger = superview.convert(fingerInWindow, from: nil)
     let amount = followAmount(sendProgress: sendProgress)
+    guard amount > 0 else { return .zero }
     var target = CGPoint(x: view.center.x + (finger.x - view.center.x) * amount,
                          y: view.center.y + (finger.y - view.center.y) * amount)
     if let window = view.window {
       let safe = window.bounds.inset(by: window.safeAreaInsets)
-      let scale = 1 + max(0, min(1, sendProgress))
+      let scale = axis == .vertical ? followScale(for: view, progress: sendProgress) : 1 + 0.5 * max(0, min(1, sendProgress))
       // Convert the final scaled footprint, rather than the previous frame's transform.
       let halfSize = CGSize(width: view.bounds.width * scale / 2, height: view.bounds.height * scale / 2)
       var centre = superview.convert(target, to: window)
@@ -139,7 +149,10 @@ enum RecordingSwipe {
       centre.y = max(safe.minY + halfSize.height, min(safe.maxY - halfSize.height, centre.y))
       target = superview.convert(centre, from: window)
     }
-    return CGPoint(x: target.x - view.center.x, y: target.y - view.center.y)
+    // Project after safe-area clamping so clamping cannot move the locked axis.
+    return axis == .horizontal
+      ? CGPoint(x: target.x - view.center.x, y: 0)
+      : CGPoint(x: 0, y: target.y - view.center.y)
   }
   /// Lets a following cue draw outside clipping ancestors and above siblings. Returns the views whose clipping was disabled.
   static func liftForFollow(_ view: UIView, already: [UIView]) -> [UIView] {

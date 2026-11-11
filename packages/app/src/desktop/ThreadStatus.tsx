@@ -11,6 +11,8 @@ export function labelStatus(s: string) {
         interrupted: "Interrupted",
         running: "Running",
         starting: "Starting",
+        sending: "Sending…",
+        queued: "Queued",
       } as Record<string, string>
     )[s] || s
   );
@@ -21,7 +23,7 @@ export function Dot({ status }: { status: string }) {
       role="img"
       aria-label={labelStatus(status)}
       title={labelStatus(status)}
-      className={`state-dot state-${dotClass(status)}`}
+      className={`state-dot state-${dotClass(status === "sending" ? "starting" : status)}`}
     />
   );
 }

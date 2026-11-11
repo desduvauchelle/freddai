@@ -48,11 +48,11 @@ export function useNativeShell(): boolean {
   return native;
 }
 
-export type NativeMode = 'conversation' | 'commander' | 'new' | 'dashboard' | 'other';
+export type NativeMode = 'conversation' | 'commander' | 'new' | 'dashboard' | 'project' | 'other';
 /** 'conversation', 'commander' and 'new' show the native bar and drawer ('commander' is a conversation whose web header draws under a transparent bar); 'other' (pairing, loading) shows neither. */
-export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean; threadSheet?: boolean } = {}): Promise<void> {
+export function setMode(mode: NativeMode, options: { title?: string; placeholder?: string; openDrawer?: boolean; threadSheet?: boolean; back?: boolean } = {}): Promise<void> {
   if (!available) return Promise.resolve();
-  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null, threadSheet: options.threadSheet ?? false });
+  return invoke<void>(`plugin:${PLUGIN}|set_mode`, { mode, title: options.title ?? null, placeholder: options.placeholder ?? null, openDrawer: options.openDrawer ?? null, threadSheet: options.threadSheet ?? false, back: options.back ?? false });
 }
 
 /** Pushes the thread list model to the native drawer. Callers should wrap this in `createChangeSender`. */
@@ -140,6 +140,7 @@ export const onSetFilter = (handler: (payload: { workspace?: unknown; project?: 
 export const onNewThread = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('newThread', handler);
 export const onMoveProject = (handler: (payload: { project?: unknown; target?: unknown; after?: unknown }) => void) => listen<{ project?: unknown; target?: unknown; after?: unknown }>('moveProject', handler);
 export const onShowOlder = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('showOlder', handler);
+export const onShowLess = (handler: (payload: { project?: unknown }) => void) => listen<{ project?: unknown }>('showLess', handler);
 export const onSetView = (handler: (payload: { view?: unknown }) => void) => listen<{ view?: unknown }>('setView', handler);
 export const onRecentPage = (handler: (payload: { action?: unknown; section?: unknown }) => void) => listen<{ action?: unknown; section?: unknown }>('recentPage', handler);
 

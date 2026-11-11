@@ -1,5 +1,7 @@
-import { expect, it } from 'vitest';
-import { buildDashboardModel } from './native-dashboard';
+import { beforeEach, expect, it } from 'vitest';
+import { buildDashboardModel, dashboardAssistantFor } from './native-dashboard';
+import { saveLastAssistant, saveControls, savedControls } from './native-home';
+import type { Outgoing } from './outbox';
 import type { CompanionSnapshot } from './companion';
 
 it('native iOS and Android display and launch the resolved saved integration', () => {
@@ -24,4 +26,47 @@ it('keeps recent-card statuses identical to drawer rows through running, approva
   expect(recent({ t: 123 })).toMatchObject({ status: 'done', unread: false });
   snapshot.threadList = { ignoreUnread: true };
   expect(recent().unread).toBe(false);
+});
+
+beforeEach(() => localStorage.clear());
+const outgoing = (over: Partial<Outgoing>): Outgoing => ({ id: 'o1', thread: '', project: 'p', prompt: 'Fix the login bug', ordinal: 1, startsTurn: true, acknowledged: false, attachments: [], ...over });
+const base = { id: 't', title: 'Existing', project: 'p', status: 'done', updated: 5, messages: [], canReply: false, queued: 0, error: null };
+const snap = (threads: CompanionSnapshot['threads'] = [base]): CompanionSnapshot => ({ projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true }, { id: 'q', name: 'Other', color: '#777', canStart: true }], threads });
+
+it('merges pending outbox items into the project recent list as sending or queued rows and drops project.sending', () => {
+  const long = 'x'.repeat(100);
+  const model = buildDashboardModel(snap(), true, '', {}, false, 1000, false, {}, [outgoing({}), outgoing({ id: 'o2', prompt: long, blocked: true }), outgoing({ id: 'o3', project: 'q' })]);
+  const recent = model.projects[0].recent;
+  expect(model.projects[0]).not.toHaveProperty('sending');
+  expect(recent.map(r => r.id)).toEqual(['outbox:o2', 'outbox:o1', 't']);
+  expect(recent[0]).toMatchObject({ status: 'queued', unread: false, updatedAt: 1000 });
+  expect(recent[0].title).toHaveLength(60);
+  expect(recent[1]).toMatchObject({ title: 'Fix the login bug', status: 'sending' });
+  expect(model.projects[1].recent.map(r => r.id)).toEqual(['outbox:o3']);
+  expect(buildDashboardModel(snap(), false, '', {}, false, 1000, false, {}, [outgoing({})]).projects[0].recent[0].status).toBe('queued');
+});
+
+it('caps recent at three with pending rows first and hides items that became real threads', () => {
+  const threads = [1, 2, 3].map(n => ({ ...base, id: `t${n}`, updated: n }));
+  const ids = (outbox: Outgoing[]) => buildDashboardModel(snap(threads), true, '', {}, false, 1000, false, {}, outbox).projects[0].recent.map(r => r.id);
+  expect(ids([outgoing({})])).toEqual(['outbox:o1', 't3', 't2']);
+  expect(ids([outgoing({ thread: 't3', acknowledged: true })])).toEqual(['t3', 't2', 't1']);
+  expect(ids([outgoing({ thread: 'new', acknowledged: true })])).toEqual(['new', 't3', 't2']);
+});
+
+it('resolves the agent as explicit, then persisted last-used, then default, ignoring a stale persisted id', () => {
+  const project = { id: 'p', name: 'P', color: '#777', canStart: true, defaultAssistant: 'a', assistants: [{ id: 'a', name: 'A', provider: 'claude' }, { id: 'b', name: 'B', provider: 'codex' }, { id: 'c', name: 'C', provider: 'codex' }] };
+  expect(dashboardAssistantFor(project, '')?.id).toBe('a');
+  saveLastAssistant('p', 'b');
+  expect(localStorage.getItem('freddai.companion.lastAssistant.p')).toBe('b');
+  expect(dashboardAssistantFor(project, '')?.id).toBe('b');
+  expect(dashboardAssistantFor(project, 'c')?.id).toBe('c');
+  saveLastAssistant('p', 'gone');
+  expect(dashboardAssistantFor(project, '')?.id).toBe('a');
+});
+
+it('persists last-used model and effort under new: keys only', () => {
+  saveControls({ 'new:p:a:claude': { selection: { model: 'opus', effort: 'high' } }, 'thread-1': { selection: { model: 'x', effort: 'low' } } });
+  expect(savedControls()).toEqual({ 'new:p:a:claude': { model: 'opus', effort: 'high' } });
+  expect(localStorage.getItem('freddai.companion.controls')).toContain('new:p:a:claude');
 });

@@ -9,3 +9,5 @@
 - If native-app control is denied, do not bypass the restriction. State that the installed update is ready but the running instance still needs restarting, with the exact user action needed. Never claim the new version was launched or tested when only installation was verified.
 - Keep the spec current. Report source/tests/build/signature/install/launch/live-provider verification separately.
 - Do not use accounts, credentials, or live agent turns as test fixtures. Account creation, sign-in, and per-subscription validation must be explicit; never fabricate connected accounts to enable Start.
+
+- Freddai Virtual Office means the desktop dashboard as well as iPhone, every iPad, Android, and browser companions. Keep its rendering in the shared `packages/app/src/office` component whenever possible. Project title signs must not show message, thread, or working counters; use that space for readable project titles on every screen size.

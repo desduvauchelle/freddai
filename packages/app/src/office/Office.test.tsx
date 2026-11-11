@@ -76,15 +76,18 @@ it("shows the clock shrine only when schedules exist", () => {
   expect(screen.getByLabelText("Scheduled work").textContent).toContain("1 scheduled");
 });
 
-it("draws one scaling SVG with a room and scoreboard per project plus lobby, coffee lounge and your desk", () => {
+it("draws one scaling SVG with a title sign without counters per project plus lobby, coffee lounge and your desk", () => {
   mini({ sessions: [thread("1", { messages: [{ id: "m", role: "user", text: "" }, { id: "n", role: "user", text: "" }] }), thread("2", { project: "beta", status: "waiting" })] });
   const svg = document.querySelector("svg.office-svg") as SVGSVGElement;
   expect(svg.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
   expect(svg.getAttribute("viewBox")).toMatch(/^0 0 \d+ \d+$/);
   expect(svg.getAttribute("width")).toBeNull();
   expect(screen.getByLabelText("Alpha room")).toBeTruthy();
-  expect(screen.getByLabelText("Alpha scoreboard").textContent).toBe("2 msgs · 1 thread · 1 working");
-  expect(screen.getByLabelText("Beta scoreboard").textContent).toBe("0 msgs · 1 thread · 0 working");
+  expect(document.querySelector(".office-project-scoreboard")).toBeNull();
+  expect(document.querySelector(".office-project-plate")?.getAttribute("height")).toBe("28");
+  fireEvent.click(screen.getByRole("button", { name: "Expand office" }));
+  expect(document.querySelector(".office-project-scoreboard")).toBeNull();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close office" }));
   for (const name of ["Lobby", "Coffee lounge", "Your desk"]) expect(screen.getByLabelText(name)).toBeTruthy();
   expect(screen.getByLabelText("Coffee lounge").textContent).toContain("WAITING FOR YOU · 1");
   expect(screen.getByLabelText("Lobby").textContent).toContain("RECEPTION");
@@ -213,23 +216,15 @@ it('selects a room for orders in mini and expanded views without opening a threa
   expect(within(dialog).getByText('Mic for alpha')).toBeTruthy();
 });
 
-it('gives a renamed Commander one executive office and opens Commander instead of a task', () => {
+it('excludes Commander from the mini and expanded workplace', () => {
   const boss = { ...project('chief', 'Ada'), kind: 'commander' as const };
-  const open = vi.fn(), controls = vi.fn(() => <button>Task microphone</button>);
-  mini({ projects: [boss, ...projects], sessions: [thread('boss-1', { project: 'chief' }), thread('boss-2', { project: 'chief' }), ...sessions],
-    onOpenCommander: open, renderTaskControls: controls });
-  const office = screen.getByRole('button', { name: "Boss's office · Ada" });
-  expect(office.querySelectorAll('.office-executive-desk')).toHaveLength(1);
-  expect(screen.queryByRole('button', { name: 'Give an order to Ada' })).toBeNull();
-  expect(screen.queryByLabelText('Ada · Ready for a task')).toBeNull();
+  mini({ projects: [boss, ...projects], sessions: [thread('boss-1', { project: 'chief' }), ...sessions] });
+  expect(document.querySelector('.office-boss-suite')).toBeNull();
   expect(screen.queryByRole('button', { name: /Ada · Title boss/ })).toBeNull();
-  fireEvent.keyDown(office, { key: 'Enter' });
-  expect(open).toHaveBeenCalledTimes(1);
-  expect(controls).not.toHaveBeenCalled();
+  expect(screen.getByRole('group', { name: 'Alpha room' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Expand office' }));
-  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: "Boss's office · Ada" }));
-  expect(open).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.querySelector('.office-boss-suite')).toBeNull();
+  expect(within(screen.getByRole('dialog')).getByRole('group', { name: 'Alpha room' })).toBeTruthy();
 });
 
 const hold = (id: string, project: string | null, summary = `Task ${id}`) => ({ id, tool: 'freddai_start_task', summary, project, arguments: {}, status: 'pending' });
@@ -254,12 +249,12 @@ it('shows a loud error when answering a proposal fails, and sends unrouted cards
   expect((await screen.findByRole('alert')).textContent).toContain('boom');
 });
 
-it('renders cards view-only without a respond handler and marks the Commander desk working', () => {
+it('renders cards view-only without a respond handler and omits the Commander desk', () => {
   const boss = { ...project('chief', 'Ada'), kind: 'commander' as const };
   mini({ projects: [boss, ...projects], sessions: [thread('b1', { project: 'chief' }), ...sessions], proposals: [hold('p3', 'alpha', 'View only')], onOpenCommander: vi.fn() });
   expect(screen.getByRole('group', { name: 'Proposed task: View only' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Approve: View only/ })).toBeNull();
-  expect(document.querySelector('.office-boss-suite')?.getAttribute('data-state')).toBe('working');
+  expect(document.querySelector('.office-boss-suite')).toBeNull();
 });
 
 it("keeps zoom controls in the footer and out of the floor plan in both views", () => {
@@ -290,4 +285,21 @@ it("hides inactive project rooms by default, toggles to show all, and persists t
   render(<Office variant="mini" sessions={[...sessions, old]} projects={all} schedules={[]} now={NOW} onOpenThread={vi.fn()} />);
   expect(document.querySelectorAll(".office-floor").length).toBe(base + 1);
   expect(screen.getByRole("button", { name: "Showing all projects — show recent only" })).toBeTruthy();
+});
+
+
+it("uses two title lines in the reclaimed sign space in mini and expanded rooms", () => {
+  const name = "A longer project title";
+  mini({ projects: Array.from({ length: 6 }, (_, i) => project(i ? `p${i}` : "alpha", name)) });
+  const check = () => {
+    for (const title of document.querySelectorAll(".office-project-name")) {
+      expect(title.querySelectorAll("tspan").length).toBeLessThanOrEqual(2);
+      expect([...title.querySelectorAll("tspan")].map(line => line.textContent).join(" ")).toBe(name);
+    }
+    expect(document.querySelector(".office-project-scoreboard")).toBeNull();
+  };
+  expect(document.querySelector(".office-project-name")?.querySelectorAll("tspan")).toHaveLength(2);
+  check();
+  fireEvent.click(screen.getByRole("button", { name: "Expand office" }));
+  check();
 });

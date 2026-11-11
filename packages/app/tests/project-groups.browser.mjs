@@ -18,11 +18,12 @@ try {
  await alpha.getByRole('button',{name:'Show older threads (22)',exact:true}).click();
  assert.equal(await alpha.locator('.companion-row').count(),15);assert.equal(await beta.locator('.companion-row').count(),5);
  assert.ok(await alpha.getByRole('separator').count()>0);
- await alpha.getByRole('button',{name:'Show 10 more (12)',exact:true}).click();
+ await alpha.getByRole('button',{name:'Show more (12)',exact:true}).click();
  assert.equal(await alpha.locator('.companion-row').count(),25);
- await alpha.getByRole('button',{name:'Show 2 more (2)',exact:true}).click();
+ await alpha.getByRole('button',{name:'Show more (2)',exact:true}).click();
  assert.equal(await alpha.locator('.companion-row').count(),27);
- await alpha.getByRole('button',{name:'Hide older threads',exact:true}).click();
+ assert.equal(await alpha.getByRole('button',{name:/^Show more/}).count(),0);
+ await alpha.getByRole('button',{name:'Show less',exact:true}).click();
  assert.equal(await alpha.locator('.companion-row').count(),5);
  await alpha.getByRole('button',{name:'Show older threads (22)',exact:true}).click();
  await page.getByRole('textbox',{name:'Search threads',exact:true}).fill('A task 26');

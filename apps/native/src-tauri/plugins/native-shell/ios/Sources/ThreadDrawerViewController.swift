@@ -30,6 +30,7 @@ struct ThreadGroupModel: Decodable, Equatable {
   let threads: [ThreadRowModel]
   var olderRemaining: Int = 0
   var olderLabel: String = ""
+  var olderExpanded: Bool = false
   /// "commander" marks the Commander-in-Chief project: listed first, with the mascot, opening its screen on tap.
   var kind: String? = nil
 }
@@ -56,6 +57,16 @@ struct ProductUsageModel: Decodable, Equatable {
   let reset: String
   let stale: Bool
   let details: String
+  // Newer payload fields; optional so older payloads still decode.
+  var session: String?
+  var sessionRemaining: Double?
+  var weekly: String?
+  var weeklyRemaining: Double?
+  var status: String?
+
+  /// Old payloads (no session/weekly/status) fall back to the single capacity/reset row.
+  var isLegacy: Bool { session == nil && weekly == nil && status == nil }
+  var cardHeight: CGFloat { isLegacy ? 36 : (status != nil ? 34 : 58) }
 }
 
 /// A bounded footer: product identity, remaining capacity, then reset time.
@@ -132,7 +143,8 @@ final class ProductUsageFooterView: UIView {
     grid.arrangedSubviews.forEach { grid.removeArrangedSubview($0); $0.removeFromSuperview() }
     isHidden = products.isEmpty
     headerHeight.constant = products.isEmpty ? 0 : 28
-    scrollHeight.constant = CGFloat(min(2, (products.count + 1) / 2)) * 36 + (products.count > 2 ? 4 : 0)
+    let cardHeight = products.map(\.cardHeight).max() ?? 36
+    scrollHeight.constant = CGFloat(min(2, (products.count + 1) / 2)) * cardHeight + (products.count > 2 ? 4 : 0)
     for start in stride(from: 0, to: products.count, by: 2) {
       let row = UIStackView()
       row.axis = .horizontal
@@ -147,7 +159,10 @@ final class ProductUsageFooterView: UIView {
   private func makeCard(_ product: ProductUsageModel) -> UIView {
     let card = UIView()
     card.isAccessibilityElement = true
-    card.accessibilityLabel = "\(product.product), \(product.name), \(product.capacity), \(product.reset)"
+    card.accessibilityLabel = product.isLegacy
+      ? "\(product.product), \(product.name), \(product.capacity), \(product.reset)"
+      : ([product.product, product.name, product.status, product.session.map { "5 hour, \($0)" }, product.weekly.map { "Week, \($0)" }].compactMap { $0 }).joined(separator: ", ")
+    if !product.isLegacy { return makeUsageCard(product, card: card) }
     let identity = UILabel()
     let text = NSMutableAttributedString(string: product.product, attributes: [.font: UIFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: UIColor.label.withAlphaComponent(0.72)])
     if !product.name.isEmpty && product.name.lowercased() != product.product.lowercased() {
@@ -185,6 +200,71 @@ final class ProductUsageFooterView: UIView {
       content.topAnchor.constraint(equalTo: card.topAnchor, constant: 1),
       content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -1),
       progress.heightAnchor.constraint(equalToConstant: 2),
+    ])
+    return card
+  }
+}
+
+extension ProductUsageFooterView {
+  fileprivate func makeUsageCard(_ product: ProductUsageModel, card: UIView) -> UIView {
+    let secondary = UIColor.label.withAlphaComponent(0.72)
+    let identity = UILabel()
+    let text = NSMutableAttributedString(string: product.product, attributes: [.font: UIFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: secondary])
+    if !product.name.isEmpty && product.name.lowercased() != product.product.lowercased() {
+      text.append(NSAttributedString(string: " · " + product.name, attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: secondary]))
+    }
+    identity.attributedText = text
+    identity.lineBreakMode = .byTruncatingMiddle
+    let content = UIStackView(arrangedSubviews: [identity])
+    content.axis = .vertical
+    content.spacing = 2
+    let suffix = product.stale ? " · last known" : ""
+    if let status = product.status {
+      let label = UILabel()
+      label.text = status + suffix
+      label.font = .systemFont(ofSize: 12)
+      label.lineBreakMode = .byTruncatingTail
+      label.textColor = status.lowercased().contains("sign-in expired") ? .systemOrange : secondary
+      content.addArrangedSubview(label)
+    } else {
+      for (caption, value, remaining) in [("5h", product.session, product.sessionRemaining), ("Week", product.weekly, product.weeklyRemaining)] {
+        guard let value else { continue }
+        let cap = UILabel()
+        cap.text = caption
+        cap.font = .systemFont(ofSize: 12, weight: .medium)
+        cap.textColor = secondary
+        cap.setContentHuggingPriority(.required, for: .horizontal)
+        cap.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let val = UILabel()
+        val.text = value + suffix
+        val.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        val.textColor = .label
+        val.textAlignment = .right
+        val.lineBreakMode = .byTruncatingTail
+        let line = UIStackView(arrangedSubviews: [cap, val])
+        line.spacing = 6
+        line.alignment = .firstBaseline
+        let progress = UIProgressView(progressViewStyle: .bar)
+        let used = max(0, min(100, 100 - (remaining ?? 100)))
+        progress.progress = Float(used / 100)
+        progress.progressTintColor = (remaining ?? 100) < 20 ? UIColor.systemOrange : UIColor.label.withAlphaComponent(0.5)
+        progress.trackTintColor = .tertiarySystemFill
+        progress.layer.cornerRadius = 2
+        progress.clipsToBounds = true
+        progress.heightAnchor.constraint(equalToConstant: 2).isActive = true
+        let group = UIStackView(arrangedSubviews: [line, progress])
+        group.axis = .vertical
+        group.spacing = 1
+        content.addArrangedSubview(group)
+      }
+    }
+    content.translatesAutoresizingMaskIntoConstraints = false
+    card.addSubview(content)
+    NSLayoutConstraint.activate([
+      card.heightAnchor.constraint(equalToConstant: product.cardHeight),
+      content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+      content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+      content.topAnchor.constraint(equalTo: card.topAnchor, constant: 1),
     ])
     return card
   }
@@ -231,6 +311,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
   var onNewThread: ((String) -> Void)?
   var onMoveProject: ((String, String, Bool) -> Void)?
   var onShowOlder: ((String) -> Void)?
+  var onShowLess: ((String) -> Void)?
   var onSetView: ((String) -> Void)?
   var onRecentPage: ((String, Bool) -> Void)?
 
@@ -519,9 +600,13 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     let threadReg = UICollectionView.CellRegistration<ThreadCell, String> { [weak self] cell, _, id in
       if let row = self?.rows[id] { cell.configure(row) }
     }
-    let olderReg = UICollectionView.CellRegistration<TextRowCell, String> { [weak self] cell, _, project in
-      let label = self?.groups[project]?.olderLabel ?? "Show older threads"
-      cell.configure(text: label, color: .tintColor, centered: false, button: true)
+    let olderReg = UICollectionView.CellRegistration<OlderRowCell, String> { [weak self] cell, _, project in
+      let group = self?.groups[project]
+      cell.configure(
+        moreText: (group?.olderRemaining ?? 0) > 0 ? (group?.olderLabel ?? "Show older threads") : nil,
+        showLess: group?.olderExpanded ?? false,
+        onMore: { [weak self] in self?.onShowOlder?(project) },
+        onLess: { [weak self] in self?.onShowLess?(project) })
     }
     let recentReg = UICollectionView.CellRegistration<ThreadCell, String> { [weak self] cell, _, id in
       if let row = self?.recentRows[id] { cell.configure(row, showProject: true) }
@@ -577,7 +662,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       var items: [DrawerItem] = [.header(group.project)]
       if !collapsedProjects.contains(group.project) {
         items += group.threads.map { .thread($0.id) }
-        if group.olderRemaining > 0 { items.append(.older(group.project)) }
+        if group.olderRemaining > 0 || group.olderExpanded { items.append(.older(group.project)) }
       }
       snapshot.appendItems(items.filter { seen.insert($0).inserted }, toSection: group.project)
     }
@@ -605,7 +690,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       case .thread(let id): if previousRows[id] != rows[id] { changed.append(item) }
       case .header(let p):
         changed.append(item)
-      case .older(let p): if previousGroups[p]?.olderLabel != groups[p]?.olderLabel { changed.append(item) }
+      case .older(let p): if previousGroups[p]?.olderLabel != groups[p]?.olderLabel || previousGroups[p]?.olderExpanded != groups[p]?.olderExpanded || previousGroups[p]?.olderRemaining != groups[p]?.olderRemaining { changed.append(item) }
       case .empty: changed.append(item)
       case .recent(let id): if previousRecent[id] != recentRows[id] { changed.append(item) }
       case .recentMore, .recentLess, .recentEmpty, .sectionHeader: break
@@ -643,7 +728,7 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
 
   func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
     switch dataSource.itemIdentifier(for: indexPath) {
-    case .header, .thread, .older, .recent, .recentMore, .recentLess: return true
+    case .header, .thread, .recent, .recentMore, .recentLess: return true
     default: return false
     }
   }
@@ -664,10 +749,6 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
       collectionView.deselectItem(at: indexPath, animated: true)
       syncSelection()
       onRecentPage?("less", currentView != "recent")
-    case .older(let project):
-      collectionView.deselectItem(at: indexPath, animated: true)
-      syncSelection()
-      onShowOlder?(project)
     default: break
     }
   }
@@ -855,9 +936,11 @@ final class StatusIndicatorView: UIView {
   func configure(status: String, unread: Bool) -> String {
     var dotColor: UIColor?
     var spoken = ""
-    pulsing = status == "running" || status == "starting"
+    pulsing = status == "running" || status == "starting" || status == "sending"
     switch status {
     case "running", "starting": dotColor = StatusIndicatorView.pulseColor; spoken = status == "running" ? "Running" : "Starting"
+    case "sending": dotColor = StatusIndicatorView.pulseColor; spoken = "Sending"
+    case "queued": dotColor = .tertiaryLabel; spoken = "Queued"
     case "waiting": dotColor = .systemOrange; spoken = "Needs you"
     case "interrupted": dotColor = .systemOrange; spoken = "Interrupted"
     case "failed", "error": dotColor = .systemRed; spoken = "Failed"
@@ -1047,4 +1130,53 @@ final class TextRowCell: UICollectionViewListCell {
     accessibilityLabel = text
     accessibilityTraits = button ? .button : .staticText
   }
+}
+
+/// "Show more (N)" and "Show less" share one row, styled like the other text-link rows; either button is omitted when it does not apply.
+final class OlderRowCell: UICollectionViewListCell {
+  private let more = UIButton(type: .system)
+  private let less = UIButton(type: .system)
+  private var onMore: (() -> Void)?
+  private var onLess: (() -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    for (button, action) in [(more, #selector(tapMore)), (less, #selector(tapLess))] {
+      button.titleLabel?.font = .preferredFont(forTextStyle: .subheadline)
+      button.titleLabel?.adjustsFontForContentSizeCategory = true
+      button.contentHorizontalAlignment = .leading
+      button.addTarget(self, action: action, for: .touchUpInside)
+    }
+    let stack = UIStackView(arrangedSubviews: [more, less, UIView()])
+    stack.axis = .horizontal
+    stack.spacing = 16
+    stack.alignment = .center
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: contentView.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 30),
+      stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+      more.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+      less.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+    ])
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func configure(moreText: String?, showLess: Bool, onMore: @escaping () -> Void, onLess: @escaping () -> Void) {
+    self.onMore = onMore
+    self.onLess = onLess
+    more.isHidden = moreText == nil
+    more.setTitle(moreText, for: .normal)
+    more.accessibilityLabel = moreText
+    more.accessibilityIdentifier = "older-more"
+    less.isHidden = !showLess
+    less.setTitle("Show less", for: .normal)
+    less.accessibilityLabel = "Show less"
+    less.accessibilityIdentifier = "older-less"
+  }
+
+  @objc private func tapMore() { onMore?() }
+  @objc private func tapLess() { onLess?() }
 }

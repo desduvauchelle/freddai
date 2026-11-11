@@ -12,48 +12,12 @@ import { Input } from "@freddai/ui/components/input";
 import type { Database, Schedule, Session } from "./types";
 type ScheduleData = { projects: {id:string;name:string}[]; accounts: {id:string;name:string;provider:string}[]; schedules?: Schedule[]; sessions?: Session[] };
 export type ScheduleCommand = (command: "save_schedule" | "schedule_action", input: Record<string, unknown>) => Promise<unknown>;
-export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,context,projectId,scheduleId,onDeleted,conversation,onClose,onSaved}:{db:ScheduleData | Database;native:boolean;onRefresh:()=>Promise<void>;onSelect:(id:string)=>void;command?:ScheduleCommand;projectId?:string;scheduleId?:string;onDeleted?:()=>void;onClose?:()=>void;onSaved?:(id:string)=>void;conversation?:(props:{form:Schedule;setPrompt:(prompt:string)=>void;submit:()=>void;busy:boolean;disabled:boolean})=>ReactNode;context?:Pick<Session,"project"|"account"|"title"|"messages">}) {
-  const blank=():Schedule=>{
-    const account=context?.account||("preferences" in db?resolveAccount(db,db.projects.find(p=>p.id===projectId)||db.projects[0]):db.accounts[0]?.id)||"";
-    return ({id:"",name:context?.title||"",project:context?.project||projectId||db.projects[0]?.id||"",account,routing:"fixed",new_chat:true,thread:null,notifications:"important",cron:"0 9 * * 1-5",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,prompt:context?.messages.find(m=>m.role==="user")?.text||"",enabled:true,options:{worktree:false,permission_mode:["codex","claude"].includes(db.accounts.find(a=>a.id===account)?.provider||"")?"bypass":"ask"},next_due:0,runs:[]});};
-  const [form,setForm]=useState<Schedule>(()=>db.schedules?.find(s=>s.id===scheduleId)||blank()),[editing,setEditing]=useState(!!context||!!scheduleId||!!projectId),[error,setError]=useState(""),[busy,setBusy]=useState(false);
-  async function act(fn:()=>Promise<unknown>){setBusy(true);setError("");try{await fn();await onRefresh();}catch(e){setError(String(e).includes("Use five cron fields") && form.cron.includes("\n") ? "The background host needs its update to save multiple schedules. Let active work finish so it can update, then save again." : String(e));}finally{setBusy(false);}}
-  const [deleting,setDeleting]=useState("");
-
-  const progress = {...form,runs:db.schedules?.find(s=>s.id===form.id)?.runs||form.runs};
-  const update=(p:Partial<Schedule>)=>setForm(f=>({...f,...p}));
-  const pendingCreation = useRef<{ids:Set<string>;form:Schedule}|null>(null);
-  useEffect(()=>{
-    const pending=pendingCreation.current;
-    if (!pending) return;
-    const matches=(db.schedules||[]).filter(s=>!pending.ids.has(s.id)&&s.name===pending.form.name&&s.project===pending.form.project&&s.account===pending.form.account&&s.prompt===pending.form.prompt);
-    if(matches.length===1){pendingCreation.current=null;setForm(matches[0]);onSaved?.(matches[0].id);}
-  },[db.schedules,onSaved]);
-  async function save(run = false) {
-    if (form.new_chat===false&&!form.thread) throw new Error("Choose the thread this routine should run in.");
-    if (form.max_runs!=null && (!Number.isInteger(form.max_runs)||form.max_runs<1||form.max_runs>4294967295)) throw new Error("Enter a whole number of runs between 1 and 4294967295.");
-    if (!form.name.trim() || !form.prompt.trim()) throw new Error("Add a name and task prompt first.");
-    const pending = !form.id ? {ids:new Set((db.schedules||[]).map(s=>s.id)),form} : null;
-    await command("save_schedule",{schedule:form});
-    pendingCreation.current=pending;
-    if (run && form.id) await command("schedule_action",{schedule:form.id,action:"run"});
-    setEditing(false);
-  }
-  const deleteControls = (id:string) => <>
-    <Button type="button" size="sm" variant="ghost" disabled={busy||!native} onClick={()=>setDeleting(id)}>Delete…</Button>
-    {deleting===id&&<div role="alert"><p>Delete this scheduled task? Existing threads and their messages are kept. Running threads keep running.</p><Button type="button" variant="destructive" disabled={busy||!native} onClick={()=>void act(async()=>{await command("schedule_action",{schedule:id,action:"delete"});setDeleting("");if(form.id===id){setForm(blank());setEditing(false);}onDeleted?.();})}>Delete schedule</Button><Button type="button" variant="ghost" disabled={busy} onClick={()=>setDeleting("")}>Keep schedule</Button></div>}
-  </>;
-  const configuration = <div className="schedule-manager">{error&&<p role="alert">{error}</p>}
-    {(!editing||!!scheduleId)&&<>{!scheduleId&&<Button variant="outline" onClick={()=>{setForm(blank());setEditing(true);}} disabled={!db.projects.length||!db.accounts.length}>New schedule</Button>}
-      {!(db.schedules||[]).length&&<p className="capture-help">No schedules yet. Choose a project, account, and prompt. Signing out blocks runs without deleting the schedule.</p>}
-      {(db.schedules||[]).filter(s=>scheduleId?s.id===scheduleId:!projectId||s.project===projectId).map(s=><section className="schedule-card" key={s.id}><strong>{s.name}</strong><p>{db.projects.find(p=>p.id===s.project)?.name} · {scheduleEnded(s)?"Ended":s.enabled?`Next ${new Date(s.next_due).toLocaleString(undefined,{timeZone:s.timezone})}`:"Paused"}</p><small>{s.timezone} · {db.accounts.find(a=>a.id===s.account)?.name}{` · ${s.runs.filter(r=>r.session).length}${s.max_runs!=null?`/${s.max_runs}`:""} runs · ${new Set(s.runs.flatMap(r=>r.session?[r.session]:[])).size} threads`}</small>
-        <div className="capture-controls"><Button size="sm" variant="ghost" onClick={()=>{setForm(s);setEditing(true);}}>Edit</Button><Button size="sm" variant="ghost" disabled={busy||!native} onClick={()=>void act(async()=>{await command("schedule_action",{schedule:s.id,action:s.enabled?"pause":"resume"});update({enabled:!s.enabled});})}>{s.enabled?"Pause":"Enable"}</Button><Button size="sm" variant="outline" disabled={busy||!native||runLimitReached(s)} onClick={()=>void act(()=>command("schedule_action",{schedule:s.id,action:"run"}))}>Run now</Button>{!editing&&deleteControls(s.id)}</div>
-        {!!s.runs.length&&<details><summary>Run history ({s.runs.length})</summary>{[...s.runs].reverse().map(r=><div className="schedule-run" key={r.id}><span>{new Date(r.due).toLocaleString()} · {r.state}{r.session&&` · ${db.sessions?.find(t=>t.id===r.session)?.title||"Thread"}`}</span>{r.reason&&<p>{r.reason}</p>}{r.session&&<Button size="sm" variant="ghost" onClick={()=>onSelect(r.session!)}>Open thread</Button>}</div>)}</details>}
-      </section>)}
-    </>}{editing&&<form onSubmit={e=>{e.preventDefault();void act(()=>save());}}>
-      <label>Name<Input required value={form.name} onChange={e=>update({name:e.target.value})}/></label>
+/** Create/edit fields shared by the desktop manager and the satellite schedules screen. */
+export function ScheduleFields({form,update,db,progress,setError,onThreadChosen}:{form:Schedule;update:(p:Partial<Schedule>)=>void;db:DeliveryData;progress:Pick<Schedule,"runs">;setError:(message:string)=>void;onThreadChosen?:(id:string)=>void}) {
+  return <>
+    <label>Name<Input required value={form.name} onChange={e=>update({name:e.target.value})}/></label>
       {form.new_chat!==false&&<p className="capture-help">New threads use this name as their title.</p>}
-      <DeliveryRouting form={form} update={update} db={db as DeliveryData} onThreadChosen={id=>{if(conversation)onSelect(id);}}/>
+      <DeliveryRouting form={form} update={update} db={db} onThreadChosen={onThreadChosen}/>
       <ScheduleEntries value={form.cron} onChange={cron=>update({cron})}/>
       <label>Timezone<Input required value={form.timezone} onChange={e=>update({timezone:e.target.value})}/></label>
       <label>Stops<Select value={form.max_runs!=null?"runs":form.end_date?"date":"never"} onValueChange={value=>{
@@ -74,6 +38,57 @@ export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,con
       </div>}
       <DeliveryTask form={form} update={update}/>
       <div className="schedule-switch-row"><label htmlFor="schedule-enabled">Enabled</label><Switch id="schedule-enabled" checked={form.enabled} onCheckedChange={checked=>update({enabled:checked})}/></div>
+  </>;
+}
+/** Throws the user-facing reason a schedule cannot be saved yet. */
+export function validateSchedule(form:Schedule) {
+  if (form.new_chat===false&&!form.thread) throw new Error("Choose the thread this routine should run in.");
+  if (form.max_runs!=null && (!Number.isInteger(form.max_runs)||form.max_runs<1||form.max_runs>4294967295)) throw new Error("Enter a whole number of runs between 1 and 4294967295.");
+  if (!form.name.trim() || !form.prompt.trim()) throw new Error("Add a name and task prompt first.");
+}
+export function blankSchedule(db:{projects:{id:string}[];accounts:{id:string;provider:string}[]},defaults:{project?:string;account?:string}={}):Schedule {
+  const project=defaults.project||db.projects[0]?.id||"";
+  const account=defaults.account&&db.accounts.some(a=>a.id===defaults.account)?defaults.account:db.accounts[0]?.id||"";
+  return {id:"",name:"",project,account,routing:"fixed",new_chat:true,thread:null,notifications:"important",cron:"0 9 * * 1-5",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,prompt:"",enabled:true,options:{worktree:false,permission_mode:["codex","claude"].includes(db.accounts.find(a=>a.id===account)?.provider||"")?"bypass":"ask"},next_due:0,runs:[]};
+}
+export function ScheduleManager({db,native,onRefresh,onSelect,command=invoke,context,projectId,scheduleId,onDeleted,conversation,onClose,onSaved}:{db:ScheduleData | Database;native:boolean;onRefresh:()=>Promise<void>;onSelect:(id:string)=>void;command?:ScheduleCommand;projectId?:string;scheduleId?:string;onDeleted?:()=>void;onClose?:()=>void;onSaved?:(id:string)=>void;conversation?:(props:{form:Schedule;setPrompt:(prompt:string)=>void;submit:()=>void;busy:boolean;disabled:boolean})=>ReactNode;context?:Pick<Session,"project"|"account"|"title"|"messages">}) {
+  const blank=():Schedule=>{
+    const account=context?.account||("preferences" in db?resolveAccount(db,db.projects.find(p=>p.id===projectId)||db.projects[0]):db.accounts[0]?.id)||"";
+    return ({id:"",name:context?.title||"",project:context?.project||projectId||db.projects[0]?.id||"",account,routing:"fixed",new_chat:true,thread:null,notifications:"important",cron:"0 9 * * 1-5",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,prompt:context?.messages.find(m=>m.role==="user")?.text||"",enabled:true,options:{worktree:false,permission_mode:["codex","claude"].includes(db.accounts.find(a=>a.id===account)?.provider||"")?"bypass":"ask"},next_due:0,runs:[]});};
+  const [form,setForm]=useState<Schedule>(()=>db.schedules?.find(s=>s.id===scheduleId)||blank()),[editing,setEditing]=useState(!!context||!!scheduleId||!!projectId),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  async function act(fn:()=>Promise<unknown>){setBusy(true);setError("");try{await fn();await onRefresh();}catch(e){setError(String(e).includes("Use five cron fields") && form.cron.includes("\n") ? "The background host needs its update to save multiple schedules. Let active work finish so it can update, then save again." : String(e));}finally{setBusy(false);}}
+  const [deleting,setDeleting]=useState("");
+
+  const progress = {...form,runs:db.schedules?.find(s=>s.id===form.id)?.runs||form.runs};
+  const update=(p:Partial<Schedule>)=>setForm(f=>({...f,...p}));
+  const pendingCreation = useRef<{ids:Set<string>;form:Schedule}|null>(null);
+  useEffect(()=>{
+    const pending=pendingCreation.current;
+    if (!pending) return;
+    const matches=(db.schedules||[]).filter(s=>!pending.ids.has(s.id)&&s.name===pending.form.name&&s.project===pending.form.project&&s.account===pending.form.account&&s.prompt===pending.form.prompt);
+    if(matches.length===1){pendingCreation.current=null;setForm(matches[0]);onSaved?.(matches[0].id);}
+  },[db.schedules,onSaved]);
+  async function save(run = false) {
+    validateSchedule(form);
+    const pending = !form.id ? {ids:new Set((db.schedules||[]).map(s=>s.id)),form} : null;
+    await command("save_schedule",{schedule:form});
+    pendingCreation.current=pending;
+    if (run && form.id) await command("schedule_action",{schedule:form.id,action:"run"});
+    setEditing(false);
+  }
+  const deleteControls = (id:string) => <>
+    <Button type="button" size="sm" variant="ghost" disabled={busy||!native} onClick={()=>setDeleting(id)}>Delete…</Button>
+    {deleting===id&&<div role="alert"><p>Delete this scheduled task? Existing threads and their messages are kept. Running threads keep running.</p><Button type="button" variant="destructive" disabled={busy||!native} onClick={()=>void act(async()=>{await command("schedule_action",{schedule:id,action:"delete"});setDeleting("");if(form.id===id){setForm(blank());setEditing(false);}onDeleted?.();})}>Delete schedule</Button><Button type="button" variant="ghost" disabled={busy} onClick={()=>setDeleting("")}>Keep schedule</Button></div>}
+  </>;
+  const configuration = <div className="schedule-manager">{error&&<p role="alert">{error}</p>}
+    {(!editing||!!scheduleId)&&<>{!scheduleId&&<Button variant="outline" onClick={()=>{setForm(blank());setEditing(true);}} disabled={!db.projects.length||!db.accounts.length}>New schedule</Button>}
+      {!(db.schedules||[]).length&&<p className="capture-help">No schedules yet. Choose a project, account, and prompt. Signing out blocks runs without deleting the schedule.</p>}
+      {(db.schedules||[]).filter(s=>scheduleId?s.id===scheduleId:!projectId||s.project===projectId).map(s=><section className="schedule-card" key={s.id}><strong>{s.name}</strong><p>{db.projects.find(p=>p.id===s.project)?.name} · {scheduleEnded(s)?"Ended":s.enabled?`Next ${new Date(s.next_due).toLocaleString(undefined,{timeZone:s.timezone})}`:"Paused"}</p><small>{s.timezone} · {db.accounts.find(a=>a.id===s.account)?.name}{` · ${s.runs.filter(r=>r.session).length}${s.max_runs!=null?`/${s.max_runs}`:""} runs · ${new Set(s.runs.flatMap(r=>r.session?[r.session]:[])).size} threads`}</small>
+        <div className="capture-controls"><Button size="sm" variant="ghost" onClick={()=>{setForm(s);setEditing(true);}}>Edit</Button><Button size="sm" variant="ghost" disabled={busy||!native} onClick={()=>void act(async()=>{await command("schedule_action",{schedule:s.id,action:s.enabled?"pause":"resume"});update({enabled:!s.enabled});})}>{s.enabled?"Pause":"Enable"}</Button><Button size="sm" variant="outline" disabled={busy||!native||runLimitReached(s)} onClick={()=>void act(()=>command("schedule_action",{schedule:s.id,action:"run"}))}>Run now</Button>{!editing&&deleteControls(s.id)}</div>
+        {!!s.runs.length&&<details><summary>Run history ({s.runs.length})</summary>{[...s.runs].reverse().map(r=><div className="schedule-run" key={r.id}><span>{new Date(r.due).toLocaleString()} · {r.state}{r.session&&` · ${db.sessions?.find(t=>t.id===r.session)?.title||"Thread"}`}</span>{r.reason&&<p>{r.reason}</p>}{r.session&&<Button size="sm" variant="ghost" onClick={()=>onSelect(r.session!)}>Open thread</Button>}</div>)}</details>}
+      </section>)}
+    </>}{editing&&<form onSubmit={e=>{e.preventDefault();void act(()=>save());}}>
+      <ScheduleFields form={form} update={update} db={db as DeliveryData} progress={progress} setError={setError} onThreadChosen={id=>{if(conversation)onSelect(id);}}/>
       <div className="capture-controls"><Button type="button" variant="ghost" onClick={()=>setEditing(false)}>Cancel</Button><Button disabled={!native||busy||!form.account}>Save schedule</Button>{form.id&&deleteControls(form.id)}</div>
     </form>}
   </div>;

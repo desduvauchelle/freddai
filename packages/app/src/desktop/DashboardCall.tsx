@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Phone } from 'lucide-react';
 import { useVoiceCall, type CallIo, type ThreadView } from './voiceCall';
 import { VoiceCallBar } from './VoiceCallBar';
 import { CommandCard, type CommandSelection } from './CommandCard';
-import { WAKE_WORD, commandCenterReducer, type CommandEffect, type CommandEvent, type CommandState } from './commandCenter';
+import { WAKE_WORD, commandCenterReducer, type CommandEffect, type CommandEvent, type CommandState, type CommandDraft, type CommandProject } from './commandCenter';
 import { defaultSelection, type AgentSelection } from './agent-selection';
 import type { Account, Project } from './types';
 import './DashboardCall.css';
@@ -12,6 +12,13 @@ export type CommandLaunch = { projectId: string; accountId: string; model: strin
 export type CommandCenterProps = {
   projects: Project[]; accounts: Account[]; native: boolean; homeAccountId?: string;
   homeSelections: Record<string, AgentSelection>; launch: (args: CommandLaunch) => Promise<void>;
+};
+
+export type CommandReviewProps = { draft: CommandDraft; onChangeInstruction: (text: string) => void; onSend: () => void; onDismiss: () => void; error: string; sending: boolean };
+export type CompanionCommandCenterProps = {
+  projects: CommandProject[];
+  renderReview: (props: CommandReviewProps) => ReactNode;
+  launchDraft: (draft: CommandDraft) => Promise<void>;
 };
 
 /** Serializes dispatch so two utterances cannot create competing Commander threads. */
@@ -26,7 +33,7 @@ export function serialDispatch(send: (text: string) => Promise<void>) {
 
 export function DashboardCall({ visible, enabled, hideLauncher = false, connected = true, io, sendText, purgeVoiceQueue, view, onActive, syncError, commandCenter }: {
   purgeVoiceQueue?: () => Promise<void>;
-  commandCenter?: CommandCenterProps;
+  commandCenter?: CommandCenterProps | CompanionCommandCenterProps;
   syncError?: string; hideLauncher?: boolean; visible: boolean; enabled: boolean; connected?: boolean; io?: CallIo;
   sendText: (text: string) => Promise<void>; view: ThreadView; onActive?: (active: boolean) => void;
 }) {
@@ -45,6 +52,7 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
 
   const defaultsFor = useCallback((projectId: string): CommandSelection => {
     const c = cc.current;
+    if (!c || 'launchDraft' in c) return { accountId: '', model: '', effort: 'default' };
     const project = c?.projects.find(p => p.id === projectId);
     const account = c?.accounts.find(a => a.id === project?.account) ?? c?.accounts.find(a => a.id === c.homeAccountId) ?? c?.accounts[0];
     const picked = (account && c?.homeSelections[account.id]) || defaultSelection;
@@ -73,10 +81,11 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
     const { projectId, instruction } = state.draft;
     const sel = selectionFor(projectId);
     const name = c.projects.find(p => p.id === projectId)?.name ?? 'the project';
-    if (!instruction.trim() || !sel.accountId) { const m = 'Choose an agent and an instruction first.'; setCardError(m); speakRef.current(m); return; }
+    if (!instruction.trim() || (!('launchDraft' in c) && !sel.accountId)) { const m = 'Choose an agent and an instruction first.'; setCardError(m); speakRef.current(m); return; }
     sendingRef.current = true; setSending(true); setCardError('');
     try {
-      await c.launch({ projectId, accountId: sel.accountId, model: sel.model, effort: sel.effort, prompt: instruction.trim() });
+      if ('launchDraft' in c) await c.launchDraft({ projectId, instruction: instruction.trim() });
+      else await c.launch({ projectId, accountId: sel.accountId, model: sel.model, effort: sel.effort, prompt: instruction.trim() });
       applyRef.current({ type: 'launched' });
       speakRef.current(`Starting in ${name}`);
     } catch (error) {
@@ -106,10 +115,10 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
     <VoiceCallBar call={call.controller!} snapshot={call.snapshot!} agentBusy={view.busy} onEnd={call.end} compact={!expanded} queueOnly />
     {commandCenter && cmd.kind === 'idle' && <p className="dashboard-call-wake">Listening for "{WAKE_WORD}"</p>}
     {commandCenter && cmd.kind === 'awaitingProject' && <p className="dashboard-call-wake">Which project? Say its name.</p>}
-    {commandCenter && cmd.kind === 'reviewing' && <CommandCard draft={cmd.draft} projects={commandCenter.projects} accounts={commandCenter.accounts} native={commandCenter.native}
+    {commandCenter && cmd.kind === 'reviewing' && ('launchDraft' in commandCenter ? commandCenter.renderReview({ draft: cmd.draft, onChangeInstruction: text => apply({ type: 'edit', text }), onSend: () => void launchNow(), onDismiss: () => apply({ type: 'dismiss' }), error: cardError, sending }) : <CommandCard draft={cmd.draft} projects={commandCenter.projects} accounts={commandCenter.accounts} native={commandCenter.native}
       selection={selectionFor(cmd.draft.projectId)} onChangeSelection={sel => setOverride({ ...sel, projectId: cmd.draft.projectId })}
-      onChangeInstruction={text => apply({ type: 'edit', text })} onSend={() => void launchNow()} onDismiss={() => apply({ type: 'dismiss' })} error={cardError} sending={sending} />}
+      onChangeInstruction={text => apply({ type: 'edit', text })} onSend={() => void launchNow()} onDismiss={() => apply({ type: 'dismiss' })} error={cardError} sending={sending} />)}
     {syncError && <p role="alert" className="dashboard-call-help">{syncError}</p>}
-    {expanded && <p className="dashboard-call-help">Name a project and describe the task. Requests go to Commander in order; your existing approval settings still apply. Keep Freddai open during the call.</p>}
+    {expanded && <p className="dashboard-call-help">Say "Freddie", name a project and describe the task. Review the card, then press Send or say "go"; your existing approval settings still apply. Keep Freddai open during the call.</p>}
   </aside>;
 }

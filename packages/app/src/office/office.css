@@ -94,13 +94,3 @@
 .office-card-btn:focus-visible rect { stroke: #fff; stroke-width: 1.5; }
 .office-card-btn[aria-disabled="true"] { cursor: progress; }
 .office-card-error { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; margin: 0; padding: 6px 12px; font-size: 12px; background: #3a1d22; color: #ffb4b4; border-top: 1px solid #7a3b44; }
-
-.office-project-name-phone { display: none; }
-/* Phone room signs use the scoreboard space for readable project names. */
-@media (max-width: 600px) {
-  .office-project-scoreboard { display: none; }
-  .office-project-plate-border { height: 30px; }
-  .office-project-plate { height: 28px; }
-  .office-project-name { display: none; }
-  .office-project-name-phone { display: block; }
-}

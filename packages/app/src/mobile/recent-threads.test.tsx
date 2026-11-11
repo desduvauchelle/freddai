@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { disconnectedClient, type CompanionSnapshot } from './companion';
@@ -114,4 +114,43 @@ it('keeps the satellite navigator beside the dashboard and selected conversation
   expect(screen.getByRole('complementary', { name: 'Thread navigator' })).toBeTruthy();
   fireEvent.click(screen.getAllByRole('button', { name: 'Settings' })[0]);
   expect(await screen.findByText('This Mac settings')).toBeTruthy();
+});
+
+it('per-project older threads: "Show more (N)" pages by ten, "Show less" appears only once expanded, resets to the default, and stays when nothing remains', async () => {
+  // 30 done threads in Alpha: 5 stay visible, 25 sit under "Show older threads".
+  const alpha: CompanionSnapshot = { ...data(0), threadList: { ignoreUnread: true }, threads: Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, project: 'a', title: `Task ${String(i).padStart(2, '0')}`, status: 'done', updated: 100 + i, messages: [], canReply: false, queued: 0, error: null })) };
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: vi.fn().mockResolvedValue(alpha) }}/>);
+  const region = await screen.findByRole('region', { name: 'Alpha threads' });
+  const alphaRows = () => within(region).queryAllByRole('button', { name: /^Task \d\d/ });
+  expect(alphaRows()).toHaveLength(5);
+  expect(within(region).queryByRole('button', { name: 'Show less' })).toBeNull();
+  fireEvent.click(within(region).getByRole('button', { name: 'Show older threads (25)' }));
+  expect(alphaRows()).toHaveLength(15);
+  expect(within(region).getByRole('button', { name: 'Show more (15)' })).toBeTruthy();
+  expect(within(region).getByRole('button', { name: 'Show less' })).toBeTruthy();
+  fireEvent.click(within(region).getByRole('button', { name: 'Show more (15)' }));
+  fireEvent.click(within(region).getByRole('button', { name: 'Show more (5)' }));
+  expect(alphaRows()).toHaveLength(30);
+  expect(within(region).queryByRole('button', { name: /^Show more/ })).toBeNull();
+  fireEvent.click(within(region).getByRole('button', { name: 'Show less' }));
+  expect(alphaRows()).toHaveLength(5);
+  expect(within(region).queryByRole('button', { name: 'Show less' })).toBeNull();
+  expect(within(region).getByRole('button', { name: 'Show older threads (25)' })).toBeTruthy();
+});
+
+
+it('deleting a browser dashboard thread closes its sheet and restores Dashboard', async () => {
+  const snapshot = data(2);
+  const action = vi.fn(async () => { snapshot.threads = []; });
+  render(<MobileApp client={{ ...disconnectedClient, snapshot: async () => structuredClone(snapshot), action }}/>);
+  await screen.findByRole('combobox', { name: 'Thread view' });
+  fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+  fireEvent.click(document.querySelector<HTMLButtonElement>('.home-recent button')!);
+  await screen.findByRole('button', { name: 'Close thread' });
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread actions' }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Move to Deleted' }));
+  await waitFor(() => expect(action).toHaveBeenCalledOnce());
+  expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Close thread' })).toBeNull();
 });

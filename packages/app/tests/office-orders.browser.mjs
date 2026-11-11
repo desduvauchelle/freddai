@@ -47,17 +47,13 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const fixture = fileURLToPath(new URL('./fixtures/office-orders.html', import.meta.url));
     await page.goto(`http://127.0.0.1:1420/@fs${fixture}?native=1&boss=1`);
-    const boss = page.getByRole('button', { name: "Boss's office · Ada" });
-    await boss.waitFor();
+    await page.getByRole('button', { name: 'Give an order to Alpha' }).waitFor();
+    assert.equal(await page.locator('.office-boss-suite').count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Give an order to Ada' }).count(), 0);
-    assert.equal(await boss.locator('.office-executive-desk').count(), 1);
-    await boss.click();
-    assert.deepEqual(await page.evaluate(() => window.officeOrderCalls), [{ operation: 'open-commander' }]);
     await page.getByRole('button', { name: 'Expand office' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Office' });
-    await page.screenshot({ path: `/tmp/freddai-office-orders/${width}-boss-office.png` });
-    await dialog.getByRole('button', { name: "Boss's office · Ada" }).click();
-    assert.equal(await page.getByRole('dialog').count(), 0);
+    await page.getByRole('dialog', { name: 'Office' }).waitFor();
+    assert.equal(await page.locator('.office-boss-suite').count(), 0);
+    await page.screenshot({ path: `/tmp/freddai-office-orders/${width}-without-boss-office.png` });
     await page.close();
   }
   const audioPage = await browser.newPage();

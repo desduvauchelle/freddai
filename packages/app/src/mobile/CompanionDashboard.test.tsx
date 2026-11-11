@@ -144,3 +144,25 @@ it('shows the resolved saved provider and follows changes without pinning it', (
   expect(onNew).toHaveBeenCalledWith('p', 'a');
   expect(onGlobalAssistantChange).not.toHaveBeenCalled();
 });
+it('passes snapshot schedules to the Office so the recent-only toggle hides stale projects and keeps scheduled ones', () => {
+  localStorage.removeItem('freddai.office.recent-only.v1');
+  const now = new Date(2026, 10, 4, 12).getTime(), old = now - 30 * 86400000;
+  const base = { updated: old, messages: [], canReply: true, queued: 0, error: null, status: 'done' };
+  const snapshot = { projects: [{ id: 'fresh', name: 'Fresh', color: '#777', canStart: true }, { id: 'stale', name: 'Stale', color: '#777', canStart: true }, { id: 'sched', name: 'Sched', color: '#777', canStart: true }],
+    threads: [{ ...base, id: 't1', project: 'fresh', title: 'A', updated: now }, { ...base, id: 't2', project: 'stale', title: 'B' }, { ...base, id: 't3', project: 'sched', title: 'C' }],
+    schedules: [{ id: 's', name: 'Nightly', project: 'sched', enabled: true, next_due: now + 3600000 }] } as unknown as CompanionSnapshot;
+  render(<CompanionDashboard snapshot={snapshot} connected onNew={vi.fn()} onOpen={vi.fn()} now={now} />);
+  const toggle = screen.getByRole('button', { name: /Showing recent projects only \(1 hidden\)/ });
+  expect(toggle).toBeTruthy();
+  localStorage.removeItem('freddai.office.recent-only.v1');
+});
+
+it('shows a pending row under the project instead of a Sending message paragraph', () => {
+  const onOpen = vi.fn();
+  const outbox = [{ id: 'o1', thread: '', project: 'p', prompt: 'Ship the release', ordinal: 1, startsTurn: true, acknowledged: false, attachments: [] }];
+  render(<CompanionDashboard connected onNew={vi.fn()} onOpen={onOpen} outbox={outbox} snapshot={{ projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true }], threads: [] }} />);
+  expect(screen.queryByText('Sending message…')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Project' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /Ship the release/ }));
+  expect(onOpen).toHaveBeenCalledWith('outbox:o1');
+});

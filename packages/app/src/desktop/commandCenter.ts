@@ -11,7 +11,7 @@ export type CommandEvent = { type: "segment"; text: string } | { type: "edit"; t
 export type CommandEffect = { type: "speak"; text: string } | { type: "launch" } | { type: "none" };
 
 export const WAKE_WORD = "Freddie";
-const WAKE = /^\s*(?:(?:hey|ok|okay)[\s,]+)?(?:freddie's|freddie|freddy|freddi)(?![\p{L}\p{N}])[\s,:;.!?-]*/iu;
+const WAKE = /^\s*(?:(?:hey|ok|okay)[\s,]+)?(?:freddie's|freddie|freddy|freddi|freddai)(?![\p{L}\p{N}])[\s,:;.!?-]*/iu;
 
 /** Returns the utterance after the wake word, or null when it does not start with one. */
 export function stripWakeWord(text: string): string | null {
@@ -46,6 +46,15 @@ export function matchProject(text: string, projects: CommandProject[]): { projec
     if (!match) continue;
     const len = project.name.length;
     if (!best || len > best.len) best = { project, match, len };
+  }
+  // Whisper commonly spells the app/project name like the spoken wake word.
+  // Resolve literal project names first so a real project named Freddy wins.
+  if (!best) {
+    const freddai = projects.filter(project => project.name.toLowerCase() === 'freddai');
+    if (freddai.length === 1) {
+      const match = /(?<![\p{L}\p{N}])(?:freddie|freddy|freddi)(?![\p{L}\p{N}])/iu.exec(text);
+      if (match) best = { project: freddai[0]!, match, len: freddai[0]!.name.length };
+    }
   }
   if (!best) return null;
   const { match, project } = best;

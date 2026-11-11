@@ -37,3 +37,26 @@ it('cancels without transcribing and excludes other microphones', async () => {
   expect(native.invoke).not.toHaveBeenCalledWith('voice_stop_recording');
   expect(onText).not.toHaveBeenCalled();
 });
+it.each(['cancel', 'send', 'return'] as const)('tracks diagonal drags on separate rails and handles %s release', async action => {
+  class Pointer extends MouseEvent { pointerId = 1; }
+  vi.stubGlobal('PointerEvent', Pointer);
+  const onText = vi.fn(); render(<MicButton target={false} onText={onText} />);
+  const mic = screen.getByRole('button', { name: 'Dictate' });
+  await act(async () => { fireEvent.pointerDown(mic, { button: 0, clientX: 300, clientY: 400 }); });
+  fireEvent.pointerMove(mic, { clientX: 250, clientY: 390 });
+  const cancel = screen.getByRole('button', { name: 'Cancel recording' });
+  const send = screen.getByRole('button', { name: 'Send recording' });
+  expect(cancel.style.transform).toMatch(/translate\([^,]+px, 0px\)/);
+  expect(send.style.transform).toContain('translate(0px, 0px)');
+  fireEvent.pointerMove(mic, { clientX: 290, clientY: 360 });
+  expect(cancel.style.transform).toContain('translate(0px, 0px)');
+  expect(send.style.transform).toMatch(/translate\(0px, [^)]+px\)/);
+  const point = action === 'cancel' ? { clientX: 204, clientY: 380 } : action === 'send' ? { clientX: 280, clientY: 336 } : { clientX: 300, clientY: 400 };
+  fireEvent.pointerMove(mic, point);
+  await act(async () => { fireEvent.pointerUp(mic, point); });
+  if (action === 'send') expect(onText).toHaveBeenCalledTimes(1);
+  else expect(onText).not.toHaveBeenCalled();
+  if (action === 'return') expect(screen.getByRole('button', { name: 'Send recording' })).toBeTruthy();
+  if (action === 'cancel') expect(native.invoke).toHaveBeenCalledWith('voice_cancel_recording');
+  vi.unstubAllGlobals();
+});

@@ -68,3 +68,20 @@ describe('commandCenterReducer', () => {
     expect(commandCenterReducer(reviewing, { type: 'dismiss' }, projects).state).toEqual({ kind: 'idle' });
   });
 });
+
+
+describe('spoken Freddai project name', () => {
+  const projects = [{ id: 'app', name: 'freddai' }];
+  it.each(['Freddy', 'Freddie', 'Freddi', 'Freddai'])('opens the card for %s', name => {
+    const result = commandCenterReducer({ kind: 'idle' }, { type: 'segment', text: `${name}, send a request to say hello to the project Freddy to see if this is working.` }, projects);
+    expect(result.state).toEqual({ kind: 'reviewing', draft: { projectId: 'app', instruction: 'send a request to say hello to the project Freddy to see if this is working.' } });
+    expect(result.effects).not.toContainEqual({ type: 'launch' });
+  });
+  it('prefers an exact project over the spoken alias', () => {
+    const result = commandCenterReducer({ kind: 'idle' }, { type: 'segment', text: 'Freddy, in Freddy say hello' }, [...projects, { id: 'literal', name: 'Freddy' }]);
+    expect(result.state).toEqual({ kind: 'reviewing', draft: { projectId: 'literal', instruction: 'say hello' } });
+  });
+  it('does not invent a match for an unrelated project', () => {
+    expect(commandCenterReducer({ kind: 'idle' }, { type: 'segment', text: 'Freddy, in Freddy say hello' }, [{ id: 'other', name: 'Other' }]).state.kind).toBe('awaitingProject');
+  });
+});

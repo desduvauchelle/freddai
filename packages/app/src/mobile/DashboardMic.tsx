@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Square } from 'lucide-react';
 import { Button } from '@freddai/ui/components/button';
+import { RecordingFeedback } from '../RecordingFeedback';
+import { recordingGesture } from '../recording-gesture';
 import { macCompatibleRecording } from './recording-audio';
 import type { CompanionClient } from './companion';
 
@@ -13,6 +15,16 @@ export function DashboardMic({ client, disabled, project, onText, onListening }:
   const alive = useRef(true), generation = useRef(0), pending = useRef(false), cancelled = useRef(false);
   const pointer = useRef<number | null>(null);
   const [state, setState] = useState<'idle' | 'starting' | 'recording' | 'transcribing'>('idle');
+  const origin = useRef({ x: 0, y: 0 }), downAt = useRef(0);
+  const [gesture, setGesture] = useState({ send: 0, cancel: 0 });
+  const [finger, setFinger] = useState<{ x: number; y: number } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (state !== 'recording') return;
+    const started = Date.now(); setElapsed(0);
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [state]);
   const [error, setError] = useState('');
   useEffect(() => { onListening?.(state === 'recording'); return () => onListening?.(false); }, [state, onListening]);
   function finish(cancel = false) {
@@ -69,25 +81,33 @@ export function DashboardMic({ client, disabled, project, onText, onListening }:
       if (alive.current && generation.current === token) { pending.current = false; setError(String(e)); setState('idle'); }
     }
   }
-  return <div><Button variant="default" className="dashboard-mic" style={{ touchAction: 'none', userSelect: 'none' }}
+  return <div style={{ position: 'relative', display: 'inline-flex' }}><Button variant="default" className="dashboard-mic" style={{ touchAction: 'none', userSelect: 'none' }}
     disabled={disabled || state === 'transcribing' || !client.transcribeAudio}
     aria-label={`${state === 'recording' ? 'Stop recording' : 'Dictate task'} in ${project}`}
-    title="Hold to record, release to transcribe. Move away to cancel."
+    title="Tap to record · Hold to talk · Slide left to cancel · Slide up to send"
     onPointerDown={event => {
       if (event.button !== 0 || pointer.current !== null) return;
-      event.preventDefault(); pointer.current = event.pointerId; event.currentTarget.setPointerCapture?.(event.pointerId); void record();
+      event.preventDefault();
+      if (state === 'recording') { finish(); return; }
+      origin.current = { x: event.clientX, y: event.clientY }; downAt.current = Date.now(); setGesture({ send: 0, cancel: 0 }); setFinger(null);
+      pointer.current = event.pointerId; event.currentTarget.setPointerCapture?.(event.pointerId); void record();
     }}
     onPointerMove={event => {
       if (pointer.current !== event.pointerId) return;
-      const bounds = event.currentTarget.getBoundingClientRect();
-      if (event.clientX < bounds.left - 32 || event.clientX > bounds.right + 32 || event.clientY < bounds.top - 32 || event.clientY > bounds.bottom + 32) finish(true);
+      const point = { x: event.clientX, y: event.clientY }; setGesture(recordingGesture(origin.current, point)); setFinger(point);
     }}
-    onPointerUp={event => { if (pointer.current === event.pointerId) finish(); }}
+    onPointerUp={event => {
+      if (pointer.current !== event.pointerId) return;
+      const action = recordingGesture(origin.current, { x: event.clientX, y: event.clientY });
+      pointer.current = null; setGesture({ send: 0, cancel: 0 }); setFinger(null);
+      if (action.shouldCancel) finish(true);
+      else if (state === 'starting' || Date.now() - downAt.current >= 300 || action.shouldSend) finish();
+    }}
     onPointerCancel={() => finish(true)} onLostPointerCapture={() => { if (pointer.current !== null) finish(true); }}
     onKeyDown={event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); if (!event.repeat) void record(); } if (event.key === 'Escape') finish(true); }}
     onKeyUp={event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); finish(); } }}
     onBlur={() => { if (pending.current) finish(true); }}
     onClick={event => { if (event.detail === 0) { if (pending.current) finish(); else void record(); } }}>
     {state === 'recording' ? <Square size={16}/> : <Mic size={16}/>}{state === 'recording' ? 'Release to transcribe' : state === 'transcribing' ? 'Transcribing…' : state === 'starting' ? 'Opening microphone…' : 'Hold to dictate'}
-  </Button>{error && <p role="alert">{error}</p>}</div>;
+  </Button>{state === 'recording' && <RecordingFeedback elapsed={elapsed} {...gesture} finger={finger} onCancel={() => finish(true)} onSend={() => finish()} />}{error && <p role="alert">{error}</p>}</div>;
 }
