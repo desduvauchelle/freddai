@@ -217,7 +217,7 @@
   background: var(--muted, rgb(127 127 127 / .16));
   border-radius: 0;
 }
-.companion-row > span:not(.companion-state) {
+.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot) {
   flex: 1;
   min-width: 0;
 }
@@ -309,7 +309,7 @@
   width: 100%;
   min-width: 0;
 }
-.companion-row > span:not(.companion-state) {
+.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot) {
   overflow: hidden;
 }
 .companion-row small {
@@ -1172,3 +1172,6 @@
 .companion-schedule-actions button { min-height: 44px; flex: 1 1 auto; }
 .companion-schedules-body .schedule-manager label { display: grid; gap: 6px; margin-block: 12px; }
 .companion-schedules-body .schedule-form .capture-controls { position: sticky; bottom: 0; padding-block: 8px; background: var(--background, inherit); }
+
+.companion-project-dot { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 10px; height: 10px; }
+.companion-project-dot > .state-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }

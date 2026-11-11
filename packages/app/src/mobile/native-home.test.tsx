@@ -1042,3 +1042,18 @@ it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the i
   await act(async () => { screen.getByRole('button', { name: 'End call' }).click(); });
   await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
 });
+
+it('project sheet in native mode renders only that project\'s threads, with no web chrome', async () => {
+  const { container } = await renderNew(<MobileApp client={clientWith()} />);
+  await screen.findByText('What should we work on today?');
+  await act(async () => { shell.handlers.dashboard(); });
+  await waitFor(() => expect(modeCalls().at(-1)?.[0]).toBe('dashboard'));
+  await dashboardAction({ action: 'open', project: 'p1' });
+  await screen.findByRole('button', { name: /Old thread/ });
+  expect(container.querySelector('.companion-project-threads')).toBeTruthy();
+  expect(container.querySelectorAll('.companion-project-threads .companion-row').length).toBe(1);
+  expect(screen.queryByPlaceholderText('Search projects and threads')).toBeNull();
+  expect(screen.queryByRole('option', { name: 'All projects' })).toBeNull();
+  expect(container.querySelector('.companion-filters, .companion-search, nav, header')).toBeNull();
+  expect(container.querySelector('.companion-project-dot > .state-dot')).toBeTruthy();
+});

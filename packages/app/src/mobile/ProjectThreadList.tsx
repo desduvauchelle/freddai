@@ -34,7 +34,7 @@ export function ProjectThreadList({ project, snapshot, outbox = [], read = {}, c
   const shown = rows.slice(0, visible);
   return <div className="companion-project-threads" aria-label="Project threads">
     {shown.map(row => <button key={row.id} className="companion-row" data-faded={row.faded} onClick={() => row.id.startsWith('outbox:') ? onNew() : onOpen(row.id)}>
-      <Dot status={row.status} />
+      <span className="companion-project-dot"><Dot status={row.status} /></span>
       <span><strong title={row.title}>{row.title}</strong></span>
       {row.status === 'unread' && <span className="companion-unread-dot" role="img" aria-label="Unread" />}
       <time dateTime={new Date(row.at).toISOString()}>{relativeTime(row.at, now)}</time>

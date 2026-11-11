@@ -1206,7 +1206,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     </div></SheetContent></Sheet>
     {client.googleCommand && <Dialog open={googleOpen} onOpenChange={setGoogleOpen}><DialogContent className="companion-schedules companion-google-dialog"><DialogHeader><DialogTitle>Connected accounts</DialogTitle><DialogDescription>Google accounts and triggers on your Mac.</DialogDescription></DialogHeader><ConnectedAccounts command={client.googleCommand} connected={connected} db={{projects:data.projects,accounts:data.projects[0]?.assistants||[]}}/></DialogContent></Dialog>}
     {error && !(nativeDashboardContent && screen === 'dashboard') && <p className="companion-error" role="alert">{error}</p>}
-    {!desktop && !detail && screen !== 'dashboard' && screen !== 'schedules' && navigation}
+    {!desktop && !detail && screen !== 'dashboard' && screen !== 'project' && screen !== 'schedules' && navigation}
     {!!waitingMessages.length && <aside className="companion-outbox" role="status" aria-label="Messages on this device">
       <div className="companion-outbox-heading"><span className="companion-outbox-dot" />{waitingMessages.length} {waitingMessages.length === 1 ? 'message' : 'messages'} queued on this device</div>
       {waitingMessages.map(m => <div className="companion-outbox-item" key={m.id}>
