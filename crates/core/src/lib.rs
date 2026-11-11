@@ -1,3 +1,4 @@
+mod claude_profile;
 pub mod background_tasks;
 mod claude_stream;
 mod turn_gate;

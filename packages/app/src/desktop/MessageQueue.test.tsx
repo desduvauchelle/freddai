@@ -8,7 +8,7 @@ const queue = { session: "t", paused: false, error: null, messages: [{ id: "q1",
 it("offers steer, edit, and delete for a queued message", async () => {
   const onAction = vi.fn();
   render(<MessageQueue queue={queue} active disabled={false} canSteer onAction={onAction}/>);
-  expect(screen.getAllByRole("button")).toHaveLength(3);
+  expect(screen.getAllByRole("button")).toHaveLength(4);
   expect(screen.queryByText("Clear queue")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Steer instead" }));
   expect(onAction).toHaveBeenCalledWith("steer", "q1");
@@ -19,9 +19,12 @@ it("offers steer, edit, and delete for a queued message", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Save queued message" }));
   expect(onAction).toHaveBeenCalledWith("edit", "q1", "Revised direction");
 });
-it("disables steer when there is no supported active turn", () => {
-  render(<MessageQueue queue={queue} active={false} disabled={false} canSteer={false} onAction={vi.fn()}/>);
-  expect((screen.getByRole("button", { name: "Steer instead" }) as HTMLButtonElement).disabled).toBe(true);
+it("lets an idle paused queue send without requiring steering support", async () => {
+  const onAction = vi.fn();
+  render(<MessageQueue queue={{ ...queue, paused: true }} active={false} disabled={false} canSteer={false} onAction={onAction}/>);
+  expect(screen.getByRole("status").textContent).toContain("Paused");
+  await userEvent.click(screen.getByRole("button", { name: "Send now" }));
+  expect(onAction).toHaveBeenCalledWith("resume", undefined);
 });
 
 it("retains unsaved edits on failure and lets Cancel restore the preview", async () => {
@@ -47,4 +50,19 @@ it("hides background wakes while preserving queued user messages", () => {
   rerender(<MessageQueue queue={{ ...queue, messages: [...messages, ...queue.messages] }} active disabled={false} canSteer onAction={vi.fn()}/>);
   expect(screen.getByText("Change direction")).toBeTruthy();
   expect(screen.getAllByRole("listitem")).toHaveLength(1);
+});
+
+it("clears all, strips the voice suffix with a badge, and shows delete errors", async () => {
+  const onAction = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+  const voice = { ...queue, messages: [
+    { id: "a", prompt: "hello there\n\n<voice-call>Live voice call. Start</voice-call>", options: {} },
+    { id: "b", prompt: "second", options: {} }] };
+  render(<MessageQueue queue={{ ...voice, error: "queue broke" }} active disabled canSteer onAction={onAction}/>);
+  expect(screen.getByText("voice")).toBeTruthy();
+  expect(screen.queryByText(/Live voice call/)).toBeNull();
+  expect(screen.getByRole("alert").textContent).toBe("queue broke");
+  await userEvent.click(screen.getByRole("button", { name: "Clear all queued messages" }));
+  expect(onAction).toHaveBeenCalledWith("delete", "a");
+  expect(onAction).toHaveBeenCalledWith("delete", "b");
+  expect(screen.getByRole("alert").textContent).toContain("boom");
 });

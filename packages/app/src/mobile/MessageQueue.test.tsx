@@ -35,3 +35,10 @@ it('hides an empty queue', () => {
   const { container } = render(<MessageQueue messages={[]} disabled={false} onAction={vi.fn()}/>);
   expect(container.innerHTML).toBe('');
 });
+
+it('resumes an idle paused companion queue in FIFO order', () => {
+  const onAction = vi.fn();
+  render(<MessageQueue messages={messages} paused disabled={false} onAction={onAction}/>);
+  fireEvent.click(screen.getAllByRole('button', { name: 'Resume queue' })[0]);
+  expect(onAction).toHaveBeenCalledWith('resume', undefined, undefined);
+});

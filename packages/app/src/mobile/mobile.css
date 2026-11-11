@@ -1138,5 +1138,7 @@
 .companion-desktop .companion-desktop-toolbar { min-height: 76px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 @media (max-width: 619px) {
   .companion-dashboard .home-tile > header { flex-wrap: wrap; }
-  .companion-dashboard .home-tile .companion-project-actions { flex-basis: 100%; justify-content: flex-end; }
+  .companion-dashboard .home-tile .companion-project-actions { flex-basis: 100%; justify-content: center; }
 }
+
+.companion-project-browser{display:flex;flex-direction:column;gap:12px;padding:16px;min-height:0;overflow:auto}.companion-folder-path{overflow-wrap:anywhere;font-size:12px}.companion-folder-list{display:flex;flex-direction:column;overflow:auto;min-height:100px;max-height:35dvh}.companion-folder-list button{justify-content:flex-start;min-height:44px;flex-shrink:0;text-align:left;white-space:normal;height:auto;overflow-wrap:anywhere}

@@ -1,6 +1,6 @@
 /// Mobile composer commands exposed through the paired Mac transport.
 pub(crate) fn validate(operation: &str) -> Result<(), String> {
-    if !["update_project_organization", "resume_thread", "move_project", "save_workspaces", "generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action", "google_capability", "google_accounts", "google_disconnect", "google_triggers", "google_trigger_save", "google_trigger_delete", "commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore", "preview_open"].contains(&operation) {
+    if !["browse_folders", "create_folder", "add_project", "update_project_organization", "resume_thread", "move_project", "save_workspaces", "generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action", "google_capability", "google_accounts", "google_disconnect", "google_triggers", "google_trigger_save", "google_trigger_delete", "commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore", "preview_open"].contains(&operation) {
         return Err("Unknown composer operation".into());
     }
     Ok(())

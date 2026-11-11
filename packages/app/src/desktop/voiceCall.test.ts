@@ -47,6 +47,19 @@ describe("VoiceCallController", () => {
     expect(t.c.getSnapshot().pending).toBe("");
   });
 
+  it("drops punctuation-only utterances and purges voice queue on end", async () => {
+    const t = setup();
+    const purge = vi.fn().mockResolvedValue(undefined);
+    (t.thread as { purgeVoiceQueue?: unknown }).purgeVoiceQueue = purge;
+    await t.c.begin();
+    t.emit({ type: "segment", text: "." });
+    await vi.advanceTimersByTimeAsync(SEND_DELAY_MS);
+    expect(t.thread.sendText).not.toHaveBeenCalled();
+    expect(t.c.getSnapshot().pending).toBe("");
+    await t.c.end();
+    expect(purge).toHaveBeenCalledTimes(1);
+  });
+
   it("speech-start cancels the pending send timer", async () => {
     const t = setup();
     await t.c.begin();

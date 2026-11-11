@@ -38,3 +38,27 @@ it("lets active connections reach removal confirmation without stopping work on 
   expect(invoke.mock.calls.some(([c]) => c === "stop" || c === "remove_account")).toBe(false);
   expect(screen.getByRole("button", { name: "Stop work and remove connection" })).toBeTruthy();
 });
+
+it("saves a detected Claude login with a name and color without opening sign-in", async () => {
+  invoke.mockImplementation(async (command: string) => command === "detect_agents" ? [{ provider: "claude", path: "/fixture/claude" }] : command === "detect_existing_sign_ins" ? [{ provider: "claude", signed_in: true, error: null }] : command === "save_claude_login" ? { id: "saved", provider: "claude" } : null);
+  render(<AccountSetup db={{ ...empty }} native onRefresh={vi.fn().mockResolvedValue(undefined)} />);
+  const add = await screen.findByRole("button", { name: "Add Claude Code account" });
+  await waitFor(() => expect(add.hasAttribute("disabled")).toBe(false));
+  await userEvent.click(add);
+  await userEvent.click(screen.getByRole("menuitem", { name: "Save current Terminal login…" }));
+  fireEvent.change(await screen.findByLabelText("Account name"), { target: { value: "Personal" } });
+  await userEvent.click(screen.getByRole("button", { name: "Save account" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_claude_login", { provider: "claude", name: "Personal", color: "#b59ae9" }));
+  expect(invoke.mock.calls.some(([c]) => c === "login" || c === "add_account")).toBe(false);
+});
+
+it("requires saving a shared Claude connection before adding a second account", async () => {
+  invoke.mockImplementation(async (command: string) => command === "auth_status" ? true : command === "detect_agents" ? [{ provider: "claude", path: "/fixture/claude" }] : command === "detect_existing_sign_ins" ? [{ provider: "claude", signed_in: true, error: null }] : null);
+  render(<AccountSetup db={{ ...empty, accounts: [{ id: "shared", provider: "claude", name: "Personal", color: "#8ec6a2", config_home: "/fixture/shared" }] }} native onRefresh={vi.fn()} />);
+  const add = await screen.findByRole("button", { name: "Add Claude Code account" });
+  await waitFor(() => expect(add.hasAttribute("disabled")).toBe(false));
+  await userEvent.click(add);
+  expect(screen.getByRole("menuitem", { name: "Add separate account…" }).hasAttribute("data-disabled")).toBe(true);
+  await userEvent.click(screen.getByRole("menuitem", { name: "Save current Terminal login…" }));
+  expect((await screen.findByLabelText("Account name") as HTMLInputElement).value).toBe("Personal");
+});

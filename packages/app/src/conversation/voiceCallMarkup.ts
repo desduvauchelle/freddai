@@ -12,6 +12,11 @@ export function stripVoiceCall(text: string): { text: string; voice: boolean } {
   return { text: text.replace(VOICE_BLOCK, "").trimEnd(), voice: true };
 }
 
+/** True when the text, minus any voice-call suffix, contains a letter or digit (not just punctuation/whitespace). */
+export function hasSpeech(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(stripVoiceCall(text).text);
+}
+
 /** Assistant text for display: `<spoken>X</spoken>` becomes a plain leading paragraph; a still-open tag (streaming) is just dropped. */
 export function renderSpoken(text: string): string {
   if (!text.includes("spoken>")) return text;

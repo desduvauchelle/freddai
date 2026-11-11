@@ -440,12 +440,13 @@ final class DashboardView: UIScrollView {
     config.baseForegroundColor = .secondaryLabel
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
+    button.contentHorizontalAlignment = .center; button.contentVerticalAlignment = .center
     button.widthAnchor.constraint(equalToConstant: 44).isActive = true
     button.heightAnchor.constraint(equalToConstant: 44).isActive = true
     return button
   }
 
-  /// Header row (dot, name, + and mic) over a top-aligned list of thread rows. Colour lives only in the dot.
+  /// Header row (dot, name, + and mic) over a top-aligned list of thread rows. The name takes the project colour.
   private func projectCard(_ project: DashboardModel.Project, model: DashboardModel) -> UIView {
     let card = DashboardCardView()
     let emit: (String) -> Void = { [weak self] action in self?.onAction?(DashboardActionPayload(action: action, project: project.id, assistant: project.assistant)) }
@@ -469,7 +470,7 @@ final class DashboardView: UIScrollView {
     title.constraints.filter { $0.firstAttribute == .height }.forEach { $0.isActive = false }
     title.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
     title.accessibilityIdentifier = "dashboard-project-" + project.id
-    title.configuration?.baseForegroundColor = .label
+    title.configuration?.baseForegroundColor = Self.color(hex: project.color) ?? .label
     title.configuration?.background.backgroundColor = .clear
     title.configuration?.titleLineBreakMode = .byTruncatingTail
     title.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 4)
@@ -499,17 +500,19 @@ final class DashboardView: UIScrollView {
     mic.tag = model.projects.firstIndex(where: { $0.id == project.id }) ?? 0
 
     let header: UIStackView
-    if renderedColumns >= 3 || bounds.width >= 600 {
+    let narrow = !(renderedColumns >= 3 || bounds.width >= 600)
+    if !narrow {
       header = UIStackView(arrangedSubviews: [dot, title, create, mic])
       header.axis = .horizontal; header.alignment = .center; header.spacing = 0
       header.setCustomSpacing(8, after: dot)
     } else {
-      // Narrow two-column cards: the name keeps the full width; + and mic sit right-aligned on the next line.
+      // Narrow two-column cards: the dot and name are centred as a unit (the name truncates); + and mic are centred as a pair on the next line.
       title.constraints.filter { $0.firstAttribute == .height }.forEach { $0.isActive = false }
       title.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
+      title.setContentHuggingPriority(.required, for: .horizontal)
       let name = UIStackView(arrangedSubviews: [dot, title]); name.alignment = .center; name.spacing = 8
-      let icons = UIStackView(arrangedSubviews: [UIView(), create, mic]); icons.alignment = .center
-      header = UIStackView(arrangedSubviews: [name, icons]); header.axis = .vertical; header.spacing = 0
+      let icons = UIStackView(arrangedSubviews: [create, mic]); icons.alignment = .center
+      header = UIStackView(arrangedSubviews: [name, icons]); header.axis = .vertical; header.alignment = .center; header.spacing = 0
       header.layoutMargins = .zero
       header.setCustomSpacing(-6, after: name)
     }
@@ -569,8 +572,8 @@ final class DashboardView: UIScrollView {
     for view in [header, threads] { view.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(view) }
     NSLayoutConstraint.activate([
       header.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
-      header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-      header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+      header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: narrow ? 8 : 14),
+      header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: narrow ? -8 : -4),
       threads.topAnchor.constraint(equalTo: header.bottomAnchor),
       threads.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
       threads.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),

@@ -9,7 +9,7 @@ const thread = (id: string, over: Partial<Session> = {}): Session => ({ id, titl
 const pending = { id: 1 } as never;
 const projects = [project("alpha", "Alpha"), project("beta", "Beta")];
 const sessions = [thread("1"), thread("2", { project: "beta", status: "waiting" })];
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { localStorage.removeItem("freddai.office.recent-only.v1"); cleanup(); vi.useRealTimers(); });
 
 const mini = (over = {}) => {
   const onOpenThread = vi.fn();
@@ -154,6 +154,7 @@ it("keeps a finished thread's character until it has left through the front door
 });
 
 it("gathers enabled schedules at a separate shrine with bounded admirers and overflow", () => {
+  localStorage.setItem("freddai.office.recent-only.v1", "false"); // this test pins the layout of all rooms
   const schedules = Array.from({ length: 7 }, (_, i) => ({ id: `s${i}`, name: `Task ${i}`, project: 'alpha', next_due: NOW + (i + 1) * 3600_000, enabled: i !== 0 }));
   const { rerender } = render(<Office variant="mini" sessions={[]} projects={projects} schedules={schedules} now={NOW} onOpenThread={vi.fn()} />);
   const shrine = screen.getByLabelText('Clock shrine');
@@ -274,4 +275,19 @@ it("keeps zoom controls in the footer and out of the floor plan in both views", 
   expect(fullZoom.closest(".office-bar")).toBeTruthy();
   fireEvent.click(fullZoom);
   expect(within(dialog).getByRole("button", { name: "Fit all" }).getAttribute("aria-pressed")).toBe("true");
+});
+
+it("hides inactive project rooms by default, toggles to show all, and persists the choice", () => {
+  localStorage.removeItem("freddai.office.recent-only.v1");
+  const old = thread("9", { project: "gamma", status: "done", updated: NOW - 30 * 86400000 });
+  const all = [...projects, project("gamma", "Gamma")];
+  const { unmount } = render(<Office variant="mini" sessions={[...sessions, old]} projects={all} schedules={[]} now={NOW} onOpenThread={vi.fn()} />);
+  const base = document.querySelectorAll(".office-floor").length;
+  fireEvent.click(screen.getByRole("button", { name: "Showing recent projects only (1 hidden) — show all" }));
+  expect(document.querySelectorAll(".office-floor").length).toBe(base + 1);
+  expect(localStorage.getItem("freddai.office.recent-only.v1")).toBe("false");
+  unmount();
+  render(<Office variant="mini" sessions={[...sessions, old]} projects={all} schedules={[]} now={NOW} onOpenThread={vi.fn()} />);
+  expect(document.querySelectorAll(".office-floor").length).toBe(base + 1);
+  expect(screen.getByRole("button", { name: "Showing all projects — show recent only" })).toBeTruthy();
 });

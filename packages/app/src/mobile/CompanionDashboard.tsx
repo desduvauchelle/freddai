@@ -128,6 +128,7 @@ export function CompanionDashboard(props: Props) {
     } : undefined} variant="mini" onExpand={() => props.onOfficeExpandedChange?.(true)} onClose={() => props.onOfficeExpandedChange?.(false)} now={now} onOpenThread={onOpen}
       projects={snapshot.projects.map(p => ({ ...p, path: '', policy: 'inherit', account: null, last: null }))}
       sessions={snapshot.threads.map(t => ({ ...t, account: '', provider_id: null, pending: t.pending ?? null }))}
+      schedules={snapshot.schedules}
       queuedThreadIds={new Set(snapshot.threads.filter(t => t.queued > 0).map(t => t.id))} />
     {!props.nativeCards && <>
     <div className="dashboard-project-toolbar">

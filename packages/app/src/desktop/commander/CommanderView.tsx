@@ -7,7 +7,7 @@ import { MASCOT_PRIORITY } from "../mascot-state";
 import type { Project, Schedule } from "../types";
 import { ApprovalCard } from "./ApprovalCard";
 import type { Proposal } from "./api";
-import { AWAY_MS, awayCards, awayGreeting, recordVisit, type AwayCard } from "./away";
+import { AWAY_MS, awayCards, awayGap, recordVisit, type AwayCard } from "./away";
 import { CommanderTools, pendingProposals, type ToolsTab } from "./CommanderTools";
 import { statusText } from "./CommanderCluster";
 import { CommanderTrailingContext } from "./TrailingContext";
@@ -70,7 +70,7 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
       <div className="commander-header-center">
         <button type="button" className="commander-header-avatar" aria-label={`${name} tools`} aria-expanded={tools.open} title="Open tools" data-needs={(state?.status.needs_you ?? 0) > 0}
           onClick={() => setTools(t => ({ ...t, open: !t.open }))}>
-          <Dormouse size={112} priority={MASCOT_PRIORITY.header} mood={(state?.status.running ?? 0) > 0 ? 2 : (state?.status.needs_you ?? 0) > 0 ? 4 : 0} label={(state?.status.running ?? 0) > 0 ? "Working" : "Ready"} pauseControl={false} />
+          <Dormouse size={32} priority={MASCOT_PRIORITY.header} mood={(state?.status.running ?? 0) > 0 ? 2 : (state?.status.needs_you ?? 0) > 0 ? 4 : 0} label={(state?.status.running ?? 0) > 0 ? "Working" : "Ready"} pauseControl={false} />
         </button>
         <span className="commander-header-pill">
           <strong className="commander-title">{name}</strong>
@@ -91,10 +91,9 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
 
     <div className="commander-surface">
       {cards.length > 0 && away && <aside className="commander-away" aria-label="While you were away">
-        <div className="commander-away-head"><strong>{awayGreeting(away.gap)}</strong>
-          <button type="button" className="commander-icon-btn" aria-label="Dismiss" onClick={() => setDismissed(true)}><X size={14} aria-hidden="true" /></button></div>
-        <div className="commander-away-cards">{cards.map(c => <button key={c.id} type="button" className="commander-away-card" data-kind={c.kind} onClick={() => followCard(c)}>
-          <strong>{c.title}</strong><span>{c.detail}</span></button>)}</div>
+        <strong>Welcome back</strong><span className="commander-away-gap">{awayGap(away.gap)}</span>
+        {cards.map(c => <button key={c.id} type="button" className="commander-away-card" data-kind={c.kind} title={c.detail || undefined} onClick={() => followCard(c)}>{c.title}</button>)}
+        <button type="button" className="commander-icon-btn commander-away-dismiss" aria-label="Dismiss" onClick={() => setDismissed(true)}><X size={14} aria-hidden="true" /></button>
       </aside>}
       {threadId
         ? <div className="commander-conversation"><CommanderTrailingContext.Provider value={tray}>{renderConversation(threadId)}</CommanderTrailingContext.Provider></div>

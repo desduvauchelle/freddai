@@ -157,7 +157,8 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
         "tool_text" => rt.tool_text(&text(&p, "thread")?, &text(&p, "message")?, p["offset"].as_u64().unwrap_or(0) as usize, p["hash"].as_str())?,
         "detect_agents" => json!(crate::runtime::detect_agents()),
         "detect_existing_sign_ins" => json!(crate::runtime::detect_existing_sign_ins()),
-        "connect_existing" => json!(rt.connect_existing(&text(&p, "provider")?)?),
+        "save_claude_login" => json!(rt.connect_existing_named("claude", Some(&text(&p, "name")?), Some(&text(&p, "color")?))?),
+        "connect_existing" => json!(rt.connect_existing_named(&text(&p, "provider")?, p["name"].as_str(), p["color"].as_str())?),
         "rename_account" => {
             rt.rename_account(&text(&p, "account")?, &text(&p, "name")?)?;
             Value::Null
@@ -286,6 +287,9 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
                 &text(&p, "action")?,
                 p["message"].as_str(),
             )?;
+            if p["action"] == "resume" {
+                rt.queue_tick();
+            }
             Value::Null
         }
         "stop" => {

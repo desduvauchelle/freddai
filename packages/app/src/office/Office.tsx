@@ -1,9 +1,10 @@
 import { createPortal } from "react-dom";
-import { Maximize2, X } from "lucide-react";
+import { Eye, EyeOff, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Project, Session } from "../desktop/types";
 import { officeModel, STATE_CUE, STATE_LABEL, totalsLabel, type OfficeAgent, type OfficeAgentState, type OfficeCard, type OfficeModel, type OfficeProposal, type OfficeSchedule } from "./officeModel";
 import { BAND_H, CELL_H, FACE, SIDE, SOUTH, TRAY_COLS, TRAY_MAX, WALL, bestFullLayout, floorPlan, miniCols, type Layout, type PlacedRoom, type PlanProject } from "./officeLayout";
+import { readRecentOnly, recentProjects, writeRecentOnly } from "./officeFilter";
 import { useOfficeStage, type Char, type Stage } from "./officeStage";
 import { Bench, Bubble, Character, ClockAdmirer, CoffeeMachine, DeskFurniture, Folder, Plant, STATE_COLOR, Table, UserAvatar, WallClock, FUR } from "./sprites";
 import "./office.css";
@@ -392,6 +393,14 @@ function ZoomControl({ overview, onToggle }: { overview: boolean; onToggle: () =
   return <button type="button" className="office-view-toggle" aria-pressed={!overview} onClick={onToggle}>{overview ? "Zoom in" : "Fit all"}</button>;
 }
 
+function RecentToggle({ recentOnly, hidden, onToggle }: { recentOnly: boolean; hidden: number; onToggle: () => void }) {
+  const label = recentOnly
+    ? `Showing recent projects only${hidden ? ` (${hidden} hidden)` : ""} — show all`
+    : "Showing all projects — show recent only";
+  const Icon = recentOnly ? EyeOff : Eye;
+  return <button type="button" className="office-btn" aria-label={label} title={label} aria-pressed={!recentOnly} data-hidden-count={hidden} onClick={onToggle}><Icon size={13} aria-hidden="true" />{recentOnly && hidden > 0 && <span className="office-btn-count">{hidden}</span>}</button>;
+}
+
 function Legend({ model, children }: { model: OfficeModel; children?: ReactNode }) {
   const counts = new Map<OfficeAgentState, number>();
   for (const a of model.agents) if (a.place !== "tray") counts.set(a.state, (counts.get(a.state) ?? 0) + 1);
@@ -408,7 +417,9 @@ function Legend({ model, children }: { model: OfficeModel; children?: ReactNode 
 
 const FOCUSABLE = "button:not([disabled]), [role='button'][tabindex='0']";
 
-function Overlay({ model, plan, now, onOpen, onClose, renderTaskControls, initialProject, onOpenCommander, onProposalRespond }: { onProposalRespond?: OfficeProps["onProposalRespond"]; onOpenCommander?: () => void; initialProject?: string; renderTaskControls?: OfficeProps["renderTaskControls"]; model: OfficeModel; plan: PlanProject[]; now: number; onOpen: (id: string) => void; onClose: () => void }) {
+type RecentProps = { recentOnly: boolean; hidden: number; onToggleRecent: () => void };
+
+function Overlay({ recent, model, plan, now, onOpen, onClose, renderTaskControls, initialProject, onOpenCommander, onProposalRespond }: { recent: RecentProps; onProposalRespond?: OfficeProps["onProposalRespond"]; onOpenCommander?: () => void; initialProject?: string; renderTaskControls?: OfficeProps["renderTaskControls"]; model: OfficeModel; plan: PlanProject[]; now: number; onOpen: (id: string) => void; onClose: () => void }) {
   const [overview, setOverview] = useState(true);
   const root = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -439,7 +450,7 @@ function Overlay({ model, plan, now, onOpen, onClose, renderTaskControls, initia
   };
   return createPortal(<div ref={root} className="office-overlay" role="dialog" aria-modal="true" aria-label="Office" onKeyDown={onKeyDown}>
     <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander ? () => { onClose(); onOpenCommander(); } : undefined} initialProject={initialProject} renderTaskControls={renderTaskControls} model={model} layout={layout} variant="full" now={now} onOpen={onOpen} />
-    <Legend model={model}><ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} /></Legend>
+    <Legend model={model}><RecentToggle recentOnly={recent.recentOnly} hidden={recent.hidden} onToggle={recent.onToggleRecent} /><ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} /></Legend>
       <button ref={close} type="button" className="office-btn" aria-label="Close office" title="Close (Esc)" onClick={onClose}><X size={14} aria-hidden="true" /></button>
   </div>, document.body);
 }
@@ -454,8 +465,13 @@ function useViewportHeight(): number {
   return h;
 }
 
-export function Office({ sessions, projects, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose, renderTaskControls, onOpenCommander, proposals, onProposalRespond }: OfficeProps) {
+export function Office({ sessions, projects: allProjects, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose, renderTaskControls, onOpenCommander, proposals, onProposalRespond }: OfficeProps) {
   const clock = now ?? Date.now();
+  const [recentOnly, setRecentOnly] = useState(readRecentOnly);
+  const toggleRecent = useCallback(() => setRecentOnly(v => { writeRecentOnly(!v); return !v; }), []);
+  const projects = useMemo(() => (recentOnly ? recentProjects(allProjects, sessions, schedules, clock, queuedThreadIds) : allProjects), [recentOnly, allProjects, sessions, schedules, clock, queuedThreadIds]);
+  const hiddenCount = allProjects.length - projects.length;
+  const recent: RecentProps = { recentOnly, hidden: hiddenCount, onToggleRecent: toggleRecent };
   const model = useMemo(() => officeModel(sessions, projects, clock, schedules, queuedThreadIds, proposals), [sessions, projects, clock, schedules, queuedThreadIds, proposals]);
   const plan = usePlanProjects(projects);
   const [expanded, setExpanded] = useState(false);
@@ -480,13 +496,14 @@ export function Office({ sessions, projects, schedules, queuedThreadIds, now, va
   // Stage height follows the map's aspect ratio at full card width; CSS max-height (45vh) is only a safety net.
   const stageH = width > 0 ? Math.ceil((miniLayout.height * avail) / miniLayout.width) + 8 : 240;
 
-  if (variant === "full") return <Overlay onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />;
+  if (variant === "full") return <Overlay recent={recent} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />;
   return <section ref={card} className="office-mini" aria-label="Office" data-narrow={width > 0 && width < 560 ? "2" : width > 0 && width < 860 ? "1" : undefined}>
     <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} onSelectRoom={project => { setSelectedProject(project); expand(); }} renderTaskControls={renderTaskControls} model={model} layout={miniLayout} variant="mini" now={clock} height={stageH} onOpen={onOpenThread} onBackground={expand} />
     <Legend model={model}>
+      <RecentToggle recentOnly={recentOnly} hidden={hiddenCount} onToggle={toggleRecent} />
       <ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} />
       <button type="button" className="office-btn" aria-label="Expand office" title="Expand office" onClick={expand}><Maximize2 size={13} aria-hidden="true" /></button>
     </Legend>
-    {expanded && <Overlay onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />}
+    {expanded && <Overlay recent={recent} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />}
   </section>;
 }

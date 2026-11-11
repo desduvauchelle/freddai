@@ -516,6 +516,7 @@ pub fn detect_agents() -> Vec<AgentInstallation> {
     .collect()
 }
 const AUTH_ENV: &[&str] = &[
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
     "AGY_ADC_AUTH",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -1087,6 +1088,9 @@ impl Runtime {
             claude_default_config: false,
         };
         let mut i = self.0.lock().unwrap();
+        if a.provider == "claude" && i.db.accounts.iter().any(|existing| existing.provider == "claude" && existing.config_home.is_some()) {
+            return Err("Save your current Claude Terminal login before adding a second account, so the first connection stays independent.".into());
+        }
         private_dir(&i.root.join("accounts").join(&a.id))?;
         i.db.accounts.push(a.clone());
         if i.db.preferences.fallback.is_none() {
@@ -1096,20 +1100,45 @@ impl Runtime {
         Ok(a)
     }
     pub fn connect_existing(&self, provider: &str) -> Result<Account> {
-        let account = local_account(provider)?;
+        self.connect_existing_named(provider, None, None)
+    }
+    pub fn connect_existing_named(&self, provider: &str, name: Option<&str>, color: Option<&str>) -> Result<Account> {
+        let mut account = local_account(provider)?;
         if !check_auth(command(&account, Path::new(""))?, provider)? {
             return Err(
                 "No signed-in CLI account found. Your existing sign-in was not changed.".into(),
             );
         }
         let mut i = self.0.lock().unwrap();
-        if let Some(existing) = i.db.accounts.iter().find(|a| {
-            a.provider == provider
-                && a.config_home == account.config_home
+        let existing = i.db.accounts.iter().position(|a| {
+            a.provider == provider && a.config_home == account.config_home
                 && a.claude_default_config == account.claude_default_config
-        }) {
-            return Ok(existing.clone());
-        }
+        });
+        if provider == "claude" {
+            if let Some(index) = existing {
+                account = i.db.accounts[index].clone();
+                if i.db.sessions.iter().any(|s| s.account == account.id && matches!(s.status.as_str(), "starting" | "running" | "waiting")) {
+                    return Err("Finish this Claude account's active threads before saving its Terminal login, so their resume history can be preserved.".into());
+                }
+            }
+            if let Some(name) = name { if name.trim().is_empty() { return Err("Account name is required".into()); } account.name = name.trim().into(); }
+            if let Some(color) = color { account.color = color.into(); }
+            let target = i.root.join("accounts").join(&account.id);
+            crate::claude_profile::copy(account.config_home.as_ref().unwrap(), account.claude_default_config, &target)?;
+            if existing.is_some() {
+                crate::claude_profile::copy_history(&account.config_home.as_ref().unwrap().join("projects"), &target.join("projects"))?;
+            }
+            account.config_home = None;
+            account.claude_default_config = false;
+            if !check_auth(command(&account, &i.root)?, provider)? {
+                return Err("Saved Claude login could not be verified. Your original connection was not changed.".into());
+            }
+            if let Some(index) = existing {
+                let previous = std::mem::replace(&mut i.db.accounts[index], account.clone());
+                if let Err(error) = write_db(&i) { i.db.accounts[index] = previous; return Err(error); }
+                return Ok(account);
+            }
+        } else if let Some(index) = existing { return Ok(i.db.accounts[index].clone()); }
         i.db.accounts.push(account.clone());
         if i.db.preferences.fallback.is_none() {
             i.db.preferences.fallback = Some(account.id.clone());
@@ -2424,7 +2453,14 @@ impl Runtime {
         }
         let background_wake = key.starts_with(crate::commander_autonomy::WAKE_ID_PREFIX)
             || key.starts_with(crate::google::triggers::REQUEST_PREFIX);
+        let idle = !i.running.contains_key(sid);
         let queue = i.db.queues.iter_mut().find(|q| q.session == sid).unwrap();
+        // Stop pauses the queue even when empty. A fresh user message to an idle
+        // empty queue is a new request, not a request to preserve that old pause.
+        if !background_wake && queue.messages.is_empty() && idle {
+            queue.paused = false;
+            queue.error = None;
+        }
         queue.messages.push(QueuedMessage {
             id: key,
             prompt,
@@ -4915,6 +4951,15 @@ mod tests {
             q.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             vec!["first", "second"]
         );
+        // Clearing the old paused queue must not trap the next idle user reply.
+        rt.queue_action("thread", "clear", None).unwrap();
+        rt.queue_message("thread", "Fresh reply".into(), LaunchOptions::default()).unwrap();
+        assert!(!rt.snapshot().queues[0].paused);
+        assert!(rt.snapshot().queues[0].error.is_none());
+        rt.queue_action("thread", "pause", None).unwrap();
+        crate::host::dispatch(&rt, "queue_action", json!({"session":"thread","action":"resume"})).unwrap();
+        // Immediate dispatch reaches validation without any provider being run.
+        assert_eq!(rt.snapshot().queues[0].error.as_deref(), Some("Project not found"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -6479,13 +6524,13 @@ mod tests {
         let store = crate::commander::store(&rt).unwrap();
         let linked = store.todo_for_thread(&thread).unwrap().unwrap();
         assert_eq!(linked.owner, "thread");
-        // The offline turn fails, which wakes Commander: to-do needs review, review message queued/sent.
-        wait_for("wake-up", || {
+        // The offline turn fails: the to-do needs review and the completion is recorded for a coalesced
+        // notice; no message is queued immediately.
+        wait_for("completion recorded", || {
             store.todo_for_thread(&thread).unwrap().is_some_and(|t| t.status == "needs_review")
-                && rt.snapshot().sessions.iter().find(|s| s.id == "chief").is_some_and(|c| c.messages.iter().any(|m| m.text.as_str().contains("finished with status failed")))
+                && crate::commander_autonomy::pending_completions(&store).iter().any(|c| c.id == thread)
         });
-        let wake = rt.snapshot().sessions.iter().find(|s| s.id == "chief").unwrap().messages[0].text.to_string();
-        assert!(wake.contains(&thread) && wake.contains("freddai_todo_update"), "{wake}");
+        assert!(rt.snapshot().sessions.iter().find(|s| s.id == "chief").unwrap().messages.is_empty());
         // Decline is recorded and never runs.
         let declined = crate::commander::respond(&rt, pending.iter().find(|p| p.status == "pending" && p.id != pid).unwrap().id.as_str(), false, None).unwrap();
         assert_eq!(declined.status, "declined");

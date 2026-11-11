@@ -20,3 +20,7 @@
 .message-queue button:focus-visible { outline: 2px solid #b59ae9; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .message-queue, .message-queue li { animation: none; } }
 .message-queue li.message-queue-system { min-height: 28px; opacity: .75; font-style: italic; color: var(--adaptive-muted, #9690a6); }
+
+.message-queue-state { display: block; margin: 6px 10px; color: var(--adaptive-muted, #aaa7b4); }
+.message-queue-clear { position: absolute; top: 3px; right: 8px; height: 22px !important; }
+.message-queue-badge { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 8px; background: #ffffff14; color: var(--adaptive-muted, #aaa7b4); font-size: 10px; line-height: 16px; }

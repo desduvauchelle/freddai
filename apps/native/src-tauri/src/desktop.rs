@@ -481,13 +481,17 @@ async fn detect_existing_sign_ins(h: State<'_, Host>) -> Result<Value, String> {
     rpc(h.inner().clone(), "detect_existing_sign_ins", json!({})).await
 }
 #[tauri::command]
-async fn connect_existing(h: State<'_, Host>, provider: String) -> Result<Value, String> {
+async fn connect_existing(h: State<'_, Host>, provider: String, name: Option<String>, color: Option<String>) -> Result<Value, String> {
     rpc(
         h.inner().clone(),
         "connect_existing",
-        json!({"provider":provider}),
+        json!({"provider":provider,"name":name,"color":color}),
     )
     .await
+}
+#[tauri::command]
+async fn save_claude_login(h: State<'_, Host>, name: String, color: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "save_claude_login", json!({"name":name,"color":color})).await
 }
 #[tauri::command]
 async fn rename_account(h: State<'_, Host>, account: String, name: String) -> Result<Value, String> {
@@ -1200,6 +1204,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             detect_agents,
             detect_existing_sign_ins,
             connect_existing,
+            save_claude_login,
             add_account,
             remove_account,
             rename_account,

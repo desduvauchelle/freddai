@@ -81,6 +81,8 @@ The executable handles `--mcp` before GUI initialization. Keep Freddai open so i
 
 Gmail messages are built as RFC 5322 (CRLF, base64 bodies at 76 columns, RFC 2047 for non-ASCII subjects and display names) and sent through the media-upload endpoint as `message/rfc822`; a reply needs its `threadId`, so it uses a `multipart/related` upload with the thread as JSON metadata.
 
+Sending email requires the user's explicit permission: the `freddai_gmail_send` description, the server instructions and trigger-delivery text tell agents to send only an email the user has explicitly said they may send, and otherwise to create a draft and ask (instruction-level; a technical hold for ordinary threads is deferred).
+
 Approval: only Commander calls pass the action gate (below). There, `freddai_gmail_send` is always held, and the three calendar mutations are held when they name attendees or `send_updates` is not `none`; `freddai_save_google_trigger` is held when it enables a trigger (or edits an enabled one) and `freddai_google_trigger_action` is held for `resume` and `delete`, exactly like the schedule tools; everything else (including drafts, label changes and Drive writes) runs directly and is logged. Ordinary project threads have no Freddai approval hold on any Google tool: the call runs as soon as the agent makes it, subject only to the agent's own provider permission mode.
 
 ## Commander-in-Chief tools and the action gate

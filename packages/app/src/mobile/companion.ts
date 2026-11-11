@@ -1,3 +1,4 @@
+export interface FolderListing { path: string; parent: string | null; folders: { name: string; path: string }[] }
 import { isCommanderThread } from "../commanderThreads";
 import { statusReadCursors } from "../desktop/status-read-cursors";
 import { bucketThreads, compareThreadRecency, OLDER_PAGE_SIZE, RECENT_FINISHED_DEFAULT, threadListStatus } from '../desktop/types.ts';
@@ -28,6 +29,8 @@ export type ComposerTarget = { thread?: string; project?: string; assistant?: st
 export type CompanionClient = {
   commander?: CommanderClient;
   updateProjectOrganization?(project: string, name: string, color: string): Promise<void>;
+  projectFolders?(operation: "browse_folders" | "create_folder", input: { path?: string; name?: string }): Promise<FolderListing>;
+  addProject?(path: string): Promise<{ id: string }>;
   moveProject?(project: string, target: string, after: boolean): Promise<string[]>;
   saveWorkspaces?(workspaces: Workspace[]): Promise<void>;
   generatedFile?(thread: string, href: string, offset: number): Promise<import("../conversation/GeneratedFile").FileChunk>;

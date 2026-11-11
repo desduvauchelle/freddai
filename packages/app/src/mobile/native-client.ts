@@ -24,6 +24,8 @@ export const nativeCommanderClient: CommanderClient = {
 };
 export const nativeCompanionClient: CompanionClient = {
   commander: nativeCommanderClient,
+  projectFolders: (operation, input) => composer(operation, input),
+  addProject: path => composer("add_project", { path }),
   updateProjectOrganization: (project, name, color) => composer("update_project_organization", { project, name, color }),
   moveProject: (project, target, after) => composer("move_project", { project, target, after }),
   saveWorkspaces: workspaces => composer("save_workspaces", { workspaces }),

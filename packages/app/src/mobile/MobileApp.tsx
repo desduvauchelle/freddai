@@ -1,3 +1,4 @@
+import { ProjectBrowser } from './ProjectBrowser';
 import { DashboardCall } from "../desktop/DashboardCall";
 import { companionCallIo } from "./companion-call";
 import { CompanionCall } from "./CompanionCall";
@@ -77,6 +78,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const attemptReason = useRef<'poll' | 'manual' | 'foreground'>('poll'), [recovered, setRecovered] = useState(false), previousState = useRef(connection.state);
   const [bannerDismissed, setBannerDismissed] = useState(false), [detailsOpen, setDetailsOpen] = useState(false);
   const [project, setProject] = useState(''), [query, setQuery] = useState(''), [filter, setFilter] = useState<ThreadFilter>('all');
+  const [projectBrowserOpen, setProjectBrowserOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem('freddai.companion.workspace') || ''; } catch { return ''; } });
   const scopedData = scopeCompanion(data, workspace);
@@ -565,11 +567,11 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const nativeTitle = task?.title || 'Conversation';
   useEffect(() => {
     if (!nativeShell) return;
-    void (workspacesOpen || (schedulesOpen || officeExpanded) && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
+    void (projectBrowserOpen || workspacesOpen || (schedulesOpen || officeExpanded) && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
       ? setNativeMode(isCommander ? 'commander' : 'conversation', { title: isCommander ? commanderProject!.name : nativeTitle, placeholder: busyThread ? 'Draft your next message…' : 'Message', threadSheet })
       : screen === 'new' ? setNativeMode('new', { title: 'New thread', placeholder: 'What should we work on?' })
       : screen === 'dashboard' ? setNativeMode('dashboard', { title: 'Dashboard' }) : setNativeMode('other')).catch(e => setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`));
-  }, [nativeShell, screen, nativeTitle, busyThread, schedulesOpen, workspacesOpen, officeExpanded, isCommander, threadSheet]);
+  }, [nativeShell, screen, nativeTitle, busyThread, schedulesOpen, workspacesOpen, projectBrowserOpen, officeExpanded, isCommander, threadSheet]);
   // Launch: native companions open on Dashboard with the drawer closed. New thread stays an explicit action.
   const launched = useRef(false);
   useEffect(() => {
@@ -843,7 +845,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     setQuery: value => { setQuery(value); setOlderPages({}); },
     workspace, setWorkspace: chooseWorkspace,
     setFilters: (nextProject, status) => { setProject(nextProject); setFilter(status); setOlderPages({}); },
-    newThread: destination => start(destination || undefined),
+    newThread: destination => { if (destination === 'freddai:add-project') setProjectBrowserOpen(true); else start(destination || undefined); },
     showOlder: id => setOlderPages(pages => bumpOlderPage(pages, id)),
     setView: setNavView,
     recentPage: (action, section) => (section ? setSectionPages : setRecentPages)(pages => action === 'more' ? pages + 1 : 0),
@@ -1031,6 +1033,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     {desktop && navigatorOpen && <aside className="companion-desktop-sidebar" aria-label="Thread navigator">
       <div className="companion-desktop-brand" data-tauri-drag-region>freddai</div>
       <Button variant="ghost" onClick={() => start()}>New thread</Button>
+      {client.addProject && <Button variant="ghost" disabled={!connected} onClick={() => setProjectBrowserOpen(true)}>＋ Project</Button>}
       {navigation}
       <ScrollArea className="companion-desktop-threads">{threadListing}</ScrollArea>
       {client.scheduleCommand && <Button variant="ghost" onClick={() => setSchedulesOpen(true)}>Schedules</Button>}
@@ -1089,6 +1092,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       {screen === 'new' && <span id="companion-call-action" />}
       {connectionButton}
       {!desktop && screen === 'dashboard' && <Button variant="ghost" onClick={() => setScreen('threads')}>Threads</Button>}
+      {!detail && client.addProject && <Button variant="ghost" disabled={!connected} onClick={() => setProjectBrowserOpen(true)}>＋ Project</Button>}
       {!detail && <Button variant="ghost" size="icon" aria-label="New thread" onClick={() => start()}><Plus /></Button>}
       </>}
     </header>}
@@ -1098,8 +1102,15 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       <select aria-label="Workspace filter" value={workspace} onChange={e => chooseWorkspace(e.target.value)}><option value="">All workspaces</option>{data.workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
       {client.saveWorkspaces && <Button variant="ghost" onClick={() => setWorkspacesOpen(true)}>Manage workspaces</Button>}
     </div>}
+    <Sheet open={projectBrowserOpen} onOpenChange={setProjectBrowserOpen}><SheetContent side="bottom" className="companion-settings-sheet"><SheetHeader><SheetTitle>Add project</SheetTitle><SheetDescription>Folders on your Mac</SheetDescription></SheetHeader>
+      {projectBrowserOpen && client.projectFolders && client.addProject && <ProjectBrowser client={client} connected={connected} onAdded={async id => {
+        setData(await client.snapshot(new AbortController().signal, snapshotThread));
+        setNewProject(id); setProjectBrowserOpen(false);
+      }}/>}
+    </SheetContent></Sheet>
     <Sheet open={workspacesOpen} onOpenChange={setWorkspacesOpen}><SheetContent side="bottom" className="companion-settings-sheet"><div className="companion-settings-grabber" aria-hidden="true" /><SheetHeader><SheetTitle>Settings</SheetTitle><SheetDescription>Manage project sorting, names, colors, and workspaces across your devices.</SheetDescription></SheetHeader><div className="companion-workspaces">{deviceSettings}
       {!connected && <p>Connect to your Mac to edit organization settings.</p>}
+      {client.addProject && <Button disabled={!connected} onClick={() => { setWorkspacesOpen(false); setProjectBrowserOpen(true); }}>＋ Project</Button>}
       <h2>Workspaces</h2>
       <WorkspaceSettings projects={data.projects} workspaces={data.workspaces || []} disabled={!connected || working || !client.saveWorkspaces || !data.workspaces} onSave={async next => {
         if (!client.saveWorkspaces || working || !connected) return;

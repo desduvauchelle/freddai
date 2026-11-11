@@ -1,7 +1,7 @@
 import { MessageQueue as SharedMessageQueue } from '../desktop/MessageQueue';
 import type { CompanionThread } from './companion';
 
-type QueueAction = 'edit' | 'delete' | 'steer';
+type QueueAction = 'edit' | 'delete' | 'steer' | 'resume';
 export function MessageQueue({ messages, paused, error, active = false, disabled, pendingIds, onAction }: {
   messages: NonNullable<CompanionThread['queue']>; paused?: boolean; error?: string | null;
   active?: boolean; disabled: boolean; pendingIds?: ReadonlySet<string>;

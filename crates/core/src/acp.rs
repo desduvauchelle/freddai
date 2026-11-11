@@ -62,7 +62,11 @@ pub fn select_model(session: &Value, session_id: &str, model: &str) -> Result<Va
     let config = option["id"]
         .as_str()
         .ok_or("Missing model configuration ID")?;
-    let available = option["options"].as_array().is_some_and(|options| {
+    // agy also accepts the effort-suffixed IDs it lists in models.availableModels (e.g. gemini-3.8-flash-low).
+    let listed = session["models"]["availableModels"]
+        .as_array()
+        .is_some_and(|models| models.iter().any(|m| m["modelId"] == model));
+    let available = listed || option["options"].as_array().is_some_and(|options| {
         options.iter().any(|o| {
             o["value"] == model
                 || o["options"]

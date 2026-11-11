@@ -1,4 +1,6 @@
-//! Device-authorized companion. Never forwards arbitrary desktop RPC methods.
+#[path = "companion_folders.rs"]
+mod folders;
+// Device-authorized companion. Never forwards arbitrary desktop RPC methods.
 use freddai_core::{host, runtime::{Database, LaunchOptions, resolve}};
 use serde_json::{json, Value};
 use std::{fs, io::Read, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::{Duration, Instant}};
@@ -164,6 +166,14 @@ fn message_options(value: &Value, request_id: &str) -> Result<LaunchOptions, Str
 }
 fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     let input = &p["input"];
+    if matches!(p["operation"].as_str(), Some("browse_folders" | "create_folder" | "add_project")) {
+        let home = std::env::var("HOME").map_err(|_| "Mac home folder unavailable")?;
+        return match p["operation"].as_str().unwrap() {
+            "add_project" => host::call(root, "save_project", json!({"project":folders::project(Path::new(&home), input)?})).map(|p| json!({"id":p["id"]})),
+            "create_folder" => { text(input, "name")?; folders::run(Path::new(&home), input) },
+            _ => folders::run(Path::new(&home), &json!({"path":input["path"]})),
+        };
+    }
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
         "update_project_organization" => {

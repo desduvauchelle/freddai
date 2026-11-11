@@ -937,7 +937,7 @@ pub(crate) fn completion_is_relevant(origin: Option<&Origin>, tracked: bool) -> 
     tracked || origin.is_some_and(|origin| origin.kind == KIND)
 }
 
-fn wake(rt: &Runtime, store: &Store, commander: &crate::runtime::Project, brief: &crate::runtime::SessionBrief) -> Result<(), String> {
+fn wake(_rt: &Runtime, store: &Store, _commander: &crate::runtime::Project, brief: &crate::runtime::SessionBrief) -> Result<(), String> {
     let todo = match store.todo_for_thread(&brief.id)? {
         Some(t) => t,
         None => store.todo_save(&json!({"title":clip(&brief.title, 100),"project":brief.project,"owner":"thread","thread":brief.id,"status":"in_progress"}), "commander")?,
@@ -945,29 +945,13 @@ fn wake(rt: &Runtime, store: &Store, commander: &crate::runtime::Project, brief:
     if !matches!(todo.status.as_str(), "done" | "dropped") {
         store.todo_save(&json!({"id":todo.id,"status":"needs_review","note":format!("Thread finished with status {}.", brief.status)}), "commander")?;
     }
-    let target = main_thread(rt, store, &commander.id)?.and_then(|id| rt.session_brief(&id));
-    let project_name = rt.snapshot().projects.iter().find(|p| p.id == brief.project).map(|p| p.name.clone()).unwrap_or_else(|| brief.project.clone());
-    let Some(target) = target else {
-        // The to-do now sits in needs_review, which counts as a "needs you" item.
-        eprintln!("{}", json!({"event":"commander.wake","thread":brief.id,"status":brief.status,"queued":false,"reason":"no commander thread; recorded a needs-you item"}));
-        store.log_action("wake", &json!({"thread":brief.id,"todo":todo.id}), "held", true, Some("No Commander thread exists; the to-do is waiting in Needs you."));
-        return Ok(());
-    };
-    let message = format!(
-        "Delegated notice (not a user message): thread {} ({}) in project {} finished with status {}. Do a light review: read it with freddai_read_thread, fill verification[] on todo {} via freddai_todo_update, then post a short message to the user in your voice with a link.",
-        brief.title, brief.id, project_name, brief.status, todo.id
-    );
-    let options = crate::runtime::LaunchOptions { request_id: Some(format!("commander-wake-{}-{}", brief.id, brief.updated)), ..Default::default() };
-    match rt.queue_message(&target.id, message, options) {
-        Ok(()) => {
-            eprintln!("{}", json!({"event":"commander.wake","thread":brief.id,"status":brief.status,"queued":true,"commander_thread":target.id}));
-            store.log_action("wake", &json!({"thread":brief.id,"todo":todo.id,"commander_thread":target.id}), "executed", true, None);
-        }
-        Err(error) => {
-            eprintln!("{}", json!({"event":"commander.wake","thread":brief.id,"queued":false,"error":error}));
-            store.log_action("wake", &json!({"thread":brief.id,"todo":todo.id}), "executed", false, Some(&error));
-        }
-    }
+    // No direct message: the autonomy tick sends one coalesced notice (see commander_autonomy).
+    crate::commander_autonomy::record_completion(store, crate::commander_autonomy::Completion {
+        id: brief.id.clone(), title: clip(&brief.title, 100), status: brief.status.clone(),
+        at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    })?;
+    eprintln!("{}", json!({"event":"commander.wake_recorded","thread":brief.id,"status":brief.status,"todo":todo.id,"reason":"pending coalesced notice"}));
+    store.log_action("wake", &json!({"thread":brief.id,"todo":todo.id}), "held", true, Some("Recorded for the next coalesced Commander notice."));
     Ok(())
 }
 

@@ -402,7 +402,16 @@ final class ThreadDrawerViewController: UIViewController, UICollectionViewDelega
     settings.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
     settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .touchUpInside)
     titleRow.insertArrangedSubview(settings, at: titleRow.arrangedSubviews.count - 1)
-    let column = UIStackView(arrangedSubviews: [titleRow, searchRow])
+    var addConfig = UIButton.Configuration.plain()
+    addConfig.title = "Project"
+    addConfig.image = UIImage(systemName: "folder.badge.plus")
+    addConfig.imagePadding = 8
+    let addProject = UIButton(configuration: addConfig)
+    addProject.accessibilityLabel = "Add project"
+    addProject.accessibilityIdentifier = "companion-add-project"
+    addProject.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    addProject.addAction(UIAction { [weak self] _ in self?.onNewThread?("freddai:add-project") }, for: .touchUpInside)
+    let column = UIStackView(arrangedSubviews: [titleRow, addProject, searchRow])
     column.axis = .vertical
     column.spacing = 10
     return column

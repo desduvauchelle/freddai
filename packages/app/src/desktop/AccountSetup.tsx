@@ -54,6 +54,7 @@ export function AccountSetup({
     });
   }
   const [existing, setExisting] = useState<ExistingSignIn[] | null>(null);
+  const [importing, setImporting] = useState(false);
   const [connecting, setConnecting] = useState("");
   const [connectionError, setConnectionError] = useState<{ provider: string; message: string } | null>(null);
   const lock = useRef(false);
@@ -204,7 +205,15 @@ export function AccountSetup({
     };
   }, [native, db.accounts.map((a) => a.id).join("|")]);
   function add(provider: string, separate = false) {
+    setImporting(false);
     const current = existing?.find((a) => a.provider === provider);
+    if (provider === "claude" && !separate && current?.signed_in) {
+      setImporting(true); setAdding(provider);
+      const previous = db.accounts.find(a => a.provider === provider && a.config_home);
+      setName(previous?.name || `Claude Code ${db.accounts.filter(a => a.provider === provider).length + 1}`);
+      setColor(previous?.color || colors[db.accounts.length % colors.length]);
+      return;
+    }
     if (!separate && (current?.signed_in || ["antigravity", "opencode", "cursor"].includes(provider))) {
       void run(async () => {
         setConnecting(provider);
@@ -415,7 +424,7 @@ export function AccountSetup({
               {agent?.path && <p className="capture-help">Installation: <code>{agent.path}</code></p>}
               {provider === "antigravity" && <p className="capture-help">Install with <code>brew install --cask antigravity-cli</code>. Sign in with <code>agy</code> in Terminal, then add the current connection. Uses the CLI’s shared Keychain sign-in; switching accounts in Antigravity changes this connection too. Separate subscription logins are not supported. Requires a version supporting <code>agy acp</code>.</p>}
               {provider === "gemini" && <p className="capture-help">Gemini is experimental. Check sign-in detects saved OAuth credentials; the agent verifies them when starting a thread. Sign in using Google in its CLI, then exit the CLI and return here.</p>}
-              {!["antigravity", "opencode", "cursor"].includes(provider) && provider !== "gemini" && <p className="capture-help">Connect the current CLI sign-in or add a separate login for another subscription. Shared connections follow account changes in the CLI.</p>}
+              {!["antigravity", "opencode", "cursor"].includes(provider) && provider !== "gemini" && <p className="capture-help">Connect the current CLI sign-in or add a separate login for another subscription. {provider === "claude" ? "Saving your Terminal login creates an independent profile, so later Terminal logins do not replace it." : "Shared connections follow account changes in the CLI."}</p>}
             </details>
             {missing && (
               <p className="capture-help">
@@ -442,10 +451,11 @@ export function AccountSetup({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="dev-popup account-menu" onEscapeKeyDown={e => e.stopPropagation()} align="start" aria-label={`Add ${names[provider]} account`}>
                     <DropdownMenuLabel className="thread-menu-label">{names[provider]}</DropdownMenuLabel>
-                    <DropdownMenuItem disabled={pending || hasCli || (!exist?.signed_in && !["antigravity", "opencode", "cursor"].includes(provider))}
-                      onSelect={() => add(provider)}>Use current CLI sign-in</DropdownMenuItem>
-                    {hasCli && <DropdownMenuLabel className="thread-menu-label">Current CLI sign-in is already connected</DropdownMenuLabel>}
-                    {!["antigravity", "opencode", "cursor"].includes(provider) && <DropdownMenuItem disabled={pending}
+                    <DropdownMenuItem disabled={pending || (hasCli && provider !== "claude") || (!exist?.signed_in && !["antigravity", "opencode", "cursor"].includes(provider))}
+                      onSelect={() => requestAnimationFrame(() => add(provider))}>{provider === "claude" ? "Save current Terminal login…" : "Use current CLI sign-in"}</DropdownMenuItem>
+                    {hasCli && provider === "claude" && <DropdownMenuLabel className="thread-menu-label">Save your current login before adding another account</DropdownMenuLabel>}
+                    {hasCli && provider !== "claude" && <DropdownMenuLabel className="thread-menu-label">Current CLI sign-in is already connected</DropdownMenuLabel>}
+                    {!["antigravity", "opencode", "cursor"].includes(provider) && <DropdownMenuItem disabled={pending || (provider === "claude" && hasCli)}
                       onSelect={() => requestAnimationFrame(() => add(provider, true))}>Add separate account…</DropdownMenuItem>}
                     {["antigravity", "opencode", "cursor"].includes(provider) && <DropdownMenuLabel className="thread-menu-label">Sign in in the official CLI in Terminal first</DropdownMenuLabel>}
                   </DropdownMenuContent>
@@ -478,7 +488,7 @@ export function AccountSetup({
                     onSubmit={(e) => {
                       e.preventDefault();
                       void run(async () => {
-                        const account = await invoke<Account>("add_account", {
+                        const account = await invoke<Account>(importing ? "save_claude_login" : "add_account", {
                           name,
                           provider: adding,
                           color,
@@ -486,15 +496,15 @@ export function AccountSetup({
                         setAdding("");
                         setName("");
                         await onRefresh();
-                        await login(account.id, account.provider);
+                        if (!importing) await login(account.id, account.provider);
                       });
                     }}
                   >
                     <p>
-                      This creates a separate login for another subscription.{" "}
-                      {exist?.signed_in && !hasCli
+                      {importing ? "Save this Terminal login as an independent account. Later Terminal sign-ins will not replace it." : "This creates a separate login for another subscription."}{" "}
+                      {!importing && (exist?.signed_in && !hasCli
                         ? "To reuse your current CLI sign-in, cancel and choose Use current CLI sign-in from Add account."
-                        : hasCli ? "Your current CLI sign-in is already connected." : "A provider sign-in is required for this separate profile."}
+                        : hasCli ? "Your current CLI sign-in is already connected." : "A provider sign-in is required for this separate profile.")}
                     </p>
                     <label>
                       Account name
@@ -511,7 +521,7 @@ export function AccountSetup({
                     </label>
                     <div className="setup-actions">
                       <Button disabled={!native || pending || !name.trim()}>
-                        Add separate account & sign in
+                        {importing ? "Save account" : "Add separate account & sign in"}
                       </Button>
                       <Button
                         type="button"

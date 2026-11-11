@@ -374,6 +374,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             filters.addView(button("Project") { filter("projectOptions", "project") })
             filters.addView(button("Status") { filter("statusOptions", "status") })
             sidebar.addView(filters)
+            sidebar.addView(button("＋ Project") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "freddai:add-project")); closeDrawer() })
             sidebar.addView(button("New thread") { composerRecorder?.cancel(); event("newThread", JSONObject().put("project", "")); closeDrawer() })
             list = column(); sidebar.addView(ScrollView(host).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
             // Keep the direct drawer child stable: ViewDragHelper retains it while settling.

@@ -34,9 +34,10 @@ export function awayCards(todos: readonly Todo[], proposals: readonly Proposal[]
   return cards.slice(0, 3);
 }
 
-export function awayGreeting(gapMs: number): string {
+/** Compact "away 2 days" label for the welcome strip. */
+export function awayGap(gapMs: number): string {
   const mins = Math.round(gapMs / 60_000);
-  if (mins < 60) return `Welcome back. You were away about ${plural(mins, "minute")}.`;
+  if (mins < 60) return `away ${plural(mins, "minute")}`;
   const hours = Math.round(mins / 60);
-  return hours < 24 ? `Welcome back. You were away about ${plural(hours, "hour")}.` : `Welcome back. You were away about ${plural(Math.round(hours / 24), "day")}.`;
+  return hours < 24 ? `away ${plural(hours, "hour")}` : `away ${plural(Math.round(hours / 24), "day")}`;
 }
