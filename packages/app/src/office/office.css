@@ -30,7 +30,11 @@
 .office-legend li[data-zero] { opacity: .45; }
 .office-mini > .office-bar .office-legend li[data-zero] { display: none; }
 .office-legend .office-chip-clock { background: #cfc8e0; }
-.office-btn { min-width: 44px; min-height: 44px; margin-left: 4px; display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 2px solid var(--o-line); background: var(--o-bg); color: var(--o-ink); border-radius: 0; cursor: pointer; }
+.office-btn { min-width: 24px; min-height: 24px; margin-left: 4px; display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 4px; flex: none; white-space: nowrap; width: auto; height: 24px; padding: 0 4px; font-size: 12px; line-height: 1; border: 2px solid var(--o-line); background: var(--o-bg); color: var(--o-ink); border-radius: 0; cursor: pointer; }
+.office-btn > svg { flex: none; }
+.office-btn-count { font: 700 11px/1 ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .office-btn { min-width: 44px; min-height: 44px; } }
+.office-bar[data-no-legend] > button:first-of-type { margin-left: auto; }
 .office-btn:hover { background: #33303f; }
 .office-btn:focus-visible { outline: 2px solid var(--o-focus); outline-offset: 1px; }
 .office-overlay .office-bar { min-height: 36px; padding: 0 12px 0 16px; }

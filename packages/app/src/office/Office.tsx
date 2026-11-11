@@ -400,16 +400,16 @@ function RecentToggle({ recentOnly, hidden, onToggle }: { recentOnly: boolean; h
   return <button type="button" className="office-btn" aria-label={label} title={label} aria-pressed={!recentOnly} data-hidden-count={hidden} onClick={onToggle}><Icon size={13} aria-hidden="true" />{recentOnly && hidden > 0 && <span className="office-btn-count">{hidden}</span>}</button>;
 }
 
-function Legend({ model, children }: { model: OfficeModel; children?: ReactNode }) {
+function Legend({ model, showStates = true, children }: { model: OfficeModel; showStates?: boolean; children?: ReactNode }) {
   const counts = new Map<OfficeAgentState, number>();
   for (const a of model.agents) if (a.place !== "tray") counts.set(a.state, (counts.get(a.state) ?? 0) + 1);
   counts.set("done", model.tray.length);
-  return <footer className="office-bar">
+  return <footer className="office-bar" data-no-legend={showStates ? undefined : ""}>
     <strong>Office</strong><span className="office-summary" role="status">{model.summary}</span>
-    <ul className="office-legend" aria-label="Agent states">
+    {showStates && <ul className="office-legend" aria-label="Agent states">
       {STATES.map(s => <li key={s} data-state={s} data-zero={!counts.get(s) || undefined}><i aria-hidden="true" style={{ background: STATE_COLOR[s] }}>{STATE_CUE[s]}</i><span>{s === "done" ? "Finished" : STATE_LABEL[s]}</span><b>{counts.get(s) ?? 0}</b></li>)}
       {model.shrine && <li data-state="scheduled"><i aria-hidden="true" className="office-chip-clock">◷</i><span>Scheduled</span><b>{model.shrine.entries.length}</b></li>}
-    </ul>
+    </ul>}
     {children}
   </footer>;
 }
@@ -500,7 +500,7 @@ export function Office({ sessions, projects: allProjects, schedules, queuedThrea
   if (variant === "full") return <Overlay recent={recent} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />;
   return <section ref={card} className="office-mini" aria-label="Office" data-narrow={width > 0 && width < 560 ? "2" : width > 0 && width < 860 ? "1" : undefined}>
     <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} onSelectRoom={project => { setSelectedProject(project); expand(); }} renderTaskControls={renderTaskControls} model={model} layout={miniLayout} variant="mini" now={clock} height={stageH} onOpen={onOpenThread} onBackground={expand} />
-    <Legend model={model}>
+    <Legend model={model} showStates={false}>
       <RecentToggle recentOnly={recentOnly} hidden={hiddenCount} onToggle={toggleRecent} />
       <ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} />
       <button type="button" className="office-btn" aria-label="Expand office" title="Expand office" onClick={expand}><Maximize2 size={13} aria-hidden="true" /></button>

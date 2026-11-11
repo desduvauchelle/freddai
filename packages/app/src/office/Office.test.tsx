@@ -100,12 +100,9 @@ it("shows finished threads as in-tray folders that open the thread, and no idle 
   expect(screen.queryByRole("button", { name: /Title i/ })).toBeNull();
 });
 
-it("legend counts every state with text, and Enter on a character opens its thread", () => {
+it("mini card has no state legend, and Enter on a character opens its thread", () => {
   const open = mini();
-  const legend = screen.getByLabelText("Agent states");
-  expect(legend.textContent).toContain("Needs you1");
-  expect(legend.textContent).toContain("Working1");
-  expect(legend.textContent).toContain("Finished0");
+  expect(screen.queryByLabelText("Agent states")).toBeNull();
   fireEvent.keyDown(screen.getByRole("button", { name: /Title 1/ }), { key: "Enter" });
   expect(open).toHaveBeenCalledWith("1");
 });

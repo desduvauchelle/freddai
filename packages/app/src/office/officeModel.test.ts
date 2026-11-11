@@ -18,7 +18,7 @@ it("maps run states to agent states, places, cue and label", () => {
   expect(by.w).toMatchObject({ state: "working", place: "desk", stateLabel: "Working" });
   expect(by.n).toMatchObject({ state: "needs-you", place: "lounge", cue: "?", tag: 1 });
   expect(by.f).toMatchObject({ state: "failed", place: "desk", cue: "!" });
-  expect(by.s).toMatchObject({ state: "starting", place: "lobby" });
+  expect(by.s).toMatchObject({ state: "starting", place: "desk", stateLabel: "Starting" });
   expect(by.d).toMatchObject({ state: "done", place: "tray" });
   expect(by.r).toMatchObject({ state: "review", place: "tray" });
   expect(by.i).toBeUndefined();
@@ -56,6 +56,11 @@ it("sends settled threads with queued runs to the lobby", () => {
   const m = officeModel([thread("q", { status: "done" }), thread("p", { status: "done" })], projects, NOW, [], new Set(["q"]));
   expect(m.agents.find(a => a.threadId === "q")).toMatchObject({ place: "lobby", stateLabel: "Queued" });
   expect(m.tray.map(a => a.threadId)).toEqual(["p"]);
+});
+
+it("a starting thread sits at a desk, not in the lobby", () => {
+  const m = officeModel([thread("s", { status: "starting" })], projects, NOW);
+  expect(m.agents[0]).toMatchObject({ state: "starting", place: "desk", stateLabel: "Starting" });
 });
 
 it("counts scoreboard totals over every live thread of the project, not just the lingering ones", () => {

@@ -35,7 +35,7 @@ export type OfficeModel = {
   cards: OfficeCard[];
   /** One room per project, in the order of the `projects` array. Never filtered or re-sorted by activity. */
   rooms: OfficeRoom[];
-  /** Every character: desk (working/failed), lounge (needs-you), lobby (starting/queued) and finished threads heading for the tray. */
+  /** Every character: desk (working/starting/failed), lounge (needs-you), lobby (queued) and finished threads heading for the tray. */
   agents: OfficeAgent[];
   /** Finished threads still inside the linger window, newest first; each is a folder in the in-tray. */
   tray: OfficeAgent[];
@@ -83,11 +83,11 @@ export function projectTotals(sessions: readonly Session[], projects: readonly P
 
 export const totalsLabel = (t: ProjectTotals) => `${t.msgs} msg${t.msgs === 1 ? "" : "s"} · ${t.threads} thread${t.threads === 1 ? "" : "s"} · ${t.working} working`;
 
-const PLACE: Partial<Record<OfficeAgentState, OfficePlace>> = { working: "desk", failed: "desk", "needs-you": "lounge", starting: "lobby", review: "tray", done: "tray" };
+const PLACE: Partial<Record<OfficeAgentState, OfficePlace>> = { working: "desk", failed: "desk", "needs-you": "lounge", starting: "desk", review: "tray", done: "tray" };
 
 /**
  * Threads -> characters, one room per project. Pure; `now` is injectable.
- * `queued` lists thread ids that have queued runs: an otherwise settled thread with one waits in the lobby instead of leaving.
+ * `queued` lists thread ids that have queued runs: an otherwise settled thread with one waits in the lobby instead of leaving (a first-run `starting` thread goes straight to its desk).
  */
 export function officeModel(sessions: readonly Session[], projects: readonly Project[], now: number = Date.now(), schedules: readonly OfficeSchedule[] = [], queued: ReadonlySet<string> = new Set(), proposals: readonly OfficeProposal[] = []): OfficeModel {
   const byId = new Map(projects.map(p => [p.id, p] as const));
@@ -105,9 +105,8 @@ export function officeModel(sessions: readonly Session[], projects: readonly Pro
   for (const t of sessions) {
     const project = byId.get(t.project);
     if (!project || project.kind === "commander" || !live(t)) continue;
-    let state = agentState(t), label = STATE_LABEL[state] as string;
-    if ((state === "review" || state === "done" || state === "idle") && queued.has(t.id)) { state = "starting"; label = "Queued"; }
-    const place = PLACE[state];
+    let state = agentState(t), label = STATE_LABEL[state] as string, place = PLACE[state];
+    if ((state === "review" || state === "done" || state === "idle") && queued.has(t.id)) { state = "starting"; label = "Queued"; place = "lobby"; }
     if (!place) continue;
     if (place === "tray" && now - t.updated > OFFICE_LINGER_MS) continue;
     found.push({ id: `agent:${t.id}`, threadId: t.id, title: t.title, projectId: project.id, projectName: project.name, projectColor: project.color, state, place, updated: t.updated, stateLabel: label, cue: STATE_CUE[state], variant: hash(t.id) % 4, tag: null });

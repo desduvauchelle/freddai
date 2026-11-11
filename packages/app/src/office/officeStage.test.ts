@@ -12,12 +12,12 @@ const pending = { id: 1 } as never;
 const thread = (id: string, over: Partial<Session> = {}): Session => ({ id, title: id, project: "alpha", account: "a", status: "running", updated: NOW, provider_id: null, messages: [], pending: null, error: null, ...over });
 const resolve = (sessions: Session[], memory = newSlotMemory()) => resolveDestinations(officeModel(sessions, projects, NOW), layout, memory);
 
-it("seats working agents at desks, failed ones standing, waiting ones in the lounge and starting ones on benches", () => {
+it("seats working agents at desks, failed ones standing, waiting ones in the lounge and starting ones at desks", () => {
   const d = resolve([thread("w"), thread("f", { status: "failed" }), thread("n", { pending }), thread("s", { status: "starting" }), thread("done", { status: "done" })]);
   expect(d.dest.get("agent:w")).toMatchObject({ pose: "seated", node: expect.stringMatching(/^seat:0:/) });
   expect(d.dest.get("agent:f")).toMatchObject({ pose: "stand", node: expect.stringMatching(/^stand:0:/) });
   expect(d.dest.get("agent:n")).toEqual({ node: "lounge:0", pose: "cup" });
-  expect(d.dest.get("agent:s")).toEqual({ node: "lobby:0", pose: "sit" });
+  expect(d.dest.get("agent:s")).toMatchObject({ pose: "seated", node: expect.stringMatching(/^seat:0:/) });
   expect(d.dest.has("agent:done")).toBe(false);
 });
 
