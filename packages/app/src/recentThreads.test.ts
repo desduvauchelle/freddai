@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { COMPANION_RECENT_PAGING, RECENT_PAGING, asThreadNavView, recentLimit, selectRecentThreads } from './recentThreads';
+import { COMPANION_RECENT_PAGING, DESKTOP_RECENT_PAGING, RECENT_PAGING, asThreadNavView, recentLimit, selectRecentThreads } from './recentThreads';
 
 const t = (id: string, updated: number, extra: Record<string, unknown> = {}) => ({ id, updated, status: 'done', ...extra });
 const many = (n: number) => Array.from({ length: n }, (_, i) => t(`t${String(i).padStart(2, '0')}`, i + 1));
@@ -48,12 +48,14 @@ it('defaults unknown stored views to projects', () => {
   expect(asThreadNavView('x')).toBe('projects'); expect(asThreadNavView(null)).toBe('projects');
 });
 
-it('takes page sizes per caller: desktop 5/+10, companion Recent view 25/+25', () => {
+it('takes page sizes per caller: companion section 5/+10, desktop 20/+20, companion Recent view 25/+25', () => {
   const all = Array.from({ length: 80 }, (_, i) => t(`t${i}`, i));
   expect(RECENT_PAGING).toEqual({ initial: 5, step: 10 });
   expect(selectRecentThreads(all).threads).toHaveLength(5);
   expect(selectRecentThreads(all, 1, RECENT_PAGING).threads).toHaveLength(15);
   expect([0, 1, 2, 3].map(p => selectRecentThreads(all, p, COMPANION_RECENT_PAGING).threads.length)).toEqual([25, 50, 75, 80]);
+  expect(DESKTOP_RECENT_PAGING).toEqual({ initial: 20, step: 20 });
+  expect([0, 1, 2, 3, 4].map(p => selectRecentThreads(all, p, DESKTOP_RECENT_PAGING).threads.length)).toEqual([20, 40, 60, 80, 80]);
   expect(selectRecentThreads(all, 0, COMPANION_RECENT_PAGING)).toMatchObject({ remaining: 55, expanded: false });
   expect(recentLimit(2, { initial: 3, step: 4 })).toBe(11);
 });

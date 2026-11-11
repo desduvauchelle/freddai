@@ -14,7 +14,8 @@ import { CommanderTrailingContext } from "./TrailingContext";
 import { useCommander } from "./useCommander";
 import "./commander.css";
 
-export function CommanderView({ projects, schedules = [], threads = [], renderConversation, onSelectThread, onOpenThread, onCreateThread, onManageSchedules, onBack }: {
+export function CommanderView({ projects, schedules = [], threads = [], renderConversation, onSelectThread, onOpenThread, onCreateThread, onManageSchedules, onBack, fallbackControls }: {
+  fallbackControls?: ReactNode;
   projects: Project[]; schedules?: Schedule[]; threads?: Session[];
   /** Existing conversation (transcript + composer) for the commander thread; null when it is not ready/selected. */
   renderConversation: (threadId: string) => ReactNode;
@@ -100,6 +101,7 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
         : <div className="commander-empty-chat"><p>{state ? `Say hello to ${name}. Your first message starts the conversation.` : "Loading…"}</p>{tray}</div>}
 
       {!threadId && state && <form className="commander-fallback-composer" onSubmit={e => void send(e)}>
+        {fallbackControls}
         <textarea aria-label={`Message to ${name}`} placeholder={`Message ${name}`} rows={2} value={text} disabled={busy} onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
         <button type="submit" className="commander-send" disabled={busy || !text.trim()} aria-label="Send"><Send size={14} aria-hidden="true" />{busy ? "Starting…" : "Send"}</button>

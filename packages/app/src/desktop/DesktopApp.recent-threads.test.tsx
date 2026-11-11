@@ -34,30 +34,33 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const rows = () => within(document.querySelector<HTMLElement>('[aria-label="Thread list"]')!).queryAllByText(/^Thread \d\d$/).map(e => e.textContent);
 const toggle = (name: string) => fireEvent.click(within(screen.getByRole("group", { name: "Thread view" })).getByRole("button", { name: `${name} view` }));
 
-it("defaults to Projects and the Recent toggle shows the five newest threads across projects with project tags", async () => {
+it("defaults to Projects and the Recent toggle shows the twenty newest threads across projects with project tags", async () => {
+  fixture.count = 45;
   render(<DesktopApp />);
-  await within(screen.getByLabelText("Thread list")).findByText("Thread 19");
+  await within(screen.getByLabelText("Thread list")).findByText("Thread 44");
   const group = screen.getByRole("group", { name: "Thread view" });
   expect(within(group).getByRole("button", { name: "Projects view" }).getAttribute("aria-pressed")).toBe("true");
   toggle("Recent");
-  expect(rows()).toEqual(["Thread 19", "Thread 18", "Thread 17", "Thread 16", "Thread 15"]);
+  expect(rows()).toEqual(Array.from({ length: 20 }, (_, i) => `Thread ${44 - i}`));
   expect(screen.queryByText("Archived thread")).toBeNull();
-  expect(screen.getAllByText(/^(Alpha|Beta) project$/).length).toBeGreaterThanOrEqual(5);
+  expect(screen.getAllByText(/^(Alpha|Beta) project$/).length).toBeGreaterThanOrEqual(20);
   expect(localStorage.getItem("freddai.threadNavView")).toBe('"recent"');
 });
 
-it("Show more reveals ten more per click and Show less collapses back to five", async () => {
+it("Show more reveals twenty more per click and Show less collapses back to twenty", async () => {
+  fixture.count = 45;
   render(<DesktopApp />);
-  await within(screen.getByLabelText("Thread list")).findByText("Thread 19");
+  await within(screen.getByLabelText("Thread list")).findByText("Thread 44");
   toggle("Recent");
-  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
-  expect(rows()).toHaveLength(15);
-  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
   expect(rows()).toHaveLength(20);
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  expect(rows()).toHaveLength(40);
+  fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+  expect(rows()).toHaveLength(45);
   expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Show less" }));
   // Departing rows linger briefly for their exit animation.
-  await waitFor(() => expect(rows()).toHaveLength(5));
+  await waitFor(() => expect(rows()).toHaveLength(20));
   expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Show less" })).toBeNull();
 });
@@ -91,4 +94,16 @@ it('shows one Commander entry and hides its conversations and delegated work in 
   toggle('Recent');
   expect(screen.queryByText('Commander main chat')).toBeNull();
   expect(within(screen.getByLabelText('Thread list')).queryByText('Hidden delegated work')).toBeNull();
+});
+
+it("explains the missing project after typing a new-thread draft", async () => {
+  render(<DesktopApp />);
+  fireEvent.click(await screen.findByRole('button', { name: /^New thread$/ }));
+  const prompt = await screen.findByRole('textbox', { name: 'Task prompt' });
+  expect(screen.queryByText('Choose a project above to send your message.')).toBeNull();
+  fireEvent.change(prompt, { target: { value: 'Help with this task' } });
+  expect(screen.getByText('Choose a project above to send your message.').getAttribute('role')).toBe('status');
+  expect(screen.getByRole('button', { name: /^Start thread$/ }).getAttribute('aria-describedby')).toBe('new-thread-project-required');
+  fireEvent.change(prompt, { target: { value: '  ' } });
+  expect(screen.queryByText('Choose a project above to send your message.')).toBeNull();
 });

@@ -83,3 +83,39 @@
 - **Found:** 2026-11-10, while adding the new `pipelens` project to Freddai and the HOT workspace from an agent thread
 - **Decision needed:** Should agents be allowed to add projects and edit workspaces over MCP, or should that stay a UI-only action (possibly behind an approval)?
 - **Context:** /Users/denisduvauchelle/Documents/code/freddai/crates/core/src/mcp.rs exposes only context, list, read_thread, schedule, start_task and share_preview tools. To add a project an agent has to write raw JSON to `host.sock` (`import_project`, then `save_preferences` with the whole `workspaces` array, which replaces every workspace and can clobber a concurrent edit). Proposed: add `freddai_add_project {path, color?, workspace?}` backed by `Runtime::import_project` (crates/core/src/runtime.rs), plus a host-side "add project to workspace" operation that appends one id instead of replacing the array.
+
+### Dashboard call review sheet: swipe-dismiss while sending, and late errors
+- **Kind:** bug · **Severity:** low
+- **Found:** 2026-11-11, while verifying the compact dashboard call indicator redesign
+- **Decision needed:** Should an error that arrives as the call ends stay visible after the call is gone (where: header, toast)?
+- **Context:** (1) `/Users/denisduvauchelle/Documents/code/freddai/packages/app/src/desktop/DashboardCall.tsx`: the dismiss-review listener ignores dismissal while a send is in flight (`sendingRef`), but on native the page sheet is already swiped away, so mode stays `callReview` and the review card fills the dashboard's embedded web view until the send finishes. Proposed: on `navBack` during sending, defer the dismissal and apply it when the send settles, or re-present the sheet. (2) Same file returns early when the call is not active, so `snapshot.error` / `syncError` present at the moment the call ends is never shown. (3) iOS: between a swipe's `navBack` and the web sending `dashboard` mode, a phase-change re-send of `callReview` can re-present the sheet (`/Users/denisduvauchelle/Documents/code/freddai/apps/native/src-tauri/plugins/native-shell/ios/Sources/NativeShellPlugin.swift` `openThreadSheet`); the existing `new` sheet flow has the same exposure. (4) Android: the header wave animation in `NativeShellPlugin.kt` (`callWaveAnimator`) stops on view detach when the drawer is re-parented into/out of the sheet and only restarts on the next `set_mode`.
+
+### Reconnect on thread/queue auth errors + typed auth_expired
+- **Kind:** tech-debt · **Severity:** med
+- **Found:** 2026-11-11, while adding the Codex Reconnect button
+- **Decision needed:** none
+- **Context:** Reconnect (packages/app/src/desktop/ReconnectButton.tsx, isAuthError in packages/app/src/desktop/reconnect.ts) is wired into the usage card, AccountSetup rows and the Bug walk failure card only. Thread run errors (`session.error`) and queue errors in /Users/denisduvauchelle/Documents/code/freddai/packages/app/src/desktop/MessageQueue.tsx still show raw text like "refresh token was already used"; give them the same isAuthError + ReconnectButton treatment. Auth errors also cross the Tauri boundary as plain strings, and the UI string-matches what crates/core/src/usage.rs `is_auth_error` already classified. Replace this with a typed `kind: "auth_expired"` on the usage/run error.
+
+### Empty workspaces cannot receive dashboard drops
+- **Kind:** missing-capability · **Severity:** low
+- **Found:** 2026-11-11, while adding dnd-kit cross-workspace drag-and-drop to the dashboard projects section
+- **Decision needed:** Should a workspace with zero projects render as an empty group on the dashboard (so it can be a drop target), or only while a drag is in progress?
+- **Context:** `/Users/denisduvauchelle/Documents/code/freddai/packages/app/src/mobile/dashboard-projects.ts` `dashboardProjectGroups()` omits workspaces with no projects, so `/Users/denisduvauchelle/Documents/code/freddai/packages/app/src/desktop/HomeView.tsx` never renders a droppable for them. The "Other projects" group already appears as an empty drop zone during a drag; the same approach (render empty workspace groups while `activeId` is set) would make them droppable. Also note cross-workspace drops are no-ops in non-native browser preview or when `preferences.workspaces` is absent.
+
+### Awake loop repeatedly fails: full `snapshot` host reply hits the 512 MB cap
+- **Kind:** bug · **Severity:** med
+- **Found:** 2026-11-11, while diagnosing the browser-panel localhost crash (log `~/Library/Logs/Freddai/native.previous.log`)
+- **Decision needed:** Should `awake` stop calling the full `snapshot` RPC and use `snapshot_since`/a scoped read instead, or should the host serve a trimmed snapshot (no message bodies) for that caller?
+- **Context:** Every few seconds the log shows `{"event":"host_call.invalid_reply","method":"snapshot","bytes":536870912,"cap":536870912,...}` followed by `awake: cannot read host state: Host reply for `snapshot` exceeded 536870912 bytes and was truncated` (`/Users/denisduvauchelle/Documents/code/freddai/apps/native/src-tauri/src/awake.rs:122`, cap in `/Users/denisduvauchelle/Documents/code/freddai/crates/core/src/host.rs:22`). With ~578 sessions the full snapshot exceeds `MAX_HOST_MESSAGE_BYTES`, so the awake feature silently never gets host state (only an `eprintln`, nothing surfaced to the user), and the host serializes 512 MB each time. The companion `/v1/snapshot` path is fine (~317 KB, scoped). Proposed: switch `awake.rs` to the scoped/incremental snapshot the companion server uses, and surface repeated `host_call.invalid_reply` in the UI per the "failures must be loud" rule.
+
+### Companion apps: usage ring, colour and reset time in the agent picker
+- **Kind:** missing-capability · **Severity:** low
+- **Found:** 2026-11-11, while fixing the desktop composer/thread-header account pickers (bug walk 2026-11-11 items 1 and 3)
+- **Decision needed:** Should the iOS/Android native pickers (and the mobile web `<select aria-label="Agent">`) get a custom sheet that shows per-account colour, usage ring and reset time, or is the plain list acceptable on phones?
+- **Context:** Desktop now renders `packages/app/src/desktop/AccountPicker.tsx` with the footer's colour, `UsageRing` and "Week N% left · resets …" line per account. Mobile web (`packages/app/src/mobile/MobileApp.tsx` ~1389) uses a native `<select>`, which cannot render rings; Android (`apps/native/src-tauri/plugins/native-shell/android/src/main/java/com/freddai/shell/DashboardView.kt:135-152`) and iOS (`.../ios/Sources/DashboardView.swift`) use native pickers. Proposed: a bottom-sheet list driven by the companion snapshot's usage data (helpers in `packages/app/src/mobile/product-usage.ts`), reusing the desktop row layout. Account ordering already follows the desktop `account-order.json` once the companion server applies it.
+
+### Mobile usage footer shows nothing for monthly-only providers (Copilot)
+- **Kind:** bug · **Severity:** low
+- **Found:** 2026-11-11, while adding the GitHub Copilot CLI provider
+- **Decision needed:** Should the mobile footer fall back to the limiting window (like desktop) when a provider has no 5h/weekly window?
+- **Context:** /Users/denisduvauchelle/Documents/code/freddai/packages/app/src/mobile/product-usage.ts:31-32 and /Users/denisduvauchelle/Documents/code/freddai/packages/app/src/mobile/ProductUsageFooter.tsx:22-23 only render `summary.session` and `summary.weekly`. Copilot's quota is one monthly "Premium requests" window tagged `other` (crates/core/src/usage.rs `parse_copilot`), so the mobile card stays empty. Desktop already falls back to `summary.limiting` in packages/app/src/desktop/useAccountUsage.ts:76; mirror that in product-usage.ts (e.g. a third row, or substitute the limiting window for the Week row when weekly is absent).

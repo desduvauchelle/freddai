@@ -1,10 +1,12 @@
 import { ProjectTile } from "./ProjectTile";
+import { formatProjectName } from "../projectName";
 import { dashboardProjectGroups } from "../mobile/dashboard-projects";
 import { DashboardSelect } from "./DashboardSelect";
 import { Dot, labelStatus } from "./ThreadStatus";
 import { newThreadDraftKey, useDraft, setDraft } from "./drafts";
 import { agentDisplayName } from "./types";
 import { AgentControls } from "./AgentControls";
+import { BugWalkButton } from "./bug-walk/BugWalkButton";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
 import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, GripVertical, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -12,8 +14,7 @@ import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
 import { Permission } from "./AgentRequest";
 import { DaySummaries } from "./DaySummaries";
-import { Dormouse } from "./Dormouse";
-import { MASCOT_PRIORITY, mascotState } from "./mascot-state";
+import { mascotState } from "./mascot-state";
 import { MicButton, VoiceNotice } from "./VoiceControls";
 import { ThreadList } from "./ThreadList";
 import { joinDictation } from "./voice";
@@ -23,6 +24,10 @@ import { homeRunState } from "./home-state";
 import { Office, type OfficeProposal, type OfficeSchedule } from "../office/index";
 import { CommanderCluster } from "./commander/CommanderCluster";
 import { ProjectSheet } from "./ProjectSheet";
+import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, pointerWithin, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent, type CollisionDetection, type DragStartEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { dropOutcome, withEmptyGroups, type DropPosition } from "./workspace-order";
 import "./home.css";
 import { OfficeOrder } from "../office/OfficeOrder";
 
@@ -64,6 +69,7 @@ export function homeProjects(sessions: readonly Session[], projects: readonly Pr
 export const needsYou = (sessions: readonly Session[]) => sessions.filter(t => isLive(t) && !!t.pending).sort(compareThreadRecency);
 
 export type HomeViewProps = {
+  projectNameUppercase?: boolean;
   homeAccount?: string;
   onHomeAccount?: (account: string) => void;
   native?: boolean;
@@ -75,6 +81,8 @@ export type HomeViewProps = {
   workspaces?: Workspace[];
   accounts: Account[];
   onMoveProject?: (id: string, target: string, after: boolean) => void;
+  /** Drop into another workspace (null = "Other projects", i.e. no workspace), next to `position.targetProjectId` when given. */
+  onMoveProjectToWorkspace?: (projectId: string, workspaceId: string | null, position?: DropPosition) => void;
   /** Injectable clock for tests; defaults to Date.now(). */
   now?: number;
   /** False in the browser preview or while a launch is already in flight. */
@@ -100,7 +108,8 @@ export type HomeViewProps = {
   commander?: { onOpen: () => void; onSend: (text: string) => Promise<void>; proposals?: readonly OfficeProposal[]; onProposalRespond?: (id: string, approve: boolean) => Promise<unknown> };
 };
 
-function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpenThread, read }: {
+function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpenThread, read, uppercase }: {
+  uppercase?: boolean;
   read: Record<string, number>; entry: HomeProject; open: boolean; canCreate: boolean; plan: HomeLaunchPlan; onToggle: () => void; onCreate: (prompt: string) => Promise<string | void>; onOpen: () => void; onOpenThread: (id: string) => void;
 }) {
   const { project } = entry;
@@ -129,7 +138,7 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setDictating(false); }
   }
-  return <ProjectTile project={project} hasThreads={!!entry.latest} counts={entry}
+  return <ProjectTile uppercase={uppercase} project={project} hasThreads={!!entry.latest}
     recent={[...entry.pending, ...entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))].slice(0, 3)}
     onOpen={onOpen} onOpenThread={id => { if (!id.startsWith("pending:")) onOpenThread(id); }} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <MicButton target={false} onText={t => void dictate(t)} />
@@ -153,15 +162,98 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
   </ProjectTile>;
 }
 
-export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, homeAccount = "", onHomeAccount }: HomeViewProps) {
-  const grid = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ id: string; target: string; after: boolean } | null>(null);
-  const [drop, setDrop] = useState<{ id: string; target: string; after: boolean } | null>(null);
-  const clearDrag = () => { drag.current = null; setDrop(null); };
+const groupKey = (id: string) => id ? `workspace:${id}` : "other";
+// Prefer the card under the pointer (precise reorder), then the group under it (empty groups), else nearest corners.
+const collision: CollisionDetection = args => {
+  const hits = pointerWithin(args);
+  if (hits.length) { const cards = hits.filter(h => !String(h.id).startsWith("workspace:") && h.id !== "other"); return cards.length ? cards : hits; }
+  return closestCorners(args);
+};
+const workspaceOfKey = (key: string) => key === "other" ? null : key.slice("workspace:".length);
+
+function SortableCard({ id, name, reorderable, onAltMove, children }: { id: string; name: string; reorderable: boolean; onAltMove: (offset: -1 | 1) => void; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, disabled: !reorderable, transition: { duration: 200, easing: "ease" } });
+  return <div ref={setNodeRef} className="home-project-card" data-home-project={id} data-dragging={isDragging ? "true" : undefined}
+    style={{ transform: CSS.Transform.toString(transform), transition: transition ?? undefined }}>
+    {reorderable && <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners} className="project-drag-handle home-project-reorder" aria-label={`Reorder ${name}`}
+      title="Drag to reorder or move to another workspace · Alt+↑/↓ to move"
+      onKeyDown={e => {
+        if (e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) { e.preventDefault(); onAltMove(e.key === "ArrowUp" ? -1 : 1); return; }
+        listeners?.onKeyDown?.(e);
+      }}><GripVertical size={13} /></button>}
+    {children}
+  </div>;
+}
+
+function DropGroup({ groupId, name, ids, over, children }: { groupId: string; name: string | null; ids: string[]; over: boolean; children: ReactNode }) {
+  const { setNodeRef } = useDroppable({ id: groupId });
+  return <section ref={setNodeRef} className="home-workspace-group" aria-label={name ?? undefined} data-over={over ? "true" : undefined}>
+    {name && <h3 className="home-workspace-heading">{name}</h3>}
+    <SortableContext items={ids} strategy={rectSortingStrategy}><div className="home-tiles">{children}</div></SortableContext>
+  </section>;
+}
+
+export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, onMoveProjectToWorkspace, homeAccount = "", onHomeAccount, projectNameUppercase = false }: HomeViewProps) {
+  const [items, setItems] = useState<Record<string, string[]> | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const origin = useRef("");
+  const dragging = useRef(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const clock = now ?? Date.now();
   const tiles = useMemo(() => homeProjects(sessions, projects, clock, pendingLaunches), [sessions, projects, clock, pendingLaunches]);
   const entries = new Map(tiles.map(entry => [entry.project.id, entry]));
-  const groups = dashboardProjectGroups({ projects, workspaces });
+  const baseGroups = dashboardProjectGroups({ projects, workspaces });
+  const layoutKey = JSON.stringify([projects.map(p => p.id), workspaces?.map(w => w.projects)]);
+  // Optimistic layout: kept after a drop until the saved order/membership arrives (or 1.5s passes) so the card never snaps back.
+  useEffect(() => {
+    if (dragging.current) return;
+    setItems(null);
+  }, [layoutKey]);
+  const baseLayout = useMemo(() => {
+    const map: Record<string, string[]> = Object.fromEntries(baseGroups.map(g => [groupKey(g.id), g.projects.map(p => p.id)]));
+    return withEmptyGroups(map, (workspaces ?? []).map(w => groupKey(w.id)), !!workspaces?.length);
+  }, [layoutKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const layout = items ?? baseLayout;
+  // While dragging, every workspace (even empty ones) and "Other projects" is a drop target.
+  const groups = [
+    ...baseGroups.map(g => ({ key: groupKey(g.id), id: g.id, name: g.name })),
+    ...(activeId ? [
+      ...(workspaces ?? []).filter(w => !baseGroups.some(g => g.id === w.id)).map(w => ({ key: groupKey(w.id), id: w.id, name: w.name as string | null })),
+      ...(workspaces?.length && !baseGroups.some(g => !g.id) ? [{ key: "other", id: "", name: "Other projects" as string | null }] : []),
+    ] : []),
+  ];
+  const findContainer = (id: string, map: Record<string, string[]>) => id in map ? id : Object.keys(map).find(key => map[key].includes(id));
+  const dragStart = (e: DragStartEvent) => { dragging.current = true; origin.current = findContainer(String(e.active.id), baseLayout) ?? ""; setItems(baseLayout); setActiveId(String(e.active.id)); };
+  const dragOver = ({ active, over }: DragOverEvent) => {
+    if (!over || !items) return;
+    const id = String(active.id), overId = String(over.id);
+    const from = findContainer(id, items), to = findContainer(overId, items);
+    if (!from || !to || from === to) return;
+    const list = items[to].filter(p => p !== id);
+    const overIndex = overId in items ? list.length : list.indexOf(overId);
+    const rect = active.rect.current.translated, below = !!rect && !!over.rect && rect.left > over.rect.left + over.rect.width / 2 - 1 && !(overId in items);
+    const at = overIndex < 0 ? list.length : overIndex + (below ? 1 : 0);
+    setItems({ ...items, [from]: items[from].filter(p => p !== id), [to]: [...list.slice(0, at), id, ...list.slice(at)] });
+  };
+  const dragEnd = ({ active, over }: DragEndEvent) => {
+    dragging.current = false; setActiveId(null);
+    const id = String(active.id);
+    if (!items || !over) { setItems(null); return; }
+    const to = findContainer(id, items);
+    if (!to) { setItems(null); return; }
+    let list = items[to];
+    const overId = String(over.id);
+    if (!(overId in items) && findContainer(overId, items) === to && overId !== id) {
+      const target = list.indexOf(overId), index = list.indexOf(id);
+      if (target >= 0 && index !== target) list = arrayMove(list, index, target);
+    }
+    setItems({ ...items, [to]: list });
+    setTimeout(() => { if (!dragging.current) setItems(null); }, 1500);
+    const { crossed, position } = dropOutcome({ id, from: origin.current, to, list });
+    if (crossed) onMoveProjectToWorkspace?.(id, workspaceOfKey(to), position);
+    else if (position) onMoveProject?.(id, position.targetProjectId, position.after);
+  };
+  const dragCancel = () => { dragging.current = false; setActiveId(null); setItems(null); };
   const launchAccounts = accounts.filter(account => projects.some(project => { if (project.kind === "commander") return false; const plan = resolveLaunch(project.id); return plan.ok && plan.account === account.id; }));
   const selectedAccount = accounts.find(account => account.id === homeAccount);
   const modelAccounts = selectedAccount ? [selectedAccount] : launchAccounts.slice(0, 1);
@@ -179,16 +271,19 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? id;
   const summary = [working ? `${working} working` : "", waiting.length ? `${waiting.length} need${waiting.length === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · ") || "All quiet";
 
+  const renderTile = (entry: HomeProject) => <Tile uppercase={projectNameUppercase} read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
+    onToggle={() => onNewThread ? onNewThread(entry.project.id) : setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
+    onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => setSheet({ project: entry.project.id, thread: null })} />;
+
   return <section className="home-view" aria-label="Home">
     <div className="home-status">
-      <Dormouse size={56} priority={MASCOT_PRIORITY.hero} mood={mood.mood} label={mood.label} pauseControl={false} />
       <div>
         <strong role="status">{mood.label}</strong>
         <span>{summary}</span>
       </div>
     </div>
 
-    {commander && <CommanderCluster onOpen={commander.onOpen} onSend={commander.onSend} />}
+    {commander && <CommanderCluster onOpen={commander.onOpen} onSend={commander.onSend} bugWalk={native ? <BugWalkButton className="commander-circle-button" /> : undefined} />}
 
     <Office proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
       onSend={text => onCreateThread(project, text)} renderMic={(onText, disabled) => <><MicButton target={false} disabled={disabled} onListening={onListening} label={`Give an order to ${projectName(project)}`} onText={onText} /><VoiceNotice target /></>} />} variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
@@ -202,50 +297,19 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
           {onHomeAccount && <DashboardSelect label="Agent provider for dashboard threads" displayValue={modelAccounts[0] ? agentDisplayName(modelAccounts[0]) : 'Choose provider'} value={selectedAccount?.id || ''} disabled={!canCreate || !accounts.length}
             onChange={onHomeAccount} options={[{ value: '', label: 'Project defaults' }, ...accounts.map(account => ({ value: account.id, label: agentDisplayName(account) }))]} />}
           {onHomeSelection && modelAccounts.map(account => <AgentControls key={account.id} inline account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="all new dashboard tasks" />)}
+          
       </div>
       </div>
-      {tiles.length ? <div ref={grid}>
-        {groups.map(group => <section key={group.id} className="home-workspace-group" aria-label={group.name ?? undefined}>
-        {group.name && <h3 className="home-workspace-heading">{group.name}</h3>}
-        <div className="home-tiles">
-        {group.projects.map((project, index) => { const entry = entries.get(project.id)!; return <div key={entry.project.id} className="home-project-card" data-home-project={entry.project.id}
-          data-drop={drop?.target === entry.project.id && drop.id !== entry.project.id ? (drop.after ? "after" : "before") : undefined}>
-          {onMoveProject && <button type="button" className="project-drag-handle home-project-reorder" aria-label={`Reorder ${entry.project.name}`}
-            title="Drag to reorder · Alt+↑/↓ to move"
-            onKeyDown={e => {
-              if (!e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
-              e.preventDefault();
-              const offset = e.key === "ArrowUp" ? -1 : 1;
-              const target = group.projects[index + offset];
-              if (target) onMoveProject(entry.project.id, target.id, offset > 0);
-            }}
-            onPointerDown={e => {
-              if (e.button !== 0) return;
-              e.preventDefault();
-              e.currentTarget.setPointerCapture(e.pointerId);
-              drag.current = { id: entry.project.id, target: entry.project.id, after: false };
-            }}
-            onPointerMove={e => {
-              if (!e.currentTarget.hasPointerCapture(e.pointerId) || !drag.current) return;
-              const card = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-home-project]");
-              if (!card || !grid.current?.contains(card)) return;
-              const bounds = card.getBoundingClientRect();
-              const next = { id: entry.project.id, target: card.dataset.homeProject!, after: e.clientX > bounds.left + bounds.width / 2 };
-              drag.current = next; setDrop(next);
-              card.scrollIntoView?.({ block: "nearest" });
-            }}
-            onPointerUp={e => {
-              if (drag.current && grid.current?.contains(document.elementFromPoint(e.clientX, e.clientY))) {
-                onMoveProject(drag.current.id, drag.current.target, drag.current.after);
-              }
-              clearDrag();
-            }}
-            onPointerCancel={clearDrag} onLostPointerCapture={clearDrag}><GripVertical size={13} /></button>}
-          <Tile read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
-          onToggle={() => onNewThread ? onNewThread(entry.project.id) : setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
-          onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => setSheet({ project: entry.project.id, thread: null })} /></div>; })}
-        </div></section>)}
-      </div> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
+      {tiles.length ? <DndContext sensors={sensors} collisionDetection={collision} onDragStart={dragStart} onDragOver={dragOver} onDragEnd={dragEnd} onDragCancel={dragCancel}>
+        {groups.map(group => { const ids = (layout[group.key] ?? []).filter(id => entries.has(id));
+          return <DropGroup key={group.key} groupId={group.key} name={group.name} ids={ids} over={!!activeId && !!items && findContainer(activeId, items) === group.key && origin.current !== group.key}>
+          {ids.map((id, index) => { const entry = entries.get(id)!;
+            return <SortableCard key={id} id={id} name={entry.project.name} reorderable={!!onMoveProject || !!onMoveProjectToWorkspace}
+              onAltMove={offset => { const target = ids[index + offset]; if (target) onMoveProject?.(id, target, offset > 0); }}>
+              {renderTile(entry)}</SortableCard>; })}
+          </DropGroup>; })}
+        <DragOverlay>{activeId && entries.get(activeId) ? <div className="home-project-card home-project-card--overlay">{renderTile(entries.get(activeId)!)}</div> : null}</DragOverlay>
+      </DndContext> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
     </section>
 
     <section className="home-section" aria-label="Needs you">
@@ -253,7 +317,7 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
       {waiting.length ? <div className="home-queue">
         <ThreadList threads={waiting} renderRow={thread => <article className="home-request" aria-label={`Request in ${thread.title}`}>
           <header>
-            <span className="home-request-project">{projectName(thread.project)}</span>
+            <span className="home-request-project">{formatProjectName(projectName(thread.project), projectNameUppercase)}</span>
             <strong title={thread.title}>{thread.title}</strong>
             <Button type="button" variant="ghost" size="sm" onClick={() => onOpenThread(thread.id)}>Open thread<ArrowUpRight size={12} aria-hidden="true" /></Button>
           </header>
@@ -264,11 +328,12 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
       </div> : <p className="home-empty">Nothing is waiting on you.</p>}
     </section>
 
-    <section className="home-summaries" aria-label="Daily summaries">
+    <section className="home-section home-summaries" aria-label="Daily summaries">
+      <div className="home-section-title"><span>Daily summaries</span></div>
       <DaySummaries now={now === undefined ? undefined : new Date(now)} />
     </section>
 
-    {sheet && sheetEntry && <ProjectSheet project={sheetEntry.project} sessions={sheetSessions} pending={sheetEntry.pending} read={read} now={clock}
+    {sheet && sheetEntry && <ProjectSheet uppercase={projectNameUppercase} project={sheetEntry.project} sessions={sheetSessions} pending={sheetEntry.pending} read={read} now={clock}
       threadId={sheet.thread}
       onSelectThread={id => renderThread ? setSheet({ project: sheet.project, thread: id }) : (setSheet(null), onOpenThread(id))}
       onBack={() => setSheet({ project: sheet.project, thread: null })} onClose={() => setSheet(null)}

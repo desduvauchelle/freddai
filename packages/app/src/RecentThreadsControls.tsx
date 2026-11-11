@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@freddai/ui/components/button';
 import type { ThreadNavView } from './recentThreads';
 
@@ -16,7 +17,7 @@ export function RecentThreadsFooter({ remaining, expanded, onMore, onLess, class
 }) {
   if (remaining <= 0 && !expanded) return null;
   return <div className="recent-threads-footer">
-    {remaining > 0 && <Button className={className} variant="ghost" size="sm" onClick={onMore}>Show more</Button>}
-    {expanded && <Button className={className} variant="ghost" size="sm" aria-expanded onClick={onLess}>Show less</Button>}
+    {remaining > 0 && <Button className={className} variant="ghost" size="sm" onClick={onMore}><ChevronDown size={13} aria-hidden />Show more</Button>}
+    {expanded && <Button className={className} variant="ghost" size="sm" aria-expanded onClick={onLess}><ChevronUp size={13} aria-hidden />Show less</Button>}
   </div>;
 }

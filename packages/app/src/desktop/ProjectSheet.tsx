@@ -5,6 +5,7 @@ import { Button } from "@freddai/ui/components/button";
 import { Dot, labelStatus } from "./ThreadStatus";
 import { threadListStatus, type Session } from "./types";
 import type { HomeRecent } from "./HomeView";
+import { formatProjectName } from "../projectName";
 
 const PAGE = 20;
 
@@ -18,7 +19,8 @@ export function relativeTime(at: number, now: number): string {
 }
 
 /** Side sheet listing one project's threads; a thread opens inside the sheet so the dashboard behind it never changes. */
-export function ProjectSheet({ project, sessions, pending = [], read, now, threadId, onSelectThread, onBack, onClose, onNewThread, onOpenInMain, renderThread }: {
+export function ProjectSheet({ project, sessions, pending = [], read, now, threadId, onSelectThread, onBack, onClose, onNewThread, onOpenInMain, renderThread, uppercase }: {
+  uppercase?: boolean;
   project: { name: string; color: string };
   /** Already filtered to this project and sorted latest first. */
   sessions: readonly Session[];
@@ -41,7 +43,7 @@ export function ProjectSheet({ project, sessions, pending = [], read, now, threa
           {onOpenInMain && <Button type="button" variant="ghost" size="sm" onClick={() => onOpenInMain(threadId)}>Open in main view<ArrowUpRight size={12} aria-hidden="true" /></Button>}
         </> : <>
           <span className="home-project-dot" style={{ background: project.color }} aria-hidden="true" />
-          <SheetTitle className="min-w-0 flex-1 truncate" style={{ color: project.color }}>{project.name}</SheetTitle>
+          <SheetTitle className="min-w-0 flex-1 truncate" style={{ color: project.color }}>{formatProjectName(project.name, uppercase)}</SheetTitle>
           {onNewThread && <Button type="button" variant="ghost" size="icon" aria-label={`New thread in ${project.name}`} title="New thread" onClick={onNewThread}><Plus size={16} aria-hidden="true" /></Button>}
         </>}
         <SheetDescription className="sr-only">{threadId ? "Conversation" : `Threads in ${project.name}`}</SheetDescription>

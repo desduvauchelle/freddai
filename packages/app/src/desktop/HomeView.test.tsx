@@ -58,11 +58,11 @@ it("keeps project controls and a draft in place across activity updates and midn
     expect(Array.from(tiles.children).map(card => card.querySelector("article"))).toEqual([alpha, beta]);
     expect(screen.getByLabelText("Prompt for Alpha")).toBe(input);
     expect((input as HTMLInputElement).value).toBe("My draft");
-    expect(within(beta).getByLabelText("1 working")).toBeTruthy();
+    expect(within(beta).queryByLabelText("1 working")).toBeNull();
   }
 });
 
-it("counts working, done today and needs-you per project with accessible icon counts", () => {
+it("does not render a counters row or project colour square on project cards", () => {
   render(<HomeView {...props([
     thread("1", { status: "running" }),
     thread("2", { status: "starting" }),
@@ -71,9 +71,8 @@ it("counts working, done today and needs-you per project with accessible icon co
     thread("5", { status: "running", pending }),
   ])} />);
   const tile = within(screen.getByRole("article", { name: "Project Alpha" }));
-  expect(tile.getByLabelText("2 working")).toBeTruthy();
-  expect(tile.getByLabelText("1 done today")).toBeTruthy();
-  expect(tile.getByLabelText("1 needs you")).toBeTruthy();
+  expect(tile.queryByLabelText("2 working")).toBeNull();
+  expect(document.querySelector(".home-counts, .home-tile .home-project-dot")).toBeNull();
   expect(screen.getByRole("article", { name: "Project Beta" })).toBeTruthy();
 });
 
@@ -179,9 +178,9 @@ it("changes the single shared Home model under Projects", () => {
   const onHomeSelection = vi.fn();
   render(<HomeView {...props([thread("1")])} homeSelections={{ a: { model: "opus", effort: "default" } }} onHomeSelection={onHomeSelection} />);
   const header = screen.getByRole("group", { name: "Dashboard task defaults" });
-  expect(within(header).getByRole("combobox", { name: "Model" }).textContent).toContain("Opus");
-  chooseDashboard("Model", "Sonnet");
-  expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "sonnet", effort: "default" });
+  expect(within(header).getByRole("combobox", { name: "Difficulty" }).textContent).toContain("Custom");
+  chooseDashboard("Difficulty", "Fast");
+  expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "freddai-level:fast", effort: "default" });
 });
 
 it("opens the first-thread prompt for an empty project without opening a missing thread", () => {
@@ -264,28 +263,13 @@ it("reorders dashboard projects with the shared move callback and preserves draf
   expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Keep this draft");
 });
 
-it("drops a dragged tile after the target and cancels without moving", () => {
-  const onMoveProject = vi.fn();
-  render(<HomeView {...props([])} onMoveProject={onMoveProject} />);
-  const handle = screen.getByRole("button", { name: "Reorder Alpha" });
-  const target = screen.getByRole("article", { name: "Project Beta" }).parentElement!;
-  handle.setPointerCapture = vi.fn();
-  handle.hasPointerCapture = () => true;
-  vi.stubGlobal("PointerEvent", MouseEvent);
-  document.elementFromPoint = vi.fn(() => target);
-  vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
-  fireEvent.pointerDown(handle, { button: 0 });
-  fireEvent.pointerMove(handle, { clientX: 75, clientY: 10 });
-  expect(target.dataset.drop).toBe("after");
-  fireEvent.pointerUp(handle, { clientX: 75, clientY: 10 });
-  expect(onMoveProject).toHaveBeenCalledWith("alpha", "beta", true);
-  onMoveProject.mockClear();
-  fireEvent.pointerDown(handle, { button: 0 });
-  fireEvent.pointerMove(handle, { clientX: 25, clientY: 10 });
-  fireEvent.pointerCancel(handle);
-  fireEvent.pointerUp(handle);
-  expect(onMoveProject).not.toHaveBeenCalled();
-  vi.unstubAllGlobals();
+it("renders one sortable group per workspace with a handle per card", () => {
+  const p = props([]);
+  const workspaces = [{ id: "w1", name: "Work", color: "#111", projects: ["alpha"] }, { id: "w2", name: "Play", color: "#222", projects: [] }];
+  render(<HomeView {...p} workspaces={workspaces} onMoveProject={vi.fn()} onMoveProjectToWorkspace={vi.fn()} />);
+  expect(screen.getByRole("region", { name: "Work" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Other projects" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Reorder Beta" })).toBeTruthy();
 });
 
 it("lets the dashboard choose a connected provider and shows that account's model", () => {

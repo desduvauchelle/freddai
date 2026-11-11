@@ -58,3 +58,5 @@ Workspace Settings: run the native Vite dev server on port 1420, then `node pack
 `mobile-busy-send.browser.mjs` checks immediate queue placement before host acknowledgment, stale-snapshot handoff, dispatched-message reconciliation, and idle-reply transcript feedback at 320/390/768/1024px using only synthetic dispatch.
 
 `dashboard-call.browser.mjs` uses the same preview and Playwright environment. It renders the real dashboard call island with an inert audio transport, checks compact and expanded layouts at 320/430/768/1024/1440px, and verifies mute and hangup without microphone, account, or provider access. `DashboardCall.test.tsx` covers serialized project dispatch, failure recovery, navigation persistence, spoken replies, and disconnect cleanup.
+
+`model-configuration.browser.mjs` checks the shared provider-by-level settings table, Smart/Normal/Fast/Custom choices, Custom model and effort, and 390/744/1024px layouts against an offline fixture. Run with native Vite and `PLAYWRIGHT_MODULE` if external. Screenshots go to `/tmp/freddai-model-configuration-<width>.png`; no accounts or provider turns are used.

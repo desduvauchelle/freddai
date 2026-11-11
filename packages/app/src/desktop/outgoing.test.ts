@@ -27,3 +27,11 @@ it('removes the queue preview when the host has already dispatched the message',
   const dispatched = { ...thread, messages: [{ ...reply.message, id: 'host-generated' }] };
   expect(unconfirmedReplies([reply], [dispatched], [])).toEqual([]);
 });
+it('classifies a quick second send as queued while the first reply is still unconfirmed', async () => {
+  const { classifyDesktopSend } = await import('./outgoing');
+  const idle = { ...thread, status: 'completed' } as unknown as Session;
+  const first: OutgoingReply = { thread: thread.id, ordinal: 1, queued: false, message: { id: 'first', role: 'user', text: 'One' } };
+  expect(classifyDesktopSend({ task: idle, id: 'a', outgoing: [], sessions: [idle], queuedCount: 0 })).toBe('bubble');
+  expect(classifyDesktopSend({ task: idle, id: 'b', outgoing: [first], sessions: [idle], queuedCount: 0 })).toBe('queue');
+  expect(classifyDesktopSend({ task: { ...idle, status: 'running' } as Session, id: 'c', outgoing: [], sessions: [idle], queuedCount: 0 })).toBe('queue');
+});

@@ -1,3 +1,4 @@
+import { sendDisposition, logClassified, type SendDisposition } from '../mobile/send-disposition';
 import type { LaunchOptions, Message, Session, ThreadQueue } from './types';
 
 export type OutgoingReply = { thread: string; message: Message; ordinal: number; queued?: boolean; options?: LaunchOptions };
@@ -27,4 +28,17 @@ export function previewQueues(queues: ThreadQueue[] = [], replies: OutgoingReply
     else result[index] = updated;
   }
   return result;
+}
+
+/**
+ * Desktop send-time classification, sharing the mobile rule. An optimistic reply the snapshot has not
+ * confirmed yet (launched or queued) counts as in flight, so a quick second send queues behind it.
+ */
+export function classifyDesktopSend(args: { task: Session; id: string; outgoing: OutgoingReply[]; sessions: Session[]; queues?: ThreadQueue[]; queuedCount: number }): SendDisposition {
+  const { task, id } = args;
+  const queue = args.queues?.find(q => q.session === task.id);
+  const unreflectedLocal = unconfirmedReplies(args.outgoing, args.sessions, args.queues).filter(reply => reply.thread === task.id && reply.message.id !== id).length;
+  const disposition = sendDisposition({ status: task.status, queued: args.queuedCount, queuePaused: !!queue?.paused, queueError: queue?.error, unreflectedLocal });
+  logClassified({ env: 'desktop', thread: task.id, id, disposition, status: task.status, queued: args.queuedCount, queuePaused: !!queue?.paused, unreflectedLocal });
+  return disposition;
 }

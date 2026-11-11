@@ -1,3 +1,4 @@
+import { ModelConfigurationSettings } from "./ModelConfigurationSettings";
 import { DashboardCall } from "./DashboardCall";
 import { isCompletionNotice } from "../conversation/CompletionCards";
 import { isBackgroundWake } from "../conversation/systemNotice";
@@ -8,12 +9,14 @@ import { useNavigationState } from '../hooks/use-navigation-state';
 import { useThreadPins } from "./thread-pins";
 import { scheduleEnded } from "./schedule-end";
 import { agentDisplayName } from "./types";
+import { moveProjectToWorkspace } from "./workspace-order";
 import { CalendarClock, Pin, PinOff, AppWindow, CheckCheck, ClipboardCheck, Play, Archive, ArchiveRestore, FolderInput, Trash2, RotateCcw, Pencil } from "lucide-react";
 import brandMascotUrl from "../../../../assets/brand/dormouse/dormouse-v3.svg?url";
 import { statusReadCursors } from "./status-read-cursors";
 import { threadListTitle } from "./thread-list-title";
 import { AttachmentLabel } from "./AttachmentLabel";
-import { previewQueues, previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
+import { logMisclassified } from "../mobile/send-disposition";
+import { classifyDesktopSend, previewQueues, previewReplies, unconfirmedReplies, type OutgoingReply } from "./outgoing";
 import { browserThreadRecencyTracker } from "../thread-recency";
 import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
@@ -27,7 +30,8 @@ import { ConversationUsage } from "./ConversationUsage";
 import { ThreadError } from "./ThreadError";
 import { ThreadList } from "./ThreadList";
 import { RecentThreadsFooter, ThreadViewToggle } from "../RecentThreadsControls";
-import { THREAD_NAV_VIEW_KEY, asThreadNavView, selectRecentThreads } from "../recentThreads";
+import { ActiveFilterChips, type ActiveFilterChip } from "../ActiveFilterChips";
+import { DESKTOP_RECENT_PAGING, THREAD_NAV_VIEW_KEY, asThreadNavView, selectRecentThreads } from "../recentThreads";
 import { HomeView, pendingTitle, type PendingLaunch } from "./HomeView";
 import { CommanderView } from "./commander/CommanderView";
 import { CommanderTrailingContext } from "./commander/TrailingContext";
@@ -49,6 +53,8 @@ import { ShipButton, SHIP_PROMPT } from "./ShipButton";
 import { tauriGitClient } from "./git-actions";
 import type { PaneSelection } from "./git-history";
 import { UsageFooter } from "./UsageFooter";
+import { AccountPicker } from "./AccountPicker";
+import { useAccountUsagePoller } from "./useAccountUsage";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@freddai/ui/components/field";
 import { Switch } from "@freddai/ui/components/switch";
 import { ScrollArea } from "@freddai/ui/components/scroll-area";
@@ -63,6 +69,10 @@ import { CompanionSettings } from "./CompanionSettings";
 import { BackgroundSettings } from "./BackgroundSettings";
 import { ConnectedAccountsSettings } from "./ConnectedAccountsSettings";
 import { VoiceSettings } from "./VoiceSettings";
+import { BugWalkHost } from "./bug-walk/BugWalkHost";
+import { BugWalkButton } from "./bug-walk/BugWalkButton";
+import { BugWalkMenuItem } from "./bug-walk/BugWalkMenuItem";
+import { BugWalkSettings } from "./bug-walk/BugWalkSettings";
 import { AgentConfigSettings } from "./AgentConfigSettings";
 import { MicButton, VoiceNotice, useHoldToTalk } from "./VoiceControls";
 import { useVoiceCall } from "./voiceCall";
@@ -155,6 +165,7 @@ import { closePane, focusPane, focusedThread, openThreads, otherThread, restoreS
 import { hostUpdateNotice, shouldSurfacePollError, RESTART_NOW_LABEL } from "./host-update";
 import { interruptedThreads, interruptedBannerText, resumeAll, resumeFailureMessage } from "./interrupted";
 import "../workspace.css";
+import { formatProjectName } from "../projectName";
 import "./desktop.css";
 import "./themes.css";
 const colors = [
@@ -278,7 +289,7 @@ function ConversationPane({
   task, db, read, native, working, staging, standalone = false, split, side, focused, canToggleSplit, composerRef,
   attachments, onAttachments, permission, onPermission, selection, onSelection,
   onFocus, onClose, onOpenThread, onToggleSplit, onFork, onPopOut, onRename, onSend, onSendText, onQueueAction, onAttach,
-  action, refresh, changeThread, openAccounts, fileChips, resumeThread,
+  action, refresh, changeThread, openAccounts, fileChips, resumeThread, onDelete,
 }: {
   standalone?: boolean;
   task: Session; db: Database; read: Record<string, number>; native: boolean; working: boolean; staging: number;
@@ -289,6 +300,7 @@ function ConversationPane({
   selection: AgentSelection; onSelection: (value: AgentSelection) => void;
   onFocus: () => void; onClose: () => void; onToggleSplit: () => void; onFork: () => void;
   onPopOut: () => void;
+  onDelete: () => void;
   onOpenThread: (id: string) => void;
   onRename: (title: string) => Promise<void>;
   onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
@@ -302,6 +314,7 @@ function ConversationPane({
   resumeThread: (task: Session) => Promise<void>;
   fileChips: (files: Attachment[], set: (v: Attachment[]) => void) => ReactNode;
 }) {
+  const [uppercaseNames] = usePreference("freddai.projectNameUppercase", false);
   const project = db.projects.find((p) => p.id === task.project),
     terminalCwd = task.working_dir || project?.path,
     terminalOpen = useSyncExternalStore(terminalPanel.subscribe, terminalPanel.getSnapshot).open,
@@ -366,7 +379,7 @@ function ConversationPane({
       <div className="pane-title" data-tauri-drag-region={standalone || undefined} aria-current={split && focused ? "true" : undefined}>
         <span className="pane-project" title={project?.name}>
           <span className="pane-project-dot" style={{ background: project?.color }} aria-hidden="true" />
-          <span className="pane-project-name">{project?.name}</span>
+          <span className="pane-project-name">{formatProjectName(project?.name, uppercaseNames)}</span>
         </span>
         <span className="pane-sep" aria-hidden="true">/</span>
         <span className="pane-account" style={{ color: taskAccount?.color }} title={taskAccount ? agentDisplayName(taskAccount) : "Connection removed"}>
@@ -396,6 +409,7 @@ function ConversationPane({
                 disabled={working || !native || (task.archived ? !capabilities.change : !capabilities.archive || busy(task))}
                 onSelect={() => void changeThread(task.id, task.archived ? "unarchive" : "archive")}
               >{task.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}{task.archived ? "Unarchive" : "Archive"}</DropdownMenuItem>}
+              {task.deleted_at == null && <DropdownMenuItem variant="destructive" disabled={working || !native || !!db.host_update_pending || !capabilities.delete} onSelect={onDelete}><Trash2 size={14} aria-hidden="true" />Delete…</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onClose}><X size={14} aria-hidden="true" />{standalone ? "Close window" : split ? `Close ${side} pane` : "Close conversation"}</DropdownMenuItem>
             </DropdownMenuContent>
@@ -418,8 +432,9 @@ function ConversationPane({
           <ThreadTranscript readToolText={(message, offset, hash) => invoke("tool_text", { thread: task.id, message, offset, hash })} readGeneratedFile={(href, offset) => invoke("generated_file", { thread: task.id, href, offset })} resolveLocalPage={href => invoke("preview_file_url", { thread: task.id, href })} messages={task.messages} tasks={task.tasks} active={busy(task)} renderAttachment={file => <AttachmentLabel file={file}/>}>
           {(task.error || task.status === "interrupted") && (
             <ThreadError error={task.error || "This turn was interrupted."} onOpenAccounts={standalone ? undefined : openAccounts}
-              onContinue={task.status === "interrupted" && capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
-              continueDisabled={working || !native || !!db.host_update_pending} />
+              account={taskAccount ? { id: taskAccount.id, provider: taskAccount.provider, name: taskAccount.name } : undefined}
+              onRetry={capabilities.resume ? () => void action(async () => { await resumeThread(task); await refresh(); }) : undefined}
+              />
           )}
           {task.pending && (
             <div className="approval-with-mouse"><ApprovalMouse />
@@ -497,11 +512,13 @@ function ConversationPane({
               aria-label={voiceCall.snapshot ? "End voice call" : "Start voice call"} title={voiceCall.snapshot ? "End voice call" : voiceCall.otherActive ? "A voice call is already running in another thread" : "Start a hands-free voice call"}
               disabled={!voiceCall.snapshot && !voiceCall.canStart} onClick={() => voiceCall.snapshot ? voiceCall.end() : voiceCall.start()}><Phone size={18}/></Button>}
             <PermissionSelect provider={taskAccount?.provider} value={permission} onChange={onPermission} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            {native && <BugWalkButton origin={{ thread: task.id, project: task.project }}/>}
             <span className="composer-spacer"/>
             {(staging || attachments.length > 0) && <span className="attachment-status" role="status">
               {staging ? "Copying attachments…" : `${attachments.length} file${attachments.length === 1 ? "" : "s"} ready`}
             </span>}
-            <AgentControls key={task.id} account={taskAccount} native={native} value={selection} onChange={onSelection} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            <AccountPicker accounts={db.accounts} value={selection.agent || taskAccount?.id || ""} onChange={id => onSelection({ agent: id, model: "freddai-level:normal", effort: "default" })} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            <AgentControls key={`${task.id}:${selection.agent || ""}`} account={db.accounts.find(a => a.id === selection.agent) || taskAccount} native={native} value={selection} onChange={onSelection} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
             {busy(task) && <Button type="button" size="icon" variant="outline" aria-label="Stop current turn and pause queue" disabled={working} onClick={() => void action(async () => { await invoke("stop", { session: task.id }); await refresh(); })}><Square size={14}/></Button>}
             <SendButton
               threadId={task.id}
@@ -509,7 +526,7 @@ function ConversationPane({
               blocked={
                 !native || !taskAccount ||
                 !!staging || working ||
-                (!busy(task) && !task.provider_id) || (task.status === "archived" || !!task.archived || task.deleted_at != null)
+                (!busy(task) && !task.provider_id && !task.agent_history?.length) || (task.status === "archived" || !!task.archived || task.deleted_at != null)
               }
             />
           </div>
@@ -592,12 +609,24 @@ function DesktopWorkspace() {
   // Stable identities: these are rebuilt only when the snapshot, pending sends or launch actually change.
   const [threadPins, setThreadPin] = useThreadPins();
   const visibleSnapshot = useMemo(() => ({ ...snapshot, queues: previewQueues(snapshot.queues, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)), sessions: previewReplies(snapshot.sessions, unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues)).map(t => Object.hasOwn(threadPins, t.id) ? { ...t, pinned: threadPins[t.id] } : t) }), [snapshot, outgoing, JSON.stringify(threadPins)]);
+  const misclassWarned = useRef(new Set<string>());
   useEffect(() => {
+    // A reply classified as an immediate send ("bubble") that the host holds in its queue was misclassified.
+    for (const reply of outgoing) {
+      if (reply.queued || misclassWarned.current.has(reply.message.id)) continue;
+      const queue = snapshot.queues?.find(q => q.session === reply.thread);
+      const queueIndex = queue?.messages.findIndex(m => m.id === reply.message.id) ?? -1;
+      if (!queue || queueIndex < 0) continue;
+      misclassWarned.current.add(reply.message.id);
+      const t = snapshot.sessions.find(x => x.id === reply.thread);
+      logMisclassified({ env: "desktop", thread: reply.thread, id: reply.message.id, disposition: "bubble", status: t?.status, queued: queue.messages.length, queuePaused: queue.paused, queueIndex, queueLength: queue.messages.length, unreflectedLocal: unconfirmedReplies(outgoing, snapshot.sessions, snapshot.queues).filter(r => r.thread === reply.thread && r.message.id !== reply.message.id).length });
+    }
     setOutgoing(old => old.length ? unconfirmedReplies(old, snapshot.sessions, snapshot.queues) : old);
   }, [snapshot]);
   // Keep the launch visible even when an older in-flight snapshot arrives.
   const db = useMemo(() => launching && launching.id !== "pending-launch" && !visibleSnapshot.sessions.some(t => t.id === launching.id)
     ? { ...visibleSnapshot, sessions: [launching, ...visibleSnapshot.sessions] } : visibleSnapshot, [visibleSnapshot, launching]);
+  useAccountUsagePoller(db.accounts, native);
   useEffect(() => {
     if (!scheduleView?.id || selected) return;
     const run = [...(db.schedules?.find(s=>s.id===scheduleView.id)?.runs || [])].reverse().find(r=>r.session && db.sessions.some(t=>t.id===r.session));
@@ -607,7 +636,7 @@ function DesktopWorkspace() {
     if (launching && snapshot.sessions.some(t => t.id === launching.id)) setLaunching(null);
   }, [snapshot, launching]);
   const [dialog, setDialog] = useNavigationState<
-      "new" | "accounts" | "usage" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "commander" | "background" | "companion" | "project" | "help" | "schedules" | "import" | "google" | null
+      "new" | "accounts" | "usage" | "models" | "settings" | "threads" | "projects" | "appearance" | "voice" | "agentconfig" | "commander" | "background" | "companion" | "project" | "help" | "schedules" | "import" | "google" | null
     >(null, navigationRevision),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
@@ -639,6 +668,7 @@ function DesktopWorkspace() {
   const [grouped, setGrouped] = usePreference("freddai.grouped", true),
     [ignoreUnread, setIgnoreUnread] = usePreference("freddai.ignoreUnread", false),
     [hideRead, setHideRead] = usePreference("freddai.hideRead", true),
+    [projectNameUppercase, setProjectNameUppercase] = usePreference("freddai.projectNameUppercase", false),
     [storedNavView, setNavView] = usePreference<string>(THREAD_NAV_VIEW_KEY, "projects"),
     [recentPages, setRecentPages] = useState(0),
     [recentFinishedPref, setRecentFinished] = usePreference<number>("freddai.recentFinished", RECENT_FINISHED_DEFAULT),
@@ -648,11 +678,11 @@ function DesktopWorkspace() {
   const threadListSave = useRef(Promise.resolve<unknown>(undefined));
   useEffect(() => {
     if (!native) return;
-    const thread_list = { projectOrder: savedProjectOrder, grouped, hideRead, ignoreUnread, recentFinished: sanitizeRecentCount(recentFinishedPref) };
+    const thread_list = { projectOrder: savedProjectOrder, grouped, hideRead, ignoreUnread, projectNameUppercase, recentFinished: sanitizeRecentCount(recentFinishedPref) };
     threadListSave.current = threadListSave.current
       .then(() => invoke("save_thread_list", { settings: thread_list }))
       .catch(e => setError(String(e)));
-  }, [native, savedProjectOrder, grouped, hideRead, ignoreUnread, recentFinishedPref]);
+  }, [native, savedProjectOrder, grouped, hideRead, ignoreUnread, projectNameUppercase, recentFinishedPref]);
   const [projectId, setProjectId] = useState(""),
     [accountId, setAccountId] = useState("default"),
     [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
@@ -1308,6 +1338,7 @@ function DesktopWorkspace() {
       if (failures.length) throw new Error(resumeFailureMessage(failures));
     });
   }
+  const queuedCountFor = (task: Session) => db.queues?.find(q => q.session === task.id)?.messages.filter(m => !isCompletionNotice(m)).length ?? 0;
   /** `override` sends that exact text (voice call) instead of the draft: the draft and attachments stay untouched and failures throw to the caller. */
   async function send(task: Session, e?: FormEvent, steer = false, override?: string) {
     e?.preventDefault();
@@ -1319,12 +1350,12 @@ function DesktopWorkspace() {
       actionLock.current = true; setWorking(true);
       try {
         const requestId = replyRequest(task.id);
-        const command = busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.some(m => !isCompletionNotice(m)) ? "queue_message" : "launch";
+        const command = classifyDesktopSend({ task, id: requestId, outgoing, sessions: snapshot.sessions, queues: snapshot.queues, queuedCount: queuedCountFor(task) }) === "queue" ? "queue_message" : "launch";
         setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, queued: command === "queue_message", options: { attachments: [] }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
         try {
           await invoke(command, {
             session: task.id, project: task.project, account: null, prompt: reply,
-            options: { permission_mode: effectivePermissionMode(taskAccount.provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: [], request_id: requestId },
+            options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: [], request_id: requestId },
             existing: task.id,
           });
         } catch (error) {
@@ -1347,7 +1378,7 @@ function DesktopWorkspace() {
     if (!native || working || staging || !taskAccount || (task.status === "archived" || !!task.archived || task.deleted_at != null) || !reply.trim()) return;
     await action(async () => {
       const requestId = replyRequest(task.id);
-      const command = steer && busy(task) ? "steer_message" : busy(task) || !!db.queues?.find(q => q.session === task.id)?.messages.some(m => !isCompletionNotice(m)) ? "queue_message" : "launch";
+      const command = steer && busy(task) ? "steer_message" : classifyDesktopSend({ task, id: requestId, outgoing, sessions: snapshot.sessions, queues: snapshot.queues, queuedCount: queuedCountFor(task) }) === "queue" ? "queue_message" : "launch";
       setOutgoing(old => [...old, { thread: task.id, message: { id: requestId, role: "user", text: reply, attachments, delivery: "Sending…" }, queued: command === "queue_message", options: { attachments: attachments.map(f => f.id) }, ordinal: task.messages.filter(m => m.role === "user" && m.text === reply).length + 1 }]);
       setThreadDraft(task.id, "");
       setReplyAttachments(previous => ({ ...previous, [task.id]: [] }));
@@ -1357,7 +1388,7 @@ function DesktopWorkspace() {
         project: task.project,
         account: null,
         prompt: reply,
-        options: { permission_mode: effectivePermissionMode(taskAccount.provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: attachments.map(f => f.id), request_id: requestId },
+        options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: attachments.map(f => f.id), request_id: requestId },
         existing: task.id,
       });
       } catch (error) {
@@ -1415,6 +1446,19 @@ function DesktopWorkspace() {
     ...defaultProjectOrder,
     ...db.projects.map(p => p.id),
   ])];
+  // The dashboard ignores sidebar workspace/project/status/search filters: its order comes from every visible thread and every project.
+  const dashboardProjectOrder = [...new Set([
+    ...(commanderProjectId ? [commanderProjectId] : []),
+    ...savedProjectOrder.filter(id => db.projects.some(p => p.id === id)),
+    ...db.sessions.filter(t => !isCommanderThread(t, commanderProjectId) && threadVisibility(t, "all")).sort(compareThreadRecency).map(t => t.project),
+    ...db.projects.map(p => p.id),
+  ])];
+  const statusFilterLabels: Record<string, string> = { all: "All threads", attention: ignoreUnread ? "Needs you" : "Needs attention", running: ignoreUnread ? "Working" : "Running", failed: "Failed", done: ignoreUnread ? "Done" : "Finished", scheduled: "Scheduled runs", archived: "Archived", deleted: "Deleted" };
+  const filterChips: ActiveFilterChip[] = [
+    ...(activeWorkspace ? [{ kind: "workspace" as const, label: activeWorkspace.name, onClear: () => { setWorkspaceFilter("all"); setProjectFilter("all"); setOlderPages({}); setQuery(""); setFilter("all"); } }] : []),
+    ...(projectFilter !== "all" ? [{ kind: "project" as const, label: db.projects.find(p => p.id === projectFilter)?.name || projectFilter, onClear: () => { setProjectFilter("all"); setOlderPages({}); } }] : []),
+    ...(filter !== "all" ? [{ kind: "status" as const, label: statusFilterLabels[filter] || filter, onClear: () => { setFilter("all"); setOlderPages({}); } }] : []),
+  ];
   const projectOrder = fullProjectOrder.filter(id => id !== commanderProjectId && defaultProjectOrder.includes(id));
   function moveProjectGroup(id: string, target: string, after: boolean) {
     if (id === target) return;
@@ -1438,7 +1482,7 @@ function DesktopWorkspace() {
   });
   // "Recent" is one flat list across every project, newest first; it honours the same search/project/status filters as the project view.
   const navView = asThreadNavView(storedNavView);
-  const recent = selectRecentThreads(sorted, recentPages);
+  const recent = selectRecentThreads(sorted, recentPages, DESKTOP_RECENT_PAGING);
   const olderFor = (pid: string) => buckets.older.filter(t => t.project === pid);
   const shownOlder = (pid: string) => olderFor(pid).slice(0, (olderPages[pid] ?? 0) * OLDER_PAGE_SIZE);
   const recentFor = (pid: string) => buckets.recent.filter(t => t.project === pid);
@@ -1454,6 +1498,7 @@ function DesktopWorkspace() {
     }
     await action(async () => {
       await invoke("thread_action", { session: id, action: operation, project: project || null });
+      if (operation === "delete" || operation === "purge") goHome();
       await refresh();
       setThreadDialog(null);
     });
@@ -1528,7 +1573,7 @@ function DesktopWorkspace() {
               color: db.projects.find((p) => p.id === t.project)?.color,
             }}
           >
-            {db.projects.find((p) => p.id === t.project)?.name}
+            {formatProjectName(db.projects.find((p) => p.id === t.project)?.name, projectNameUppercase)}
           </span>
         )}
         {(t.schedule_id || t.options?.scheduled) && <span title="Created by a scheduled task"><CalendarClock size={12} aria-label="Scheduled task" /></span>}
@@ -1565,7 +1610,7 @@ function DesktopWorkspace() {
     const pages = olderPages[pid] ?? 0;
     const shown = shownOlder(pid);
     const remaining = total - shown.length;
-    const projectName = !grouped ? ` · ${db.projects.find(p => p.id === pid)?.name}` : "";
+    const projectName = !grouped ? ` · ${formatProjectName(db.projects.find(p => p.id === pid)?.name, projectNameUppercase)}` : "";
     return <div key={pid} className="thread-older">
       {groupThreadsByDay(shown).map(group => <div key={group.label || "today"}>
         {group.label && <div className="thread-day-label" role="separator" aria-label={group.label}>{group.label}</div>}
@@ -1635,7 +1680,7 @@ function DesktopWorkspace() {
         onSendText={text => send(thread, undefined, false, text)}
         onQueueAction={(queueAction, message, prompt) => queueActionFor(thread, queueAction, message, prompt)}
         onAttach={() => void attach(thread.id)}
-        action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips} resumeThread={resumeThread}
+        onDelete={() => openThreadDialog(thread, "delete")} action={action} refresh={refresh} changeThread={changeThread} openAccounts={openAccounts} fileChips={fileChips} resumeThread={resumeThread}
       />
     );
   }
@@ -1701,6 +1746,7 @@ function DesktopWorkspace() {
                   <DropdownMenuItem onSelect={() => void screenGrab("new")}>Start new thread</DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <BugWalkMenuItem disabled={!native}/>
               <DropdownMenuItem onSelect={() => setDialog("schedules")}>Schedules<DropdownMenuShortcut>⌘⇧S</DropdownMenuShortcut></DropdownMenuItem>
               <DropdownMenuItem disabled={!native} onSelect={() => setDialog("import")}>Import sessions…</DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -1730,6 +1776,8 @@ function DesktopWorkspace() {
         <Button type="button" size="icon" variant="ghost" aria-label="Dismiss" title="Dismiss" onClick={appUpdate.dismissNotice}><X size={12} /></Button>
       </div>}
       {restartError && <div role="alert" className="native-error">{restartError}</div>}
+      <BugWalkHost enabled={native && !windowThread} db={db} defaultPermission={permissionMode} sheetOpen={!settingsVisible}
+        onOpenThread={id => { void refresh().catch(() => {}); setHome(false); setSelected(id); }} onOpenVoiceSettings={() => setDialog("voice")}/>
       {interruptedList.length > 0 && !interruptedDismissed && <div role="status" className="native-banner interrupted-banner">
         <span>{interruptedBannerText(interruptedList.length)}</span>
         <Button type="button" size="sm" variant="outline" disabled={working || !native || !!db.host_update_pending} onClick={() => void resumeAllInterrupted()}>Resume all</Button>
@@ -1848,6 +1896,7 @@ function DesktopWorkspace() {
                     />
 
                   </div>
+                  <ActiveFilterChips chips={filterChips} />
                   <ScrollArea className="thread-list-scroll min-h-0 flex-1" viewportRef={list} viewportProps={{ className: "thread-list", "aria-label": "Thread list" }}>
                     {navView === "recent" ? (
                       <>
@@ -1906,7 +1955,7 @@ function DesktopWorkspace() {
                               ><GripVertical size={13} /></button>
                               {p?.kind === "commander" ? <>
                                 <button type="button" className="project-toggle" aria-label={`Open ${p.name}`} title={`Open ${p.name}`} onClick={openCommander}>
-                                  <strong style={{ color: p.color }}>{p.name}</strong>
+                                  <strong style={{ color: p.color }}>{formatProjectName(p.name, projectNameUppercase)}</strong>
                                 </button>
                               </> : <button type="button" className="project-toggle"
                                 aria-expanded={!collapsed}
@@ -1914,7 +1963,7 @@ function DesktopWorkspace() {
                                 title={`${collapsed ? "Expand" : "Collapse"} ${p?.name}`}
                                 onClick={() => setCollapsedProjects(c => c.includes(pid) ? c.filter(x => x !== pid) : [...c, pid])}>
                                 {collapsed ? <Folder size={14} style={{ color: p?.color }} /> : <FolderOpen size={14} style={{ color: p?.color }} />}
-                                <strong style={{ color: p?.color }}>{p?.name}</strong>
+                                <strong style={{ color: p?.color }}>{formatProjectName(p?.name, projectNameUppercase)}</strong>
                               </button>}
                               {collapsed && attention > 0 && <span className="project-attention" role="status" aria-label={`${attention} ${attention === 1 ? "thread needs" : "threads need"} attention in ${p?.name}`}>{attention}</span>}
                               {p?.kind !== "commander" && <>
@@ -2020,12 +2069,10 @@ function DesktopWorkspace() {
                         }}/>
                         <div className="new-conversation-options">
                           <Picker label="Project" value={projectId || "__global__"} onChange={value => setProjectId(value === "__global__" ? "" : value)} options={[{ value: "__global__", label: "Select project" }, ...db.projects.map(p => ({ value: p.id, label: p.name }))]}/>
-                          <Picker label="Agent and account" disabled={!native || working} value={effective || "default"} onChange={selectNewAccount} options={[...(!effective ? [{ value: "default", label: "No default account configured" }] : []), ...db.accounts.map(a => ({ value: a.id, label: agentDisplayName(a) }))]}/>
-                          <label className="new-worktree" title={worktree ? "New branch from the current commit; uncommitted files stay in the original folder." : "Use the project folder directly. Your choice is remembered."}><input type="checkbox" checked={worktree} onChange={e => {
-                            setWorktree(e.target.checked);
-                            if (native) void action(() => invoke("save_preferences", { patch: { use_worktree: e.target.checked } }));
-                          }}/>Separate worktree</label>
+                          <AccountPicker accounts={db.accounts} disabled={!native || working} value={effective || "default"} onChange={selectNewAccount} placeholderOption={!effective ? { value: "default", label: "No default account configured" } : undefined}/>
+                          <AgentControls account={newAccount} native={native} value={{ model, effort }} onChange={value => { setModel(value.model); setEffort(value.effort); }} disabled={working}/>
                         </div>
+                        {!!draft.trim() && !destination && !launching && <p id="new-thread-project-required" className="new-thread-project-required" role="status">Choose a project above to send your message.</p>}
                         <VoiceNotice target />
                         <div className="chat-composer-tools">
                           <Button type="button" variant="ghost" size="icon" className="composer-attach" aria-label="Attach files" title="Attach files (⌘ ⇧ U)" onClick={() => void attach()} disabled={!native}><Plus size={20}/></Button>
@@ -2036,10 +2083,14 @@ function DesktopWorkspace() {
                           }} />
                           {native && <Button type="button" variant="ghost" size="icon" aria-label="Start voice call" title="Start a hands-free voice call" disabled={!newVoiceCall.canStart} onClick={() => { newCallThread.current = null; newVoiceCall.start(); }}><Phone size={18}/></Button>}
                           <PermissionSelect provider={newAccount?.provider} value={permissionMode} onChange={setPermissionMode} disabled={working}/>
+                          {native && <BugWalkButton origin={projectId ? { project: projectId } : undefined}/>}
+                          <Button type="button" variant="ghost" size="icon" className="composer-worktree" aria-label="Separate worktree" aria-pressed={worktree} data-active={worktree} title={worktree ? "Separate worktree: on. New branch from the current commit; uncommitted files stay in the original folder." : "Separate worktree: off. Uses the project folder directly. Your choice is remembered."} onClick={() => {
+                            setWorktree(!worktree);
+                            if (native) void action(() => invoke("save_preferences", { patch: { use_worktree: !worktree } }));
+                          }}><GitBranch size={18}/></Button>
                           <span className="composer-spacer"/>
                           {!!staging && <span className="attachment-status" role="status">Copying attachments…</span>}
-                          <AgentControls account={newAccount} native={native} value={{ model, effort }} onChange={value => { setModel(value.model); setEffort(value.effort); }} disabled={working}/>
-                          <Button className="chat-send" size="icon" aria-label="Start thread" title="Start thread" disabled={!native || !!staging || working || !newAccount || !draft.trim() || !destination}><ArrowUp size={16}/></Button>
+                          <Button className="chat-send" size="icon" aria-label="Start thread" title={draft.trim() && !destination ? "Choose a project to send your message" : "Start thread"} aria-describedby={draft.trim() && !destination ? "new-thread-project-required" : undefined} disabled={!native || !!staging || working || !newAccount || !draft.trim() || !destination}><ArrowUp size={16}/></Button>
                         </div>
                       </form>
                       <p className="sr-only">Enter to start · Shift Enter for new line</p>
@@ -2052,9 +2103,16 @@ function DesktopWorkspace() {
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <div className="home-pane">
                     <HomeView
-            sessions={db.sessions} read={read} projects={fullProjectOrder.flatMap(id => { const project = db.projects.find(p => p.id === id); return project ? [project] : []; })} accounts={db.accounts} schedules={db.schedules}
+                      projectNameUppercase={projectNameUppercase}
+            sessions={db.sessions} read={read} projects={dashboardProjectOrder.flatMap(id => { const project = db.projects.find(p => p.id === id); return project ? [project] : []; })} accounts={db.accounts} schedules={db.schedules}
             workspaces={workspaces}
             onMoveProject={moveProjectGroup}
+            onMoveProjectToWorkspace={(id, workspaceId, position) => {
+              if (!native || !db.preferences.workspaces) return;
+              const next = moveProjectToWorkspace(workspaces, id, workspaceId, position);
+              void action(async () => { await invoke("save_preferences", { patch: { workspaces: next } }); await refresh(); return true; });
+              if (position) moveProjectGroup(id, position.targetProjectId, position.after);
+            }}
             canCreate={native && !working && !launching}
             onOpenThread={id => { setHome(false); setSelected(id); }}
             renderThread={id => conversation("left", id)}
@@ -2075,7 +2133,7 @@ function DesktopWorkspace() {
               {commanderActive && <>
                 <ResizableHandle withHandle={!listHidden} />
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
-                  <CommanderView projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
+                  <CommanderView fallbackControls={<div className="dashboard-agent-controls"><label>Agent<select aria-label="Agent" value={homeAccount} onChange={e => setHomeAccount(e.target.value)}><option value="">Project agent</option>{db.accounts.map(a => <option key={a.id} value={a.id}>{agentDisplayName(a)}</option>)}</select></label>{(() => { const plan = commanderData.state ? resolveHomeTile(commanderData.state.project.id) : null; const account = plan?.ok ? db.accounts.find(a => a.id === plan.account) : undefined; return account ? <AgentControls inline native={native} account={account} value={homeSelections[account.id] ?? defaultSelection} onChange={value => setHomeSelections(old => ({ ...old, [account.id]: value }))} disabled={working}/> : null; })()}</div>} projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
                     renderConversation={id => selected === id ? conversation(view.focus) : null}
                     onSelectThread={id => { commanderThread.current = id; if (selected !== id) setSelected(id); }}
                     onOpenThread={id => { commanderThread.current = ""; setCommanderOpen(false); setSelected(id); }}
@@ -2128,7 +2186,7 @@ function DesktopWorkspace() {
           {notice}
         </span>
         <ScrollArea orientation="horizontal" className="min-w-0 flex-1 h-full" viewportProps={{ "aria-label": "Accounts" }}><div className="footer-account-list">
-        <UsageFooter accounts={db.accounts} native={native} onOpen={() => setDialog("usage")} />
+        <UsageFooter accounts={db.accounts} onOpen={() => setDialog("usage")} />
         </div></ScrollArea>
         {!db.accounts.length && <Button variant="ghost" size="sm" onClick={openAccounts}>
           <Plus size={13} /> Connect accounts
@@ -2184,7 +2242,7 @@ function DesktopWorkspace() {
           else search.current?.focus();
         }}
         title={
-              dialog === "schedules" ? "Schedules" : dialog === "usage"
+              dialog === "models" ? "Model configuration" : dialog === "schedules" ? "Schedules" : dialog === "usage"
                 ? "Accounts & usage"
                 : dialog === "new"
                 ? "New thread"
@@ -2427,9 +2485,10 @@ function DesktopWorkspace() {
               </section>
             </>
           )}
+          {dialog === "models" && <ModelConfigurationSettings configuration={db.preferences.model_configuration} providers={db.accounts.map(a => a.provider)} disabled={!native || !!db.host_update_pending} onSave={async model_configuration => { await invoke("save_preferences", { patch: { model_configuration } }); await refresh(); }}/>}
           {dialog === "companion" && <CompanionSettings native={native} />}
           {dialog === "appearance" && <AppearanceSettings fontSizes={fontSizes} appearance={appearance} theme={theme} onChange={setTheme} saved={themeSaved} />}
-          {dialog === "voice" && <VoiceSettings native={native && /Mac/.test(navigator.platform)}/>}
+          {dialog === "voice" && <><VoiceSettings native={native && /Mac/.test(navigator.platform)}/><BugWalkSettings native={native && /Mac/.test(navigator.platform)}/></>}
           {dialog === "agentconfig" && <AgentConfigSettings native={native} accounts={db.accounts} projects={db.projects}/>}
           {dialog === "commander" && <><CommanderProfile/><CommanderSettings projects={db.projects}/></>}
           {dialog === "google" && <ConnectedAccountsSettings db={db} native={native}/>}
@@ -2439,6 +2498,10 @@ function DesktopWorkspace() {
               <Field orientation="horizontal">
                 <FieldContent><FieldLabel htmlFor="ignore-unread">Ignore unread status (experimental)</FieldLabel><FieldDescription>Focus on Working, Needs you, and Done. Finished replies count as Done immediately, without opening them or marking them as read. Approvals, errors, and interruptions still need your attention. Also applies to your companion app. Turn off anytime to restore unread indicators.</FieldDescription></FieldContent>
                 <Switch id="ignore-unread" checked={ignoreUnread} onCheckedChange={setIgnoreUnread} />
+              </Field>
+              <Field orientation="horizontal">
+                <FieldContent><FieldLabel htmlFor="project-name-uppercase">Uppercase project names</FieldLabel><FieldDescription>Show project names in capitals in the sidebar, dashboard and companion apps.</FieldDescription></FieldContent>
+                <Switch id="project-name-uppercase" checked={projectNameUppercase} onCheckedChange={setProjectNameUppercase} />
               </Field>
               <Field orientation="horizontal">
                 <FieldContent><FieldLabel htmlFor="group-by-project">Group by project</FieldLabel><FieldDescription>Organize your thread list by project folder.</FieldDescription></FieldContent>

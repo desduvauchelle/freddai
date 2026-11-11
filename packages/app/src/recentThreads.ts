@@ -3,8 +3,10 @@ export type ThreadNavView = 'projects' | 'recent';
 export const RECENT_INITIAL = 5;
 export const RECENT_STEP = 10;
 export type RecentPaging = { initial: number; step: number };
-/** Desktop sidebar and the companion's bottom "Recent" section page 5, +10. */
+/** The companion's bottom "Recent" section page 5, +10. */
 export const RECENT_PAGING: RecentPaging = { initial: RECENT_INITIAL, step: RECENT_STEP };
+/** Desktop sidebar Recent tab pages 20, +20. */
+export const DESKTOP_RECENT_PAGING: RecentPaging = { initial: 20, step: 20 };
 /** The companion's dedicated Recent view pages 25, +25. */
 export const COMPANION_RECENT_PAGING: RecentPaging = { initial: 25, step: 25 };
 export const THREAD_NAV_VIEW_KEY = 'freddai.threadNavView';
