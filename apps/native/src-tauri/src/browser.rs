@@ -17,6 +17,30 @@ fn web_url(value: &str) -> Result<tauri::Url, String> {
     }
     Ok(url)
 }
+/// Never use `Webview::url()` here: wry unwraps `WKWebView.URL`, which is nil before the first navigation commits or after a failed load, and panics the main thread.
+fn current_url(view: &Webview) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let slot = out.clone();
+        view.with_webview(move |pv| unsafe {
+            use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+            let Some(web) = (pv.inner() as *mut AnyObject).as_ref() else { return };
+            let url: Option<Retained<AnyObject>> = msg_send![web, URL];
+            let Some(url) = url else { return };
+            let text: Option<Retained<AnyObject>> = msg_send![&*url, absoluteString];
+            let Some(text) = text else { return };
+            let utf8: *const std::ffi::c_char = msg_send![&*text, UTF8String];
+            if !utf8.is_null() {
+                *slot.lock().unwrap() = Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned());
+            }
+        }).map_err(|e| e.to_string())?;
+        let value = out.lock().unwrap().take();
+        Ok(value)
+    }
+    #[cfg(not(target_os = "macos"))]
+    { view.url().map(|u| Some(u.to_string())).map_err(|e| e.to_string()) }
+}
 #[tauri::command]
 pub async fn browser_view(caller: Webview, profile: String, url: Option<String>, bounds: Option<[f64; 4]>, action: String) -> Result<Option<String>, String> {
     let name = label(&caller, &profile)?;
@@ -36,7 +60,7 @@ pub async fn browser_view(caller: Webview, profile: String, url: Option<String>,
                 if let Some(view) = existing { view.hide().map_err(|e| e.to_string())?; }
                 return Ok(None);
             }
-            if action == "status" { return existing.map(|v| v.url().map(|u| Some(u.to_string())).map_err(|e| e.to_string())).unwrap_or(Ok(None)); }
+            if action == "status" { return existing.map(|v| current_url(&v)).unwrap_or(Ok(None)); }
             let view = if let Some(view) = existing { view } else {
                 #[cfg(not(target_os = "macos"))]
                 return Err("Embedded sessions currently require macOS 14 or later".into());
