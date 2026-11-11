@@ -32,6 +32,7 @@ if [ -z "$identity" ]; then
   fi
 fi
 codesign --force --options runtime --timestamp --identifier com.freddai.computer --sign "$identity" "target/release/bundle/macos/Freddai.app/Contents/Resources/computer-use/Freddai Computer.app"
+codesign --force --options runtime --timestamp --identifier com.freddai.bugwalk --sign "$identity" "target/release/bundle/macos/Freddai.app/Contents/Resources/bug-walk/Freddai Bug Walk.app"
 codesign --force --options runtime --entitlements apps/native/src-tauri/Entitlements.plist --timestamp --identifier com.freddai.desktop --sign "$identity" target/release/bundle/macos/Freddai.app
 python3 - <<'PY'
 import os, subprocess, tempfile, uuid

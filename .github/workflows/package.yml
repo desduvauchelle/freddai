@@ -93,7 +93,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           FREDDAI_COMPUTER_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bash scripts/build-computer-use.sh
+        run: bash scripts/build-computer-use.sh && bash scripts/build-bug-walk.sh
       - run: cargo test --workspace
       - uses: tauri-apps/tauri-action@v1
         env:

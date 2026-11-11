@@ -52,6 +52,8 @@ objc2-web-kit = { version = "0.3", default-features = false, features = ["WKWebV
 # Local push-to-talk dictation (src/voice). macOS only so the iOS build never compiles whisper.cpp.
 transcribe-rs = { version = "=0.3.11", default-features = false, features = ["whisper-metal"] }
 cpal = "0.15"
+# Bug walk global shortcut (src/bug_walk). Desktop only; registered from Rust so no capability entry is needed.
+tauri-plugin-global-shortcut = "2"
 rubato = "0.16"
 symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "isomp4", "aac"] }
 

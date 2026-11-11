@@ -8,8 +8,8 @@ use std::{
 };
 use tauri::{Manager, State};
 #[derive(Clone)]
-struct Host {
-    root: PathBuf,
+pub(crate) struct Host {
+    pub(crate) root: PathBuf,
     binary: PathBuf,
     upgrade_attempt: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
     /// Key of the last logged upgrade event, so a persistent refusal is logged once, not per poll.
@@ -300,13 +300,17 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
         other => other,
     }
 }
-async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String> {
+/// Set when the account order changes so the next `snapshot_since` is answered with a full snapshot
+/// (an "unchanged" reply would never carry the re-sorted accounts).
+static ACCOUNT_ORDER_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String> {
     let called = std::time::Instant::now();
     tauri::async_runtime::spawn_blocking(move || {
         let queue_ms = freddai_core::timing::ms(called);
         if method == "snapshot" || method == "snapshot_since" {
             let call_start = std::time::Instant::now();
-            let mut result = match call_with_recovery(&host, method, p.clone()) {
+            let force_full = method == "snapshot_since" && ACCOUNT_ORDER_DIRTY.swap(false, std::sync::atomic::Ordering::SeqCst);
+            let mut result = match call_with_recovery(&host, if force_full { "snapshot" } else { method }, p.clone()) {
                 // A host started by an older build has no incremental snapshot; use the full one.
                 // Revision 0 and host id "legacy" make the client replace its whole state each poll.
                 Err(e) if method == "snapshot_since" && e.contains("Unknown host command") => {
@@ -317,8 +321,27 @@ async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String
                     full["host_update_pending"] = json!(true);
                     full
                 }
+                Ok(mut full) if force_full => {
+                    // Account order changed: replace the client's whole state once so it sees the re-sorted accounts.
+                    full["revision"] = json!(0);
+                    full["hostId"] = json!("reorder");
+                    full["full"] = json!(true);
+                    let hello = freddai_core::host::call(&host.root, "hello", json!({}))?;
+                    full["host_update_pending"] = json!(!host_build_matches(hello["build"].as_str(), &host.binary));
+                    full
+                }
                 other => other?,
             };
+            // A broken order file must be loud, not silently ignored.
+            match crate::thread_list_settings::load_account_order(&host.root) {
+                Ok(Some(order)) => {
+                    if let Some(accounts) = result.get_mut("accounts").and_then(|a| a.as_array_mut()) {
+                        crate::thread_list_settings::order_accounts_json(accounts, &order);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("[account_order] unreadable account-order.json: {e}"),
+            }
             let call_ms = freddai_core::timing::ms(call_start);
             let mut hello_ms = 0.0;
             if method == "snapshot" {
@@ -628,6 +651,16 @@ async fn save_project_order(h: State<'_, Host>, order: Vec<String>) -> Result<()
     crate::thread_list_settings::save_project_order(&h.root, &order)
 }
 #[tauri::command]
+async fn load_account_order(h: State<'_, Host>) -> Result<Option<Vec<String>>, String> {
+    crate::thread_list_settings::load_account_order(&h.root)
+}
+#[tauri::command]
+async fn save_account_order(h: State<'_, Host>, order: Vec<String>) -> Result<(), String> {
+    crate::thread_list_settings::save_account_order(&h.root, &order)?;
+    ACCOUNT_ORDER_DIRTY.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+#[tauri::command]
 async fn save_thread_list(h: State<'_, Host>, settings: crate::thread_list_settings::ThreadListSettings) -> Result<(), String> {
     let dir = h.root.join("companion");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -665,6 +698,10 @@ async fn cancel_login(h: State<'_, Host>, account: String) -> Result<Value, Stri
 #[tauri::command]
 async fn auth_status(h: State<'_, Host>, account: String) -> Result<Value, String> {
     rpc(h.inner().clone(), "auth_status", json!({"account":account})).await
+}
+#[tauri::command]
+async fn auth_check(h: State<'_, Host>, account: String) -> Result<Value, String> {
+    rpc(h.inner().clone(), "auth_check", json!({"account":account})).await
 }
 #[tauri::command]
 async fn account_models(h: State<'_, Host>, account: String) -> Result<Value, String> {
@@ -1095,7 +1132,10 @@ fn awake_set_settings(h: State<'_,Host>, while_working:bool, while_paired:bool) 
 
 
 pub fn run(context: tauri::Context<tauri::Wry>) {
-    tauri::Builder::default().plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(crate::bug_walk::shortcut_plugin());
+    builder
         .register_uri_scheme_protocol(crate::local_preview::SCHEME, |_, request| crate::local_preview::respond(request.uri().path()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1122,6 +1162,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             crate::window_state::install(window, host.root.clone());
             app.manage(host);
             app.manage(crate::terminal::Terminals::default());
+            #[cfg(target_os = "macos")]
+            crate::bug_walk::init(app.handle(), &app.state::<Host>().root);
             crate::updater::start(app.handle());
             #[cfg(target_os = "macos")]
             crate::updater::install_menu(app)?;
@@ -1180,6 +1222,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             save_thread_list,
             load_project_order,
             save_project_order,
+            load_account_order,
+            save_account_order,
             commander_state,
             commander_todos,
             commander_todo_save,
@@ -1201,6 +1245,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             login_state,
             cancel_login,
             auth_status,
+            auth_check,
             account_usage,
             consume_reset,
             account_models,
@@ -1274,7 +1319,15 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             #[cfg(target_os = "macos")]
             voice_stop_speaking,
             #[cfg(target_os = "macos")]
-            voice_list_voices
+            voice_list_voices,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_start,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_stop,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_cancel,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_send,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_send_transcript,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_orphans,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_settings_get,
+            #[cfg(target_os = "macos")] crate::bug_walk::bug_walk_settings_set
         ])
         .build(context)
         .expect("error building Freddai")
@@ -1284,6 +1337,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Exit) {
+                // Finalize a running bug walk (stop + SIGTERM, bounded wait) before the process goes away.
+                crate::bug_walk::shutdown(app);
                 crate::voice::transcribe::unload_all();
             }
             #[cfg(not(target_os = "macos"))]

@@ -1,13 +1,14 @@
 {
   "build": {
-    "beforeBuildCommand": "bash ../../scripts/build-computer-use.sh && pnpm build"
+    "beforeBuildCommand": "bash ../../scripts/build-computer-use.sh && bash ../../scripts/build-bug-walk.sh && pnpm build"
   },
   "bundle": {
     "macOS": {
       "minimumSystemVersion": "10.15"
     },
     "resources": {
-      "../computer-use/.build/Freddai Computer.app/": "computer-use/Freddai Computer.app/"
+      "../computer-use/.build/Freddai Computer.app/": "computer-use/Freddai Computer.app/",
+      "../bug-walk/.build/Freddai Bug Walk.app/": "bug-walk/Freddai Bug Walk.app/"
     }
   }
 }

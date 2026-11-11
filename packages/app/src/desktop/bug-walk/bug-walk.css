@@ -1,0 +1,67 @@
+/* Bug walk: recording pill (own window), send sheet, progress dock. Uses the adaptive tokens from desktop.css so themes and light/dark follow. */
+.bug-walk-pill {
+  box-sizing: border-box; width: 100vw; height: 100vh; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 12px;
+  background: #1b1c20; color: #ecebf2; border: 1px solid #ffffff1f; border-radius: 12px; font: 500 12px/1 system-ui, sans-serif;
+  -webkit-user-select: none; user-select: none; overflow: hidden;
+}
+html:has(.bug-walk-pill), body:has(.bug-walk-pill) { background: transparent; margin: 0; overflow: hidden; }
+.bug-walk-dot { width: 9px; height: 9px; border-radius: 50%; background: #ff453a; flex-shrink: 0; animation: bug-walk-pulse 1.2s ease-in-out infinite; }
+.bug-walk-clock { font-variant-numeric: tabular-nums; min-width: 38px; }
+.bug-walk-meter { flex: 1; height: 5px; border-radius: 3px; background: #ffffff1f; overflow: hidden; }
+.bug-walk-meter > span { display: block; height: 100%; background: #4cd964; transform-origin: left; transition: transform 80ms linear; }
+.bug-walk-stop { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 6px; border: 0; background: #ff453a; color: #fff; font: inherit; cursor: pointer; }
+.bug-walk-stop:hover { background: #ff6258; }
+.bug-walk-stop:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+html[data-freddai-appearance="light"] .bug-walk-pill { background: #f6f6f8; color: #1c1c1f; border-color: #0000001f; }
+html[data-freddai-appearance="light"] .bug-walk-meter { background: #0000001a; }
+@keyframes bug-walk-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .bug-walk-dot { animation: none; } .bug-walk-meter > span { transition: none; } .bug-walk-spin { animation: none !important; } }
+
+.bug-walk-sheet { max-width: 440px; }
+.bug-walk-fields { display: flex; flex-direction: column; gap: 10px; }
+.bug-walk-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--adaptive-muted, #92939f); }
+.bug-walk-fields select { height: 34px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border, #ffffff24); background: transparent; color: var(--adaptive-text, inherit); font-size: 13px; }
+.bug-walk-fields select:disabled { opacity: 0.55; }
+.bug-walk-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bug-walk-hint { margin: 0; font-size: 11px; color: var(--adaptive-muted, #92939f); }
+.bug-walk-error { margin: 0; font-size: 12px; color: #ef6868; overflow-wrap: anywhere; white-space: pre-wrap; }
+html[data-freddai-appearance="light"] .bug-walk-error { color: #c12b36; }
+.bug-walk-link { background: none; border: 0; padding: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; }
+.bug-walk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.bug-walk-shortcut { display: flex; gap: 8px; align-items: center; }
+.bug-walk-shortcut input { min-width: 240px; }
+
+.bug-walk-dock { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); }
+.bug-walk-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 12px;
+  background: var(--adaptive-card, #1d1e22); color: var(--adaptive-text, #d6d3df); border: 1px solid var(--adaptive-border, #303137); box-shadow: 0 6px 24px #0006;
+  animation: motion-rise-in var(--motion-base, 240ms) var(--motion-ease-out, ease-out) both;
+}
+.bug-walk-card[data-state="error"] { border-color: #ef686866; }
+.bug-walk-card > header { display: flex; align-items: center; gap: 8px; }
+.bug-walk-card > header .bug-walk-close { margin-left: auto; }
+.bug-walk-close { background: none; border: 0; color: var(--adaptive-muted, #92939f); cursor: pointer; padding: 2px; border-radius: 4px; }
+.bug-walk-close:hover { color: var(--adaptive-text, #d6d3df); }
+.bug-walk-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.bug-walk-steps li { display: flex; align-items: center; gap: 7px; color: var(--adaptive-muted, #92939f); }
+.bug-walk-steps li[data-step="active"] { color: var(--adaptive-text, #d6d3df); font-weight: 600; }
+.bug-walk-steps li[data-step="done"] svg { color: #4cd964; }
+.bug-walk-spin { animation: bug-walk-rotate 1s linear infinite; }
+@keyframes bug-walk-rotate { to { transform: rotate(360deg); } }
+.bug-walk-transcript summary { cursor: pointer; color: var(--adaptive-muted, #92939f); }
+.bug-walk-transcript pre { margin: 6px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { .bug-walk-card { animation: none; } }
+
+.bug-walk-split { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--adaptive-muted, #92939f); }
+.bug-walk-split-label { margin-right: 4px; }
+.bug-walk-split button { height: 28px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border, #ffffff24); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.bug-walk-split button[data-active="true"] { background: var(--adaptive-card, #1d1e22); color: var(--adaptive-text, #d6d3df); border-color: var(--adaptive-text, #d6d3df); }
+.bug-walk-count { margin-right: auto; align-self: center; color: var(--adaptive-muted, #92939f); }
+
+.bug-walk-banner { padding: 8px 12px; border-radius: 10px; font-size: 12px; background: var(--adaptive-card, #1d1e22); color: #ef6868; border: 1px solid #ef686866; overflow-wrap: anywhere; }
+.bug-walk-card[data-state="recording"] { border-color: #ff453a88; }
+.bug-walk-rec-row { display: flex; align-items: center; gap: 10px; }
+.bug-walk-rec-row .bug-walk-clock { font-size: 15px; font-weight: 600; }
+.bug-walk-stop-lg { height: 34px; padding: 0 16px; font-size: 13px; font-weight: 600; margin-left: auto; }
+.bug-walk-confirm { display: flex; align-items: center; gap: 8px; }
+.bug-walk-confirm span { margin-right: auto; }

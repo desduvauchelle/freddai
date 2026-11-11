@@ -18,6 +18,17 @@ pub struct Transcript {
     pub text: String,
     pub duration_ms: u64,
     pub model: String,
+    /// Whisper segments with start/end in seconds, cleaned like `text`. Empty when there was no speech.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<Segment>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub start_s: f32,
+    pub end_s: f32,
+    pub text: String,
 }
 
 struct Loaded {
@@ -94,14 +105,14 @@ pub fn transcribe_samples(root: &Path, samples: &[f32]) -> Result<Transcript, St
     let language = settings.language;
     let duration_ms = samples.len() as u64 * 1000 / 16_000;
     if samples.len() < MIN_SAMPLES || rms(samples) < 1e-4 {
-        return Ok(Transcript { text: String::new(), duration_ms, model: id });
+        return Ok(Transcript { text: String::new(), duration_ms, model: id, segments: vec![] });
     }
     let started = Instant::now();
     let params = WhisperInferenceParams {
         language: if language == "auto" || language.is_empty() { None } else { Some(language) },
         ..WhisperInferenceParams::default()
     };
-    let text = {
+    let (text, raw_segments) = {
         let mut g = ENGINE.lock().unwrap_or_else(|p| p.into_inner());
         load_into(&mut g, root, &id)?;
         let loaded = g.as_mut().expect("engine loaded");
@@ -110,15 +121,20 @@ pub fn transcribe_samples(root: &Path, samples: &[f32]) -> Result<Transcript, St
             .transcribe_with(samples, &params)
             .map_err(|e| format!("Transcription failed: {e}"))?;
         loaded.last_used = Instant::now();
-        result.text.trim().to_string()
+        (result.text.trim().to_string(), result.segments.unwrap_or_default())
     };
     let text = super::cleanup::clean_transcript(&text, settings.remove_filler_words);
+    let segments: Vec<Segment> = raw_segments
+        .into_iter()
+        .map(|s| Segment { start_s: s.start, end_s: s.end, text: super::cleanup::clean_transcript(s.text.trim(), settings.remove_filler_words) })
+        .filter(|s| !s.text.is_empty())
+        .collect();
     eprintln!(
         "voice.transcribe model={id} audio_ms={duration_ms} elapsed_ms={} chars={}",
         started.elapsed().as_millis(),
         text.chars().count()
     );
-    Ok(Transcript { text, duration_ms, model: id })
+    Ok(Transcript { text, duration_ms, model: id, segments })
 }
 
 fn rms(s: &[f32]) -> f32 {

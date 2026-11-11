@@ -3,7 +3,8 @@
   "description": "Local workspace UI and native file selection",
   "windows": [
     "main",
-    "thread-*"
+    "thread-*",
+    "bug-walk-pill"
   ],
   "permissions": [
     "core:default",
@@ -12,6 +13,8 @@
     { "identifier": "opener:allow-open-path", "allow": [{ "path": "$HOME/**" }, { "path": "/tmp/**" }, { "path": "/private/tmp/**" }, { "path": "/private/var/folders/**" }] },
     "dialog:allow-open",
     "core:window:allow-start-dragging",
-    "core:window:allow-close"
+    "core:window:allow-close",
+    "core:webview:allow-create-webview-window",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "x-apple.systempreferences:*" }] }
   ]
 }

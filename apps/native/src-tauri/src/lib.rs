@@ -44,6 +44,8 @@ mod screen_grab;
 mod companion_server;
 #[cfg(target_os = "macos")]
 mod voice;
+#[cfg(target_os = "macos")]
+mod bug_walk;
 #[cfg_attr(not(any(target_os = "ios", target_os = "android")), allow(dead_code))]
 mod client_diag;
 #[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
