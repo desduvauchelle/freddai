@@ -39,7 +39,7 @@ export type CommanderHeartbeat = { enabled: boolean; intervalMinutes: number; ac
 export type CommanderSettings = { autonomy: CommanderAutonomy; heartbeat: CommanderHeartbeat };
 export const DEFAULT_COMMANDER_SETTINGS: CommanderSettings = {
   autonomy: { mode: "propose", maxConcurrent: 2, dailyStartCap: 5, allowedProjectIds: [] },
-  heartbeat: { enabled: true, intervalMinutes: 60, activeStart: "08:00", activeEnd: "20:00" },
+  heartbeat: { enabled: false, intervalMinutes: 60, activeStart: "08:00", activeEnd: "20:00" },
 };
 
 export const commanderApi = {

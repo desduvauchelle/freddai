@@ -1,3 +1,4 @@
+import { SpeechSettings, type SpeechConnection } from "./SpeechSettings";
 import { useEffect, useState } from "react";
 import { CircleAlert } from "lucide-react";
 import type { Project } from "../types";
@@ -12,14 +13,14 @@ const msg = (e: unknown) => e instanceof Error ? e.message : String(e);
 const num = (v: string, min: number) => Math.max(min, Math.floor(Number(v)) || min);
 
 /** Autonomy and heartbeat settings for the Commander. Save errors from the backend (which name the failing field) are shown inline. */
-export function CommanderSettings({ projects }: { projects: readonly Project[] }) {
+export function CommanderSettings({ projects, api = commanderApi, speechConnection }: { projects: readonly Pick<Project, "id" | "name" | "kind">[]; speechConnection?: SpeechConnection; api?: Pick<typeof commanderApi, "getCommanderSettings" | "saveCommanderSettings"> }) {
   const [saved, setSaved] = useState<Settings | null>(null), [draft, setDraft] = useState<Settings>(DEFAULT_COMMANDER_SETTINGS);
   const [loadError, setLoadError] = useState(""), [error, setError] = useState(""), [busy, setBusy] = useState(false), [done, setDone] = useState(false);
   useEffect(() => {
     let alive = true;
-    commanderApi.getCommanderSettings().then(s => { if (alive) { setSaved(s); setDraft(s); } }).catch(e => alive && setLoadError(`Couldn't load autonomy settings: ${msg(e)}`));
+    api.getCommanderSettings().then(s => { if (alive) { setSaved(s); setDraft(s); } }).catch(e => alive && setLoadError(`Couldn't load autonomy settings: ${msg(e)}`));
     return () => { alive = false; };
-  }, []);
+  }, [api]);
   const { autonomy, heartbeat } = draft;
   const dirty = !!saved && JSON.stringify(saved) !== JSON.stringify(draft);
   const patchA = (p: Partial<Settings["autonomy"]>) => { setDraft(d => ({ ...d, autonomy: { ...d.autonomy, ...p } })); setDone(false); };
@@ -28,12 +29,13 @@ export function CommanderSettings({ projects }: { projects: readonly Project[] }
   const toggle = (id: string) => patchA({ allowedProjectIds: autonomy.allowedProjectIds.includes(id) ? autonomy.allowedProjectIds.filter(x => x !== id) : [...autonomy.allowedProjectIds, id] });
   async function save() {
     setBusy(true); setError(""); setDone(false);
-    try { const s = await commanderApi.saveCommanderSettings(draft); setSaved(s); setDraft(s); setDone(true); }
+    try { const s = await api.saveCommanderSettings(draft); setSaved(s); setDraft(s); setDone(true); }
     catch (e) { setError(`Couldn't save: ${msg(e)}`); }
     finally { setBusy(false); }
   }
   const intervals = HEARTBEAT_INTERVALS.includes(heartbeat.intervalMinutes) ? HEARTBEAT_INTERVALS : [...HEARTBEAT_INTERVALS, heartbeat.intervalMinutes].sort((a, b) => a - b);
   return <div className="commander-profile commander-settings">
+    <SpeechSettings connection={speechConnection} />
     {loadError && <p className="commander-error" role="alert"><CircleAlert size={13} aria-hidden="true" />{loadError}</p>}
     <section aria-labelledby="cs-autonomy">
       <h3 id="cs-autonomy">Autonomy</h3>

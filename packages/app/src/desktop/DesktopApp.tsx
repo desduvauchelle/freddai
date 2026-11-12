@@ -21,6 +21,9 @@ import { browserThreadRecencyTracker } from "../thread-recency";
 import { migrateLocalRead, readFromThreads } from "../read-sync";
 import { Permission } from "./AgentRequest";
 import { MessageQueue } from "./MessageQueue";
+import { PreviewContext } from "../conversation/localhostPreview";
+import { BrowserContext } from "../conversation/browser-context";
+import { makeDesktopPreviewOpen } from "./previewOpen";
 import { hasSpeech } from "../conversation/voiceCallMarkup";
 import { listenNativeDrops } from "./native-drops";
 import { projectDropTarget } from "./project-drop";
@@ -53,7 +56,7 @@ import { ShipButton, SHIP_PROMPT } from "./ShipButton";
 import { tauriGitClient } from "./git-actions";
 import type { PaneSelection } from "./git-history";
 import { UsageFooter } from "./UsageFooter";
-import { AccountPicker } from "./AccountPicker";
+import { ComposerAgentPicker } from "./ComposerAgentPicker";
 import { useAccountUsagePoller } from "./useAccountUsage";
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@freddai/ui/components/field";
 import { Switch } from "@freddai/ui/components/switch";
@@ -90,7 +93,7 @@ import { applySnapshotDelta, type SnapshotReply } from "./applySnapshotDelta";
 import { getDraft, setDraft as setThreadDraft, updateDraft, useDraft, useHasDraftText, saveDraftsForRestart, restoreDrafts, newThreadDraftKey } from "./drafts";
 import { updateBanner } from "./app-update";
 import { useAppUpdate } from "./use-app-update";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type Ref } from "react";
+import { Fragment, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type Ref } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -162,7 +165,7 @@ import { terminalPanel } from "./terminal-panel-state";
 import { TerminalPanel } from "./TerminalPanel";
 import { runInTerminal } from "./terminal-sessions";
 import { closePane, focusPane, focusedThread, openThreads, otherThread, restoreSplitView, selectThread, splitPreference, toggleSplit, type SplitPreference, type SplitSide, type SplitView } from "./split-view";
-import { hostUpdateNotice, shouldSurfacePollError, RESTART_NOW_LABEL } from "./host-update";
+import { hostUpdateNotice, launchErrorMessage, shouldSurfacePollError, RESTART_NOW_LABEL } from "./host-update";
 import { interruptedThreads, interruptedBannerText, resumeAll, resumeFailureMessage } from "./interrupted";
 import "../workspace.css";
 import { formatProjectName } from "../projectName";
@@ -246,6 +249,13 @@ function SplitToggle({ split, onToggle }: { split: boolean; onToggle: () => void
   );
 }
 // The composer textarea owns its subscription to the thread's draft, so typing re-renders only this component.
+/** Inside BrowserWorkspace: localhost links in this thread start the Mac dev server on demand, then open in the side panel. */
+function DesktopPreviewProvider({ threadId, children }: { threadId: string; children: ReactNode }) {
+  const openInPanel = useContext(BrowserContext);
+  const open = useMemo(() => isTauri() && openInPanel ? makeDesktopPreviewOpen({ threadId, invoke, openInPanel }) : null, [threadId, openInPanel]);
+  return <PreviewContext.Provider value={open}>{children}</PreviewContext.Provider>;
+}
+
 function ReplyTextarea({ threadId, id, composerRef, placeholder, onSend }: {
   threadId: string; id?: string; composerRef?: Ref<HTMLTextAreaElement>; placeholder: string;
   onSend: (e?: FormEvent, steer?: boolean) => Promise<void>;
@@ -333,6 +343,12 @@ function ConversationPane({
     },
     view: { busy: busy(task), messages: task.messages },
   });
+  useEffect(() => {
+    if (!project?.kind || project.kind !== "commander") return;
+    const start = () => { if (voiceCall.snapshot) voiceCall.end(); else voiceCall.start(); };
+    window.addEventListener("freddai:commander-call", start);
+    return () => window.removeEventListener("freddai:commander-call", start);
+  }, [project?.kind, voiceCall]);
   const [scheduleOpen,setScheduleOpen] = useState(false);
   const [renameRequest, setRenameRequest] = useState(0);
   const renameChosen = useRef(false);
@@ -375,6 +391,7 @@ function ConversationPane({
       onPointerDownCapture={onFocus}
     >
       <BrowserWorkspace key={task.id} threadId={task.id}>
+      <DesktopPreviewProvider threadId={task.id}>
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}><DialogContent className="dark capture-panel"><DialogHeader><DialogTitle>Recurring tasks</DialogTitle><DialogDescription>Create from this thread or manage existing schedules.</DialogDescription></DialogHeader><ScheduleManager db={db} native={native} context={task} onRefresh={refresh} onSelect={id=>{setScheduleOpen(false);onOpenThread(id);}}/></DialogContent></Dialog>
       <div className="pane-title" data-tauri-drag-region={standalone || undefined} aria-current={split && focused ? "true" : undefined}>
         <span className="pane-project" title={project?.name}>
@@ -409,7 +426,7 @@ function ConversationPane({
                 disabled={working || !native || (task.archived ? !capabilities.change : !capabilities.archive || busy(task))}
                 onSelect={() => void changeThread(task.id, task.archived ? "unarchive" : "archive")}
               >{task.archived ? <ArchiveRestore size={14} aria-hidden="true" /> : <Archive size={14} aria-hidden="true" />}{task.archived ? "Unarchive" : "Archive"}</DropdownMenuItem>}
-              {task.deleted_at == null && <DropdownMenuItem variant="destructive" disabled={working || !native || !!db.host_update_pending || !capabilities.delete} onSelect={onDelete}><Trash2 size={14} aria-hidden="true" />Delete…</DropdownMenuItem>}
+              {task.deleted_at == null && <DropdownMenuItem variant="destructive" disabled={working || !native || !capabilities.delete} onSelect={onDelete}><Trash2 size={14} aria-hidden="true" />Delete…</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onClose}><X size={14} aria-hidden="true" />{standalone ? "Close window" : split ? `Close ${side} pane` : "Close conversation"}</DropdownMenuItem>
             </DropdownMenuContent>
@@ -517,8 +534,7 @@ function ConversationPane({
             {(staging || attachments.length > 0) && <span className="attachment-status" role="status">
               {staging ? "Copying attachments…" : `${attachments.length} file${attachments.length === 1 ? "" : "s"} ready`}
             </span>}
-            <AccountPicker accounts={db.accounts} value={selection.agent || taskAccount?.id || ""} onChange={id => onSelection({ agent: id, model: "freddai-level:normal", effort: "default" })} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
-            <AgentControls key={`${task.id}:${selection.agent || ""}`} account={db.accounts.find(a => a.id === selection.agent) || taskAccount} native={native} value={selection} onChange={onSelection} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
+            <ComposerAgentPicker key={task.id} options={db.accounts.map(a => ({ id: a.id, label: agentDisplayName(a), account: a }))} agent={selection.agent || taskAccount?.id || ""} onAgentChange={id => onSelection({ agent: id, model: "freddai-level:normal", effort: "default" })} account={db.accounts.find(a => a.id === selection.agent) || taskAccount} native={native} modelConfiguration={db.preferences.model_configuration} value={selection} onChange={onSelection} disabled={working || (task.status === "archived" || !!task.archived || task.deleted_at != null)}/>
             {busy(task) && <Button type="button" size="icon" variant="outline" aria-label="Stop current turn and pause queue" disabled={working} onClick={() => void action(async () => { await invoke("stop", { session: task.id }); await refresh(); })}><Square size={14}/></Button>}
             <SendButton
               threadId={task.id}
@@ -538,6 +554,7 @@ function ConversationPane({
         </p>
       </div>
       {native && terminalCwd && terminalOpen && (!split || focused) && <TerminalPanel cwd={terminalCwd} />}
+      </DesktopPreviewProvider>
       </BrowserWorkspace>
     </section>
   );
@@ -714,7 +731,7 @@ function DesktopWorkspace() {
   const resumeRequest = useRef(crypto.randomUUID());
   const [resumePrompt, setResumePrompt] = useState("Continue where you left off.");
   const dialogThread = db.sessions.find(t => t.id === threadDialog?.id);
-  const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default");
+  const [worktree, setWorktree] = useState(false), [model, setModel] = useState(""), [effort, setEffort] = useState("default"), [speed, setSpeed] = useState("");
   const [homeAccount, setHomeAccount] = usePreference<string>("freddai.home-agent-account", "");
   const [homeSelections, setHomeSelections] = usePreference<Record<string, AgentSelection>>("freddai.home-agent-selections", {});
   // Launches in flight, shown as "Sending…" rows on the project card until the real thread is in the snapshot.
@@ -722,7 +739,7 @@ function DesktopWorkspace() {
   const endPending = (id: string) => setPendingLaunches(list => list.filter(p => p.id !== id));
   // True while the New thread dialog was opened from a Home project card: sending returns to the dashboard.
   const fromHomeCard = useRef(false);
-  useEffect(() => { if (dialog !== "new") { fromHomeCard.current = false; keepSelection.current = false; } }, [dialog]);
+  useEffect(() => { if (dialog !== "new") { fromHomeCard.current = false; keepSelection.current = null; } }, [dialog]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypass");
   const [replyPermissions, setReplyPermissions] = useState<Record<string, PermissionMode>>({});
   const [replySelections, setReplySelections] = useState<Record<string, AgentSelection>>({});
@@ -807,9 +824,10 @@ function DesktopWorkspace() {
   const effective =
     accountId === "default" ? resolveAccount(db, destination) : accountId;
   const newAccount = db.accounts.find(a => a.id === effective);
-  const replySelectionFor = (t: Session) => replySelections[t.id] || { model: t.options?.model || "", effort: t.options?.effort || "default" };
-  const keepSelection = useRef(false);
-  useEffect(() => { if (keepSelection.current) { keepSelection.current = false; return; } setModel(""); setEffort("default"); }, [newAccount?.provider]);
+  const replySelectionFor = (t: Session) => replySelections[t.id] || { model: t.options?.model || "", effort: t.options?.effort || "default", speed: t.options?.speed === "fast" ? "fast" : undefined };
+  // Provider whose restored selection must survive the provider-change reset below (null: nothing to keep).
+  const keepSelection = useRef<string | null>(null);
+  useEffect(() => { if (keepSelection.current !== null && keepSelection.current === newAccount?.provider) { keepSelection.current = null; return; } keepSelection.current = null; setModel(""); setEffort("default"); setSpeed(""); }, [newAccount?.provider]);
   const [trackThreadRecency] = useState(browserThreadRecencyTracker);
   const rawSnapshot = useRef<Database>(empty);
   function acceptSnapshot(next: Database) {
@@ -968,13 +986,15 @@ function DesktopWorkspace() {
     setScheduleView(null);
     setWorktree(db.preferences.use_worktree ?? false);
     fromHomeCard.current = fromCard;
-    // Agent: the project's last-used account (Project.last, recorded by the runtime), else the Home/project/global resolution.
-    const last = db.projects.find(p => p.id === project)?.last;
+    // Agent: the user's remembered pick when the policy is "last selected"; otherwise the project's last-used account (Project.last, recorded by the runtime), else the Home/project/global resolution.
+    const pickedAgent = db.preferences.new_thread_policy === "last_selected" ? db.preferences.last_selected : undefined;
+    const last = pickedAgent && db.accounts.some(a => a.id === pickedAgent) ? pickedAgent : db.projects.find(p => p.id === project)?.last;
     const plan = resolveHomeTile(project);
     const agent = db.accounts.find(a => a.id === last)?.id ?? (plan.ok ? plan.account : "default");
     const selection = homeSelections[agent];
-    keepSelection.current = fromCard && !!selection?.model;
-    setModel(fromCard ? selection?.model ?? "" : ""); setEffort(fromCard ? selection?.effort ?? "default" : "default");
+    // Model, effort and speed: whatever was last sent with this agent (persisted in homeSelections), not just when opened from a Home card.
+    keepSelection.current = selection?.model ? db.accounts.find(a => a.id === agent)?.provider ?? null : null;
+    setModel(selection?.model ?? ""); setEffort(selection?.effort ?? "default"); setSpeed(selection?.speed === "fast" ? "fast" : "");
     draftRequest.current = crypto.randomUUID();
     setAccountId(agent);
     setProjectId(project);
@@ -1183,11 +1203,13 @@ function DesktopWorkspace() {
     const stayHome = fromHomeCard.current;
     // From a project card: close the dialog now and return to the dashboard, where the pending row shows the send.
     if (stayHome) { setDialog(null); setHome(true); }
+    // Remember what was sent with: the next new thread for this agent starts from it, across restarts.
+    setHomeSelections(previous => ({ ...previous, [effective]: { model: model.trim(), effort, speed: speed === "fast" ? "fast" : undefined } }));
     await action(async () => {
       await launchThread({
         select: !stayHome,
         project: projectId, account: effective, prompt: draft, attachments: newAttachments, requestId: draftRequest.current,
-        options: { permission_mode: effectivePermissionMode(newAccount?.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" || !["codex","claude"].includes(db.accounts.find(a => a.id === effective)?.provider || "") ? null : effort, attachments: newAttachments.map(f => f.id), request_id: draftRequest.current },
+        options: { permission_mode: effectivePermissionMode(newAccount?.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" || !["codex","claude"].includes(db.accounts.find(a => a.id === effective)?.provider || "") ? null : effort, speed: speed === "fast" ? "fast" : null, attachments: newAttachments.map(f => f.id), request_id: draftRequest.current },
       });
       setDraft("");
       setNewAttachments([]);
@@ -1209,7 +1231,7 @@ function DesktopWorkspace() {
       messages: [{ id: requestId, role: "user", text: prompt, attachments }],
     };
     const sentNavigation = navigationRevision.current;
-    setLaunching(preview);
+    if (select) setLaunching(preview);
     setPendingLaunches(list => [{ id: requestId, project, title: pendingTitle(prompt) }, ...list]);
     try {
       const commander = db.projects.find(p => p.id === project)?.kind === "commander";
@@ -1217,7 +1239,7 @@ function DesktopWorkspace() {
       const sid = await invoke<string>("launch", { project, account: existing ? null : account, prompt, options, existing });
       onCreated?.(sid);
       setPendingLaunches(list => list.map(p => p.id === requestId ? { ...p, threadId: sid } : p));
-      setLaunching({ ...preview, id: sid });
+      if (select) setLaunching({ ...preview, id: sid });
       if (select && navigationRevision.current === sentNavigation) {
         setSelected(sid);
         if (commander) { commanderThread.current = sid; setCommanderOpen(true); }
@@ -1225,9 +1247,9 @@ function DesktopWorkspace() {
       }
       return sid;
     } catch (error) {
-      setLaunching(null);
+      if (select) setLaunching(null);
       endPending(requestId);
-      throw error;
+      throw launchErrorMessage(String(error), db);
     }
   }
   // Keep a call begun in the empty composer alive when its first utterance opens the thread.
@@ -1250,7 +1272,7 @@ function DesktopWorkspace() {
         try {
           const requestId = crypto.randomUUID();
           await launchThread({ onCreated: id => { newCallThread.current = id; }, project: projectId, account: effective, prompt, attachments: [], requestId,
-            options: { permission_mode: effectivePermissionMode(newAccount.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" ? null : effort, attachments: [], request_id: requestId } });
+            options: { permission_mode: effectivePermissionMode(newAccount.provider, permissionMode), worktree, model: model.trim() || null, effort: effort === "default" ? null : effort, speed: speed === "fast" ? "fast" : null, attachments: [], request_id: requestId } });
           await refresh();
         } finally { actionLock.current = false; setWorking(false); }
       },
@@ -1276,7 +1298,7 @@ function DesktopWorkspace() {
       const requestId = crypto.randomUUID();
       await launchThread({
         project: plan.project, account: plan.account, prompt, attachments: [], requestId, select: false,
-        options: { permission_mode: plan.permission_mode, worktree: plan.worktree, model: plan.model, effort: plan.effort, attachments: [], request_id: requestId },
+        options: { permission_mode: plan.permission_mode, worktree: plan.worktree, model: plan.model, effort: plan.effort, speed: plan.speed, attachments: [], request_id: requestId },
       });
       await refresh();
       endPending(requestId);
@@ -1284,7 +1306,7 @@ function DesktopWorkspace() {
     } finally { actionLock.current = false; setWorking(false); }
   }
   /** Dashboard command center launch: new thread in the project with the card's agent/model/difficulty. Never goes through Commander. */
-  async function launchCommand({ projectId, accountId, model, effort, prompt }: { projectId: string; accountId: string; model: string; effort: string; prompt: string }) {
+  async function launchCommand({ projectId, accountId, model, effort, speed: launchSpeed, prompt }: { projectId: string; accountId: string; model: string; effort: string; speed?: string; prompt: string }) {
     if (!native) throw new Error("Open the Freddai desktop app to start threads.");
     const account = db.accounts.find(a => a.id === accountId);
     if (!account) throw new Error("The selected agent account no longer exists.");
@@ -1296,7 +1318,7 @@ function DesktopWorkspace() {
       const requestId = crypto.randomUUID();
       await launchThread({
         project: projectId, account: accountId, prompt, attachments: [], requestId, select: false,
-        options: { permission_mode: base.permission_mode, worktree: base.worktree, model: model.trim() || null, effort: effort === "default" || !["codex", "claude"].includes(account.provider) ? null : effort, attachments: [], request_id: requestId },
+        options: { permission_mode: base.permission_mode, worktree: base.worktree, model: model.trim() || null, effort: effort === "default" || !["codex", "claude"].includes(account.provider) ? null : effort, speed: launchSpeed === "fast" ? "fast" : null, attachments: [], request_id: requestId },
       });
       await refresh();
       endPending(requestId);
@@ -1355,12 +1377,12 @@ function DesktopWorkspace() {
         try {
           await invoke(command, {
             session: task.id, project: task.project, account: null, prompt: reply,
-            options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: [], request_id: requestId },
+            options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, speed: replySelectionFor(task).speed === "fast" ? "fast" : null, attachments: [], request_id: requestId },
             existing: task.id,
           });
         } catch (error) {
           setOutgoing(old => old.filter(m => m.message.id !== requestId));
-          throw error;
+          throw launchErrorMessage(String(error), db);
         }
         setOutgoing(old => old.map(m => m.message.id === requestId ? { ...m, message: { ...m.message, delivery: "Sent · syncing…" } } : m));
         delete replyRequests.current[task.id];
@@ -1388,14 +1410,14 @@ function DesktopWorkspace() {
         project: task.project,
         account: null,
         prompt: reply,
-        options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, attachments: attachments.map(f => f.id), request_id: requestId },
+        options: { agent: replySelectionFor(task).agent, permission_mode: effectivePermissionMode((db.accounts.find(a => a.id === replySelectionFor(task).agent) || taskAccount).provider, replyPermissions[task.id] || savedPermissionMode(task.options?.permission_mode)), model: replySelectionFor(task).model.trim() || null, effort: replySelectionFor(task).effort === "default" ? null : replySelectionFor(task).effort, update_agent_controls: true, speed: replySelectionFor(task).speed === "fast" ? "fast" : null, attachments: attachments.map(f => f.id), request_id: requestId },
         existing: task.id,
       });
       } catch (error) {
         setOutgoing(old => old.filter(m => m.message.id !== requestId));
         updateDraft(task.id, previous => previous ? `${reply}\n${previous}` : reply);
         setReplyAttachments(previous => ({ ...previous, [task.id]: [...attachments, ...(previous[task.id] || [])] }));
-        throw error;
+        throw launchErrorMessage(String(error), db);
       }
       setOutgoing(old => old.map(m => m.message.id === requestId ? { ...m, message: { ...m.message, delivery: "Sent · syncing…" } } : m));
       delete replyRequests.current[task.id];
@@ -1723,7 +1745,7 @@ function DesktopWorkspace() {
             (!activeWorkspace || activeWorkspace.projects.includes(t.project)) &&
             (projectFilter === "all" || t.project === projectFilter))} />
           {native && <DashboardCall onActive={setDashboardCallActive} visible={homeActive && !settingsVisible} enabled={!!commanderData.state?.project.account || db.accounts.length > 0} sendText={sendToCommander} purgeVoiceQueue={async () => { if (await purgeVoiceQueued(db.queues?.find(q => q.session === commanderData.state?.thread_id))) await refresh(); }}
-            commandCenter={{ projects: db.projects, accounts: db.accounts, native, homeAccountId: homeAccount || undefined, homeSelections, launch: launchCommand }}
+            projectNameUppercase={projectNameUppercase} commandCenter={{ projects: db.projects, accounts: db.accounts, native, modelConfiguration: db.preferences.model_configuration, homeAccountId: homeAccount || undefined, homeSelections, launch: launchCommand }}
             view={{ busy: db.sessions.some(t => t.id === commanderData.state?.thread_id && busy(t)), messages: db.sessions.find(t => t.id === commanderData.state?.thread_id)?.messages ?? [] }} />}
           <Button
             variant="ghost"
@@ -1809,7 +1831,6 @@ function DesktopWorkspace() {
                     <strong>{projectImportBusy ? "Adding project folders…" : "Drop folders to add projects"}</strong>
                     <span>Folder names and your account defaults are used automatically.</span>
                   </div>}
-                  {launching?.id === "pending-launch" && <div className="task-row compact-session" role="status" aria-label="Starting new thread"><Dot status="starting"/><span>{launching.title}</span><span>Starting…</span></div>}
                   <div className="dashboard-navigation">
                     <button
                       type="button"
@@ -2009,6 +2030,7 @@ function DesktopWorkspace() {
                               }}><CalendarClock size={15}/><span><strong>{s.name}</strong><small>{scheduleEnded(s) ? "Ended" : s.enabled ? `Next ${new Date(s.next_due).toLocaleString()}` : "Paused"}</small></span></button>)}
                               <Button variant="ghost" size="sm" onClick={() => { setScheduleView({project:pid}); setHome(false); setDialog(null); setPane(null); selectScheduleRun(""); }}> <Plus size={13}/> New scheduled task</Button>
                             </div>}
+                            {pendingLaunches.filter(item => item.project === pid && !item.threadId).map(item => <div key={item.id} className="task-row compact-session" role="status" aria-label="Starting new thread"><Dot status="starting"/><span>{item.title}</span></div>)}
                             <ThreadList key={`${filter}:${query}:${hideRead}:${recentFinished}`} threads={visible.filter((t) => t.project === pid)} renderRow={row} />
                             {recentGroup(recentFor(pid), pid)}
                             {older(pid)}
@@ -2069,8 +2091,7 @@ function DesktopWorkspace() {
                         }}/>
                         <div className="new-conversation-options">
                           <Picker label="Project" value={projectId || "__global__"} onChange={value => setProjectId(value === "__global__" ? "" : value)} options={[{ value: "__global__", label: "Select project" }, ...db.projects.map(p => ({ value: p.id, label: p.name }))]}/>
-                          <AccountPicker accounts={db.accounts} disabled={!native || working} value={effective || "default"} onChange={selectNewAccount} placeholderOption={!effective ? { value: "default", label: "No default account configured" } : undefined}/>
-                          <AgentControls account={newAccount} native={native} value={{ model, effort }} onChange={value => { setModel(value.model); setEffort(value.effort); }} disabled={working}/>
+                          <ComposerAgentPicker options={db.accounts.map(a => ({ id: a.id, label: agentDisplayName(a), account: a }))} agent={effective || ""} onAgentChange={selectNewAccount} account={newAccount} native={native} modelConfiguration={db.preferences.model_configuration} value={{ model, effort, speed: speed || undefined }} onChange={value => { setModel(value.model); setEffort(value.effort); setSpeed(value.speed === "fast" ? "fast" : ""); }} disabled={!native || working}/>
                         </div>
                         {!!draft.trim() && !destination && !launching && <p id="new-thread-project-required" className="new-thread-project-required" role="status">Choose a project above to send your message.</p>}
                         <VoiceNotice target />
@@ -2103,6 +2124,7 @@ function DesktopWorkspace() {
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
                   <div className="home-pane">
                     <HomeView
+                      modelConfiguration={db.preferences.model_configuration}
                       projectNameUppercase={projectNameUppercase}
             sessions={db.sessions} read={read} projects={dashboardProjectOrder.flatMap(id => { const project = db.projects.find(p => p.id === id); return project ? [project] : []; })} accounts={db.accounts} schedules={db.schedules}
             workspaces={workspaces}
@@ -2133,7 +2155,7 @@ function DesktopWorkspace() {
               {commanderActive && <>
                 <ResizableHandle withHandle={!listHidden} />
                 <ResizablePanel id="thread-detail" defaultSize="58%" minSize="20%">
-                  <CommanderView fallbackControls={<div className="dashboard-agent-controls"><label>Agent<select aria-label="Agent" value={homeAccount} onChange={e => setHomeAccount(e.target.value)}><option value="">Project agent</option>{db.accounts.map(a => <option key={a.id} value={a.id}>{agentDisplayName(a)}</option>)}</select></label>{(() => { const plan = commanderData.state ? resolveHomeTile(commanderData.state.project.id) : null; const account = plan?.ok ? db.accounts.find(a => a.id === plan.account) : undefined; return account ? <AgentControls inline native={native} account={account} value={homeSelections[account.id] ?? defaultSelection} onChange={value => setHomeSelections(old => ({ ...old, [account.id]: value }))} disabled={working}/> : null; })()}</div>} projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
+                  <CommanderView fallbackControls={(() => { const plan = commanderData.state ? resolveHomeTile(commanderData.state.project.id) : null; const account = plan?.ok ? db.accounts.find(a => a.id === plan.account) : undefined; return <ComposerAgentPicker options={[{ id: '', label: 'Project agent' }, ...db.accounts.map(a => ({ id: a.id, label: agentDisplayName(a), account: a }))]} agent={homeAccount} onAgentChange={setHomeAccount} account={account} native={native} modelConfiguration={db.preferences.model_configuration} value={account ? homeSelections[account.id] ?? defaultSelection : defaultSelection} onChange={value => { if (account) setHomeSelections(old => ({ ...old, [account.id]: value })); }} disabled={working}/>; })()} projects={db.projects} schedules={db.schedules} threads={db.sessions.filter(t => !t.deleted_at)}
                     renderConversation={id => selected === id ? conversation(view.focus) : null}
                     onSelectThread={id => { commanderThread.current = id; if (selected !== id) setSelected(id); }}
                     onOpenThread={id => { commanderThread.current = ""; setCommanderOpen(false); setSelected(id); }}

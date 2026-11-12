@@ -120,6 +120,38 @@ class DashboardView(private val activity: AppCompatActivity,
         renderedColumns = columns()
         column.removeAllViews()
         (workspace.parent as? android.view.ViewGroup)?.removeView(workspace)
+        // "Needs you": waiting threads across projects. DashboardView.kt has no commander cluster, so this sits at the top of the column.
+        val needsYou = model.optJSONArray("needsYou") ?: JSONArray()
+        if (needsYou.length() > 0) {
+            column.addView(TextView(activity).apply {
+                text = "NEEDS YOU · ${needsYou.length()}"; textSize = 13f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                letterSpacing = 0.04f; setTextColor(secondaryColor); setPadding(0, dp(8), 0, dp(8)); contentDescription = "Needs you, ${needsYou.length()}"
+                androidx.core.view.ViewCompat.setAccessibilityHeading(this, true)
+            })
+            val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; contentDescription = "Needs you" }
+            for (n in 0 until needsYou.length()) {
+                val thread = needsYou.getJSONObject(n)
+                val status = thread.optString("status", "waiting"); val unread = thread.optBoolean("unread")
+                val projectName = thread.optString("projectName")
+                val row = LinearLayout(activity).apply {
+                    gravity = android.view.Gravity.CENTER_VERTICAL; minimumHeight = dp(48)
+                    isClickable = true; isFocusable = true; background = rippleBackground()
+                    contentDescription = listOf(thread.optString("title"), projectName, threadStatusLabel(status, unread)).filter { it.isNotEmpty() }.joinToString(", ")
+                    setOnClickListener { emit(JSONObject().put("action", "thread").put("project", thread.optString("project")).put("assistant", "").put("thread", thread.optString("id"))) }
+                }
+                val texts = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+                texts.addView(TextView(activity).apply {
+                    text = thread.optString("title"); textSize = 14.5f; setTextColor(primaryColor); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                if (projectName.isNotEmpty()) texts.addView(TextView(activity).apply {
+                    text = projectName; textSize = 12f; setTextColor(android.graphics.Color.rgb(255, 149, 0)); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+                row.addView(threadStatusIndicator(activity, status, unread), LinearLayout.LayoutParams(dp(20), dp(36)))
+                list.addView(row, LinearLayout.LayoutParams(-1, -2))
+            }
+            column.addView(list)
+        }
         if (!model.isNull("workspace")) {
             val name = model.optString("workspace")
             column.addView(button(name) { emit(action("workspace")) }.apply {
@@ -154,7 +186,6 @@ class DashboardView(private val activity: AppCompatActivity,
         if (width / resources.displayMetrics.density >= 620) header.addView(defaults)
         column.addView(header)
         if (width / resources.displayMetrics.density < 620) column.addView(defaults)
-        if (model.optBoolean("busy") || awaitingTranscript) column.addView(TextView(activity).apply { text = "Transcribing…" })
         else if (!model.optBoolean("connected")) column.addView(TextView(activity).apply { text = "Connect to your Mac to start tasks." })
         val projects = model.optJSONArray("projects") ?: JSONArray()
         if (projects.length() == 0) column.addView(TextView(activity).apply { text = "Your projects will appear here." })
@@ -188,15 +219,12 @@ class DashboardView(private val activity: AppCompatActivity,
                 }
                 val enabled = project.optBoolean("canStart") && !awaitingTranscript
                 val actions = LinearLayout(activity).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
-                card.addView(actions, LinearLayout.LayoutParams(-1, dp(48)))
+                card.addView(actions, LinearLayout.LayoutParams(-1, dp(64)))
                 val projectColor = runCatching { android.graphics.Color.parseColor(project.optString("color")) }.getOrNull() ?: secondaryColor
                 val titleRow = LinearLayout(activity).apply {
                     gravity = android.view.Gravity.CENTER_VERTICAL; isClickable = true; minimumHeight = dp(48)
                     contentDescription = "Open ${project.getString("name")}"
                     setOnClickListener { emit(action("open", project)) }
-                    val statusDot = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
-                    statusDot.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(projectColor) }
-                    addView(statusDot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { marginEnd = dp(8) })
                     addView(TextView(activity).apply {
                         text = project.getString("name"); textSize = 15f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
                         setTextColor(primaryColor); setSingleLine(true); ellipsize = android.text.TextUtils.TruncateAt.END
@@ -218,7 +246,7 @@ class DashboardView(private val activity: AppCompatActivity,
                 }
                 // Same hold / slide-up-to-send / slide-left-to-cancel / tap-to-record gesture as the composer.
                 recorder.bind(mic) { begin(project, mic) }
-                actions.addView(mic, LinearLayout.LayoutParams(dp(48), dp(48))); gridRow?.addView(card)
+                actions.addView(mic, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(12) }); gridRow?.addView(card)
                 val recent = project.optJSONArray("recent") ?: JSONArray()
                 for (t in 0 until minOf(recent.length(), 3)) {
                     val thread = recent.getJSONObject(t)
@@ -271,7 +299,8 @@ class DashboardView(private val activity: AppCompatActivity,
         anchor.getLocationInWindow(location); getLocationInWindow(origin)
         val capsuleWidth = minOf(dp(224), width)
         val right = (location[0] - origin[0] + anchor.width / 2 + dp(24)).coerceIn(capsuleWidth, width)
-        val bottom = (location[1] - origin[1] - dp(8)).coerceIn(dp(132), height)
+        val above = location[1] - origin[1] - dp(8)
+        val bottom = (if (above >= dp(132)) above else location[1] - origin[1] + anchor.height + dp(140)).coerceIn(minOf(dp(132), height), height)
         fun place(view: View, w: Int, h: Int, x: Int, y: Int) {
             view.layoutParams = FrameLayout.LayoutParams(w, h, android.view.Gravity.TOP or android.view.Gravity.LEFT).apply {
                 leftMargin = x; topMargin = y

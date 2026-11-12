@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { recentProjects, RECENT_WINDOW_MS } from "./officeFilter";
+import { recentProjects, RECENT_WINDOW_MS, readRecentOnly, writeRecentOnly, HOME_RECENT_ONLY_KEY, OFFICE_RECENT_ONLY_KEY } from "./officeFilter";
 
 const NOW = new Date(2026, 10, 10, 12, 0).getTime();
 const DAY = 24 * 60 * 60 * 1000;
@@ -31,4 +31,15 @@ it("fails open when sessions or schedules are not loaded, or a timestamp is unus
   expect(ids(recentProjects([p("a")], undefined, [], NOW))).toEqual(["a"]);
   expect(ids(recentProjects([p("a")], [t("a")], undefined, NOW))).toEqual(["a"]);
   expect(ids(recentProjects([p("a")], [t("a", { updated: undefined })], [], NOW))).toEqual(["a"]);
+});
+
+it("persists recent-only per storage key, defaulting to on", () => {
+  localStorage.clear();
+  expect(readRecentOnly(HOME_RECENT_ONLY_KEY)).toBe(true);
+  writeRecentOnly(false, HOME_RECENT_ONLY_KEY);
+  expect(localStorage.getItem(HOME_RECENT_ONLY_KEY)).toBe("false");
+  expect(readRecentOnly(HOME_RECENT_ONLY_KEY)).toBe(false);
+  expect(readRecentOnly()).toBe(true);
+  expect(localStorage.getItem(OFFICE_RECENT_ONLY_KEY)).toBeNull();
+  localStorage.clear();
 });

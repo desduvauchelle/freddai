@@ -10,7 +10,8 @@ it('native iOS and Android display and launch the resolved saved integration', (
   const model = buildDashboardModel(snapshot, true, '', controls, false);
   expect(model.agent).toBe('Codex · RS');
   expect(model.projects[0].assistant).toBe('rs');
-  expect(model.model).toBe('Custom');
+  expect(model.model).toBe('custom-model · Default');
+  expect(model.difficulty).toBe('custom-model · High');
   snapshot.projects[0].defaultAssistant = 'other';
   expect(buildDashboardModel(snapshot, true, '', controls, false).agent).toBe('Claude · Other');
   expect(buildDashboardModel(snapshot, true, 'rs', controls, false).agent).toBe('Codex · RS');
@@ -76,4 +77,16 @@ it('uppercases dashboard project names only when the Mac setting is on', () => {
   expect(buildDashboardModel(data, true, '', {}, false).projects.map(p => p.name)).toEqual(['Project', 'Other']);
   data.threadList = { projectNameUppercase: true };
   expect(buildDashboardModel(data, true, '', {}, false).projects.map(p => p.name)).toEqual(['PROJECT', 'OTHER']);
+});
+
+it('lists waiting threads across non-commander projects in needsYou, empty when none', () => {
+  const t = (id: string, project: string, status: string, updated: number) => ({ id, title: id, project, status, updated, messages: [], canReply: false, queued: 0, error: null });
+  const snapshot: CompanionSnapshot = {
+    projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true }, { id: 'c', name: 'Cmd', color: '#777', canStart: true, kind: 'commander' }],
+    threads: [t('a', 'p', 'waiting', 1), t('b', 'p', 'done', 5), t('c1', 'c', 'waiting', 9), t('d', 'p', 'waiting', 3)],
+  };
+  const model = buildDashboardModel(snapshot, true, '', {}, false);
+  expect(model.needsYou.map(n => n.id)).toEqual(['d', 'a']);
+  expect(model.needsYou[0]).toMatchObject({ status: 'waiting', project: 'p', projectName: 'Project' });
+  expect(buildDashboardModel({ ...snapshot, threads: [t('b', 'p', 'done', 5)] }, true, '', {}, false).needsYou).toEqual([]);
 });

@@ -70,7 +70,7 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         "id":p.id, "name":p.name, "color":p.color,
         "provider":resolve(db,p,None).ok().and_then(|id|db.accounts.iter().find(|a|a.id==id).map(|a|a.provider.clone())),
         "defaultAssistant":resolve(db,p,None).ok(),
-        "assistants":db.accounts.iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.provider})).collect::<Vec<_>>(),
+        "assistants":db.accounts.iter().map(|a|json!({"id":a.id,"name":a.name,"provider":a.provider,"color":a.color})).collect::<Vec<_>>(),
         "canStart":!db.accounts.is_empty() && Path::new(&p.path).is_dir(),
         "kind":p.kind, "objective":p.objective
     })).collect();
@@ -91,7 +91,7 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && (s.provider_id.is_some() || !s.agent_history.is_empty()) && db.accounts.iter().any(|a| a.id==s.account),
             "agent":s.account,"usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
-            "options":{"model":s.options.model,"effort":s.options.effort,"permission_mode":s.options.permission_mode},
+            "options":{"model":s.options.model,"effort":s.options.effort,"speed":s.options.speed,"permission_mode":s.options.permission_mode},
             "queue":queue.map(|q|q.messages.iter().map(|m|json!({"id":m.id,"prompt":m.prompt,"attachments":m.options.attachments.len()})).collect::<Vec<_>>()).unwrap_or_default(),
             "queued":queue.map(|q|q.messages.iter().filter(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX)).count()).unwrap_or(0),
             "queuePaused":queue.is_some_and(|q|q.paused && q.messages.iter().any(|m| !m.id.starts_with(freddai_core::commander_autonomy::WAKE_ID_PREFIX))),
@@ -168,10 +168,11 @@ fn message_options(value: &Value, request_id: &str) -> Result<LaunchOptions, Str
     let mut options = LaunchOptions { request_id: Some(format!("phone:{request_id}")), ..Default::default() };
     if !value.is_null() {
         let requested: LaunchOptions = serde_json::from_value(value.clone()).map_err(|_|"Invalid composer settings")?;
-        if requested.model.as_ref().is_some_and(|s|s.len()>200) || requested.effort.as_ref().is_some_and(|s|s.len()>40) || requested.attachments.len()>20 { return Err("Composer settings exceed limits".into()); }
+        if requested.model.as_ref().is_some_and(|s|s.len()>200) || requested.effort.as_ref().is_some_and(|s|s.len()>40) || requested.speed.as_ref().is_some_and(|s|s.len()>16) || requested.attachments.len()>20 { return Err("Composer settings exceed limits".into()); }
         options.agent = requested.agent;
         options.model = requested.model;
         options.effort = requested.effort;
+        options.speed = requested.speed;
         options.permission_mode = requested.permission_mode;
         options.attachments = requested.attachments;
         options.update_agent_controls = requested.update_agent_controls;
@@ -190,6 +191,8 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
     }
     let session = input["thread"].as_str().map(|id|db.sessions.iter().find(|s|s.id==id && !s.archived && s.deleted_at.is_none() && s.status!="archived").ok_or("Thread unavailable")).transpose()?;
     match text(p,"operation")? {
+        "vscode_available" => Ok(json!(crate::project_editor::available())),
+        "open_project_vscode" => crate::project_editor::open(db, text(input, "project")?).map(|_| json!(null)),
         "update_project_organization" => {
             let id = text(input, "project")?;
             if !db.projects.iter().any(|p| p.id == id) { return Err("Project unavailable".into()); }
@@ -372,6 +375,16 @@ fn preview_open(root: &Path, device: &crate::companion_pairing::Device, input: &
     let port = input["port"].as_u64().ok_or("preview_invalid_request")?;
     let path = input["path"].as_str().unwrap_or("/");
     let thread = text(input,"threadId").map_err(|_|"preview_invalid_request".to_string())?;
+    // Only granted ports may spawn a server: a share is the only thing that can carry a command, so
+    // nothing else is ever started, and only when the phone sends `start: true` after the user confirmed.
+    // The wait is 1 s because the direct LAN path times out at 8 s (mobile.rs) and the relay dial can take
+    // 10 s. A server that is still starting returns `preview_server_starting` and the UI retries every 2 s.
+    let start = input["start"].as_bool().unwrap_or(false);
+    if let Ok(p) = u16::try_from(port) {
+        if crate::preview_host::is_granted(p) && !freddai_core::preview_grants::is_listening(p) {
+            crate::preview_host::server_status(root, p, start, std::time::Duration::from_secs(1))?;
+        }
+    }
     // Read the transcript only when no explicit share exists for the port.
     let transcript = if u16::try_from(port).is_ok_and(crate::preview_host::is_granted) { None } else {
         let (db,_,_) = snapshot(root,true,Some(thread))?;
@@ -410,7 +423,7 @@ pub(crate) fn dispatch_for_device(root: &Path, device: &crate::companion_pairing
     dispatch(root, route, p)
 }
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
-    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("commander_settings_get"|"commander_settings_save"|"generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
         let operation = text(&p,"operation")?;
         if operation == "google_capability" { return Ok(crate::companion_operations::google_capability(&host::call(root, "hello", json!({}))?)); }
         let mut input = p["input"].clone();
@@ -421,6 +434,7 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
         return Ok(result);
     }
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
+    if route == "/v1/composer" && p["operation"] == "voice_connection" { return crate::voice::connections::call(root, p["input"]["operation"].as_str().unwrap_or(""), &p["input"]["input"]); }
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
     // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
     if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
@@ -706,7 +720,7 @@ mod tests {
         db.accounts.push(serde_json::from_value(json!({"id":"synthetic","name":"Test assistant","provider":"codex","color":"#aaa","config_home":"/private/test-credentials"})).unwrap());
         db.projects.push(serde_json::from_value(json!({"id":"p","name":"Project","path":std::env::temp_dir(),"color":"#aaa","policy":"inherit","account":null,"last":null})).unwrap());
         let v=project_snapshot(&db);
-        assert_eq!(v["projects"][0]["assistants"],json!([{"id":"synthetic","name":"Test assistant","provider":"codex"}]));
+        assert_eq!(v["projects"][0]["assistants"],json!([{"id":"synthetic","name":"Test assistant","provider":"codex","color":"#aaa"}]));
         assert_eq!(v["projects"][0]["canStart"],true);
         assert!(resolve(&db,&db.projects[0],Some("synthetic".into())).is_ok());
         assert!(resolve(&db,&db.projects[0],Some("removed".into())).is_err());

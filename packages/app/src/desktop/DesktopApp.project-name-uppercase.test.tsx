@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("Uppercase project names switch uppercases project headers and persists to Rust", async () => {
-  render(<DesktopApp />);
+  const view = render(<DesktopApp />);
   expect((await screen.findAllByText("Alpha project")).length).toBeGreaterThan(0);
   fireEvent.keyDown(window, { key: ",", ctrlKey: true });
   fireEvent.click(await screen.findByRole("button", { name: /Thread display/ }));
@@ -35,4 +35,14 @@ it("Uppercase project names switch uppercases project headers and persists to Ru
   expect((await screen.findAllByText("ALPHA PROJECT")).length).toBeGreaterThan(0);
   expect(localStorage.getItem("freddai.projectNameUppercase")).toBe("true");
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("save_thread_list", { settings: expect.objectContaining({ projectNameUppercase: true }) }));
+  expect(invokeMock.mock.calls.some(([command]) => /rename_project|update_project/.test(command))).toBe(false);
+  view.unmount();
+  render(<DesktopApp />);
+  expect((await screen.findAllByText("ALPHA PROJECT")).length).toBeGreaterThan(0);
+  fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+  fireEvent.click(await screen.findByRole("button", { name: /Thread display/ }));
+  fireEvent.click(await screen.findByRole("switch", { name: "Uppercase project names" }));
+  expect((await screen.findAllByText("Alpha project")).length).toBeGreaterThan(0);
+  expect(localStorage.getItem("freddai.projectNameUppercase")).toBe("false");
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("save_thread_list", { settings: expect.objectContaining({ projectNameUppercase: false }) }));
 });

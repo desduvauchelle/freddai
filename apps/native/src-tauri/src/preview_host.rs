@@ -91,11 +91,11 @@ pub struct RelayAuth<'a> { pub relay: Option<&'a str>, /** device mailbox secret
 /// `thread_text` is the serialized messages of `threadId` (None if unavailable); only consulted
 /// when the port has no explicit grant. Errors are the named codes returned to the phone.
 pub fn open(auth: &RelayAuth, port: u64, path: &str, thread_text: Option<&str>) -> Result<Value, String> {
-    let refuse = |code: &str, detail: String| { eprintln!("preview_tunnel_open_refused code={code} port={port} detail={detail:?}"); Err::<Value, String>(code.to_owned()) };
+    let refuse = |code: &str, detail: String| { eprintln!("preview_tunnel_open_refused code={code} port={port} detail={detail:?}"); Err::<Value, String>(format!("{code}: {detail}")) };
     let Ok(port) = u16::try_from(port) else { return refuse("preview_not_granted", "port out of range".into()) };
     if !path.starts_with('/') || path.starts_with("//") || path.len() > MAX_PATH || path.bytes().any(|b| b < 0x21 && b != b' ' || b == 0x7f) { return refuse("preview_invalid_request", "invalid path".into()); }
     {
-        let g = grants().lock().map_err(|_| "preview_tunnel_unavailable".to_string())?;
+        let g = grants().lock().map_err(|_| "preview_tunnel_unavailable: grant store poisoned".to_string())?;
         if let Err(reason) = authorize_at(&g, port, thread_text, crate::companion_crypto::now()) { return refuse("preview_not_granted", reason); }
     }
     if TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_secs(1)).is_err() { return refuse("preview_port_unreachable", format!("nothing listening on {port}")); }
@@ -111,9 +111,43 @@ pub fn open(auth: &RelayAuth, port: u64, path: &str, thread_text: Option<&str>) 
             });
             Ok(json!({"session": session, "port": port}))
         }
-        Err(e) => { eprintln!("preview_tunnel_dial_failed port={port} code={} detail={:?}", e.code, e.detail); Err("preview_tunnel_unavailable".into()) }
+        Err(e) => { eprintln!("preview_tunnel_dial_failed port={port} code={} detail={:?}", e.code, e.detail); Err(format!("preview_tunnel_unavailable: {}", e.detail)) }
     }
 }
+
+/// Reports whether the dev server behind a granted port is listening. A share's recorded command is only
+/// spawned when `start` is true (an explicit user click); otherwise a non-listening port with a command
+/// returns `preview_server_confirm: <command> @ <cwd>` (the UI splits on the last ` @ `).
+/// Callers must only pass granted ports: only a share can carry a command, so nothing else is ever spawned.
+/// Errors: `preview_server_confirm`, `preview_server_starting` (retry shortly), `preview_server_failed`, `preview_port_unreachable`.
+pub fn server_status(root: &std::path::Path, port: u16, start: bool, wait: Duration) -> Result<(), String> {
+    use freddai_core::preview_grants::{is_listening, share};
+    if is_listening(port) { return Ok(()); }
+    let Some(command) = share(root, port).and_then(|s| s.command.map(|c| (c, s.cwd))) else {
+        eprintln!("preview_tunnel_ensure_server port={port} result=no_command");
+        return Err(format!("preview_port_unreachable: nothing listening on {port}"));
+    };
+    if !start {
+        let cwd = command.1.as_ref().map(|c| c.display().to_string()).unwrap_or_default();
+        eprintln!("preview_tunnel_ensure_server port={port} result=confirm");
+        return Err(format!("preview_server_confirm: {} @ {cwd}", command.0));
+    }
+    ensure_server(root, port, wait)
+}
+
+fn ensure_server(root: &std::path::Path, port: u16, wait: Duration) -> Result<(), String> {
+    use freddai_core::preview_grants::{ensure_running, ServerState};
+    match ensure_running(root, port, wait) {
+        ServerState::Listening => { eprintln!("preview_tunnel_ensure_server port={port} result=listening"); Ok(()) }
+        ServerState::Starting { pid, log } => { eprintln!("preview_tunnel_ensure_server port={port} result=starting pid={pid}"); Err(format!("preview_server_starting: pid {pid}, log {}", log.display())) }
+        ServerState::Failed { detail, .. } => { eprintln!("preview_tunnel_ensure_server port={port} result=failed detail={detail:?}"); Err(format!("preview_server_failed: {detail}")) }
+        ServerState::NoCommand => { eprintln!("preview_tunnel_ensure_server port={port} result=no_command"); Err(format!("preview_port_unreachable: nothing listening on {port}")) }
+    }
+}
+
+/// Parses `http(s)://localhost|127.0.0.1:<port>[path][?query]` into `(port, path)`; fragment dropped.
+/// Shared by the phone (`preview_device`) and the desktop `preview_open` command.
+pub use crate::preview_url::parse_localhost_url;
 
 // ---------------------------------------------------------------- executor
 

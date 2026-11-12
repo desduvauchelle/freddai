@@ -1467,6 +1467,7 @@ name = "freddai-native"
 version = "1.0.1"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "bytes",
  "cpal",
  "flate2",

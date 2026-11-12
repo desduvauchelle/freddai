@@ -300,3 +300,15 @@ it("uses two title lines in the reclaimed sign space in mini and expanded rooms"
   fireEvent.click(screen.getByRole("button", { name: "Expand office" }));
   check();
 });
+
+it('toggles project signs and accessible room names without renaming source projects', () => {
+  const props = { variant: 'mini' as const, sessions, projects, now: NOW, onOpenThread: vi.fn() };
+  const view = render(<Office {...props} />);
+  expect(document.querySelector('.office-project-name')?.textContent).toBe('Alpha');
+  view.rerender(<Office {...props} projectNameUppercase />);
+  expect(document.querySelector('.office-project-name')?.textContent).toBe('ALPHA');
+  expect(screen.getByRole('group', { name: 'ALPHA room' })).toBeTruthy();
+  expect(projects[0].name).toBe('Alpha');
+  view.rerender(<Office {...props} projectNameUppercase={false} />);
+  expect(document.querySelector('.office-project-name')?.textContent).toBe('Alpha');
+});

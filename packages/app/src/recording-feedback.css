@@ -1,4 +1,4 @@
-.recording-feedback { position: absolute; z-index: 100; right: 0; bottom: calc(100% + 8px); width: 268px; height: 108px; pointer-events: none; color: var(--foreground); }
+.recording-feedback { position: fixed; z-index: 10000; width: min(268px, calc(100vw - 16px)); height: 108px; pointer-events: none; color: var(--foreground); }
 .recording-capsule { position: absolute; right: 44px; bottom: 0; width: 224px; height: 44px; border-radius: 22px; background: var(--background); box-shadow: 0 4px 18px #0003; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 48px; box-sizing: border-box; }
 .recording-capsule [role=timer] { font: 13px monospace; color: #369964; }
 .recording-wave { display: flex; align-items: center; gap: 2px; height: 28px; overflow: hidden; }

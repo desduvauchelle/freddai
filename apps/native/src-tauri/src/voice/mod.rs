@@ -1,6 +1,7 @@
 //! Local push-to-talk dictation (Whisper). Plain Rust keyed by the app data
 //! `root`, no Tauri dependency, so the companion-server process can call it too.
 
+pub mod connections;
 pub mod call;
 pub mod cleanup;
 pub mod decode;
@@ -63,8 +64,8 @@ pub fn status(root: &Path) -> VoiceStatus {
         .collect();
     let active_installed = s.active_model.as_deref().map(|a| models.iter().any(|m| m.id == a && m.installed)).unwrap_or(false);
     VoiceStatus {
-        ready: s.enabled && active_installed,
-        enabled: s.enabled,
+        ready: connections::remote_ready(root).map(|r| r.is_some() || s.enabled && active_installed).unwrap_or(false),
+        enabled: s.enabled || connections::remote_ready(root).ok().flatten().is_some(),
         active_model: s.active_model,
         shortcut: s.shortcut,
         language: s.language,
@@ -76,6 +77,7 @@ pub fn status(root: &Path) -> VoiceStatus {
 
 /// Returns the active model id when dictation can run.
 pub fn ready(root: &Path) -> Result<String, String> {
+    if let Some(model) = connections::remote_ready(root)? { return Ok(model); }
     let s = settings::load(root)?;
     if !s.enabled {
         return Err("Voice dictation is turned off on the Mac".into());

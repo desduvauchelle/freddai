@@ -38,7 +38,7 @@
 .home-request .approval-card { margin-top: 6px; }
 .home-queue .thread-presence + .thread-presence { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) { .home-tile, .home-request, .home-prompt { animation: none; } }
-.home-tile-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: center; cursor: pointer; border-radius: 3px; }
+.home-tile-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; border-radius: 3px; }
 .home-tile-open:hover strong { text-decoration: underline; }
 .home-tile-open strong { display: block; }
 .home-pane { height: 100%; display: flex; flex-direction: column; min-width: 0; }
@@ -58,7 +58,7 @@
 .home-project-card { position: relative; min-width: 0; }
 .home-project-card > .home-tile { height: 100%; }
 .home-project-card .home-tile > header { padding-left: 18px; }
-.home-project-reorder { position: absolute; top: 13px; left: 3px; z-index: 1; touch-action: none; }
+.home-project-reorder { position: absolute; top: 10px; left: 6px; z-index: 2; touch-action: none; opacity: 1; }
 .home-project-card[data-dragging="true"] { opacity: .35; }
 .home-project-card--overlay { cursor: grabbing; box-shadow: 0 12px 32px rgba(0,0,0,.35); transform: scale(1.02); border-radius: 10px; }
 .home-workspace-group { border-radius: 10px; transition: outline-color 150ms ease, background-color 150ms ease; outline: 2px solid transparent; outline-offset: 4px; }
@@ -77,7 +77,7 @@
 @media (prefers-reduced-motion: reduce) { .home-project-card { transition: none !important; } .home-workspace-group { transition: none; } }
 /* --- end drag and drop --- */
 
-/* --- Home section rhythm: Projects / Needs you / Daily summaries --- */
+/* --- Home section rhythm: Needs you / Projects / Daily summaries --- */
 .home-view > .home-section { margin-top: 16px; gap: 12px; } /* 14px flex gap + 16px = 30px between major blocks */
 .home-view > .home-section > .home-section-title { height: auto; min-height: 28px; padding-bottom: 6px; }
 .home-view > .home-section > .home-section-title > .home-count { margin-left: auto; }
@@ -85,3 +85,6 @@
 .home-view > .home-section > .dashboard-project-toolbar > .home-section-title { padding-bottom: 0; min-height: 28px; height: auto; }
 @media (max-width: 619px) { .home-view > .home-section { margin-top: 12px; } }
 /* --- end home section rhythm --- */
+.home-section-title > button + button { margin-left: 0; }
+.home-empty-action { all: unset; cursor: pointer; text-decoration: underline; color: inherit; }
+.home-empty-action:focus-visible { outline: 2px solid var(--ring, currentColor); outline-offset: 2px; }

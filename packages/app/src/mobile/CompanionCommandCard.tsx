@@ -1,5 +1,6 @@
+import { formatProjectName } from "../projectName";
+import { ComposerAgentPicker } from '../desktop/ComposerAgentPicker';
 import { useCallback } from 'react';
-import { AgentControls } from '../desktop/AgentControls';
 import type { AgentSelection } from '../desktop/agent-selection';
 import { X } from 'lucide-react';
 import type { CommandReviewProps } from '../desktop/DashboardCall';
@@ -8,7 +9,9 @@ import { assistantLabel } from './native-home';
 import '../desktop/CommandCard.css';
 
 /** Uses only assistants actually advertised by the paired Mac. */
-export function CompanionCommandCard({ draft, projects, assistant, onAssistant, onChangeInstruction, onSend, onDismiss, error, sending, client, selection, onSelection }: CommandReviewProps & {
+export function CompanionCommandCard({ draft, projects, assistant, onAssistant, onChangeInstruction, onSend, onDismiss, error, sending, client, selection, onSelection, modelConfiguration, projectNameUppercase }: CommandReviewProps & {
+  projectNameUppercase?: boolean;
+  modelConfiguration?: import("../desktop/model-levels").ModelConfiguration;
   client: CompanionClient; selection: AgentSelection; onSelection: (selection: AgentSelection) => void; projects: CompanionProject[]; assistant: string; onAssistant: (id: string) => void;
 }) {
   const project = projects.find(p => p.id === draft.projectId);
@@ -17,12 +20,10 @@ export function CompanionCommandCard({ draft, projects, assistant, onAssistant, 
   const ready = !!project?.canStart && (!project.assistants || project.assistants.some(a => a.id === assistant));
   return <section className="command-card" aria-label="Command review">
     <div className="command-card-head"><span className="command-card-dot" style={{ background: project?.color }} aria-hidden />
-      <span>{project?.name}</span><button type="button" aria-label="Cancel command" onClick={onDismiss} disabled={sending}><X size={14}/></button></div>
+      <span>{formatProjectName(project?.name, projectNameUppercase)}</span><button type="button" aria-label="Cancel command" onClick={onDismiss} disabled={sending}><X size={14}/></button></div>
     <textarea aria-label="Instruction" value={draft.instruction} onChange={e => onChangeInstruction(e.target.value)} disabled={sending}/>
-    {project?.assistants && <label>Agent <select aria-label="Agent" value={assistant} onChange={e => onAssistant(e.target.value)} disabled={sending}>
-      <option value="" disabled>Choose agent</option>{project.assistants.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}
-    </select></label>}
-    <AgentControls inline native={!!client.models} provider={provider} loadModels={client.models ? loadModels : undefined} value={selection} onChange={onSelection} disabled={sending} context="this command"/>
+    <ComposerAgentPicker options={(project?.assistants || []).map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color }))} agent={assistant} onAgentChange={onAssistant} provider={provider} modelConfiguration={modelConfiguration} native={!!client.models} loadModels={client.models ? loadModels : undefined} value={selection} onChange={onSelection} disabled={sending}/>
+
     {!ready && <p role="status">Choose a project agent that is ready on your Mac.</p>}
     {error && <p role="alert" className="command-card-error">{error}</p>}
     <div className="command-card-actions"><button type="button" disabled={sending || !ready || !draft.instruction.trim()} onClick={onSend}>{sending ? 'Sending…' : 'Send'}</button>

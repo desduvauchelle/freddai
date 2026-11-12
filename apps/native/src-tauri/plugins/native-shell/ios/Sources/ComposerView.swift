@@ -263,11 +263,11 @@ final class ComposerView: UIView, UITextViewDelegate {
 
       agentButton.leadingAnchor.constraint(equalTo: attachButton.trailingAnchor, constant: 4),
       agentButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-      agentButton.widthAnchor.constraint(equalToConstant: 66),
+      agentButton.widthAnchor.constraint(equalToConstant: 132),
       agentButton.heightAnchor.constraint(equalToConstant: 32),
-      modelButton.leadingAnchor.constraint(equalTo: agentButton.trailingAnchor, constant: 4),
+      modelButton.leadingAnchor.constraint(equalTo: agentButton.trailingAnchor),
       modelButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
-      modelButton.widthAnchor.constraint(equalToConstant: 62),
+      modelButton.widthAnchor.constraint(equalToConstant: 0),
       modelButton.heightAnchor.constraint(equalToConstant: 32),
       accessButton.leadingAnchor.constraint(equalTo: modelButton.trailingAnchor, constant: 6),
       accessButton.centerYAnchor.constraint(equalTo: controlRow.centerYAnchor),
@@ -327,15 +327,15 @@ final class ComposerView: UIView, UITextViewDelegate {
   func setSettings(agent: String? = nil, model: String?, access: String?, disabled: Bool) {
     hasModel = model != nil
     hasAccess = access != nil
-    modelButton.isHidden = !hasModel || recording || voiceState == "transcribing"
+    modelButton.isHidden = true
     accessButton.isHidden = !hasAccess || recording || voiceState == "transcribing"
     modelButton.isEnabled = !disabled
     accessButton.isEnabled = !disabled
     agentButton.isHidden = agent == nil || recording || voiceState == "transcribing"
     agentButton.isEnabled = !disabled
-    agentButton.accessibilityLabel = "Agent: " + (agent ?? "Unavailable")
+    agentButton.accessibilityLabel = "Assistant and difficulty: " + (agent ?? "Unavailable") + " · " + (model ?? "Normal")
     var agentConfig = agentButton.configuration ?? .plain()
-    agentConfig.image = nil; agentConfig.title = agent; agentConfig.titleLineBreakMode = .byTruncatingTail
+    agentConfig.image = UIImage(systemName: "arrowtriangle.down.fill"); agentConfig.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 8, weight: .semibold); agentConfig.imagePlacement = .trailing; agentConfig.imagePadding = 4; agentConfig.title = [agent, model].compactMap { $0 }.joined(separator: " · "); agentConfig.titleLineBreakMode = .byTruncatingTail
     agentConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in var outgoing = incoming; outgoing.font = UIFont.systemFont(ofSize: 11); return outgoing }
     agentButton.configuration = agentConfig
     var levelConfig = modelButton.configuration ?? .plain()
@@ -520,7 +520,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   private func updateVoiceUI() {
     let transcribing = voiceState == "transcribing"
     agentButton.isHidden = !hasModel || recording || transcribing
-    modelButton.isHidden = !hasModel || recording || transcribing
+    modelButton.isHidden = true
     accessButton.isHidden = !hasAccess || recording || transcribing
     updatePrimaryAction()
     micButton.isEnabled = voiceEnabled

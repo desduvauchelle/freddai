@@ -1,4 +1,6 @@
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod project_editor;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod browser;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod local_preview;
@@ -13,6 +15,7 @@ mod companion_crypto;
 // Shared with the future phone side, so compiled everywhere.
 #[allow(dead_code)]
 mod preview_tunnel;
+mod preview_url;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod preview_host;
 mod companion_enrollment;
@@ -60,11 +63,27 @@ pub fn run() {
     // generate_context! must be expanded exactly once per crate (it embeds the Info.plist symbol).
     let context = tauri::generate_context!();
     #[cfg(target_os = "macos")]
+    refuse_host_cache_gui();
+    #[cfg(target_os = "macos")]
     if satellite::enabled() { mobile::run(context); return; }
     #[cfg(any(target_os = "ios", target_os = "android"))]
     mobile::run(context);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     desktop::run(context);
+}
+
+/// The GUI must run from the installed bundle: a cached copy shares its bundle id and is stale.
+/// Headless modes (--host, --mcp, ...) are dispatched in main.rs before this and may run from the cache.
+#[cfg(target_os = "macos")]
+fn refuse_host_cache_gui() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    if !exe.components().any(|c| c.as_os_str() == "host-binaries") { return; }
+    eprintln!("{}", serde_json::json!({"event":"gui_launched_from_host_cache","path":exe.to_string_lossy(),"action":"opening /Applications/Freddai.app"}));
+    match std::process::Command::new("/usr/bin/open").arg("/Applications/Freddai.app").status() {
+        Ok(s) if s.success() => {}
+        other => eprintln!("{}", serde_json::json!({"event":"gui_launched_from_host_cache.open_failed","result":format!("{other:?}")})),
+    }
+    std::process::exit(1);
 }
 
 /// Starts the keep-awake monitor; called by the long-lived `--host` process.

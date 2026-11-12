@@ -1,3 +1,4 @@
+import { VOICE_CALL_SUFFIX } from "../conversation/voiceCallMarkup";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { empty, type Database } from './types';
@@ -90,6 +91,8 @@ it('keeps project dictation next to Plus and launches in that project without re
   expect(mic.nextElementSibling?.getAttribute('aria-label')).toBe('New task in Unit project');
   fireEvent.click(mic);
   await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('launch', expect.objectContaining({ project: 'p', account: 'unit-agent', prompt: 'Dictated sidebar task' })));
+  expect(screen.getByLabelText('Starting new thread').closest('[data-project-id]')?.getAttribute('data-project-id')).toBe('p');
+  expect(screen.queryByLabelText('Starting conversation')).toBeNull();
   await act(async () => acknowledge('dictated'));
 });
 
@@ -158,7 +161,7 @@ it('starts a call from the empty composer and keeps the draft when speech create
   await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('voice_call_start', {}));
   expect(bridge.invoke.mock.calls.some(([name]) => name === 'launch')).toBe(false);
   await act(async () => { bridge.events['voice-call://segment']({ payload: { text: 'Spoken new task' } }); });
-  await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('launch', expect.objectContaining({ prompt: 'Spoken new task', project: 'p' })), { timeout: 2500 });
+  await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('launch', expect.objectContaining({ prompt: 'Spoken new task' + VOICE_CALL_SUFFIX, project: 'p' })), { timeout: 2500 });
   await act(async () => acknowledge('created-call'));
   expect(screen.getByRole('button', { name: 'End call' })).toBeTruthy();
   expect(bridge.invoke.mock.calls.some(([name]) => name === 'voice_call_stop')).toBe(false);
@@ -173,4 +176,27 @@ it('starts a call from the empty composer and keeps the draft when speech create
   expect(await screen.findByRole('textbox', { name: 'Task prompt' })).toBeTruthy();
   expect(screen.queryByLabelText('Prompt for Unit project')).toBeNull();
   expect(bridge.invoke.mock.calls.some(([command]) => command === 'launch')).toBe(false);
+});
+
+it('a new thread starts with the provider, model and effort of the last sent message', async () => {
+  render(<DesktopApp />);
+  await screen.findAllByText('Unit project');
+  fireEvent.click(screen.getByRole('button', { name: 'New task in Unit project' }));
+  const prompt = await screen.findByRole('textbox', { name: 'Task prompt' });
+  fireEvent.click(screen.getByRole('button', { name: 'Assistant and difficulty' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Claude · Unit agent' }));
+  fireEvent.click(await screen.findByRole('button', { name: /Custom/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Fable' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Medium' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Standard' }));
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).textContent).toContain('Fable · Medium');
+  fireEvent.change(prompt, { target: { value: 'Use Fable medium' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Start thread' }));
+  await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('launch', expect.objectContaining({ options: expect.objectContaining({ model: 'fable', effort: 'medium' }) })));
+  await act(async () => acknowledge('created'));
+  fireEvent.click(screen.getByText('Existing conversation'));
+  fireEvent.click(await screen.findByRole('button', { name: 'New task in Unit project' }));
+  await screen.findByRole('textbox', { name: 'Task prompt' });
+  const chip = screen.getByRole('button', { name: 'Assistant and difficulty' });
+  expect(chip.textContent).toContain('Fable · Medium');
 });

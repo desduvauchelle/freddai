@@ -104,7 +104,7 @@ export function discardFiles(paths: string[]): Promise<void> {
   return invoke<void>(`plugin:${PLUGIN}|discard_files`, { paths });
 }
 
-export type PickerOption = { id: string; label: string; detail?: string; disabled?: boolean };
+export type PickerOption = { id: string; label: string; detail?: string; disabled?: boolean; color?: string; group?: string; children?: PickerOption[] };
 /** Presents a native selection dialog. Resolves to the chosen option id, or null when dismissed. */
 export async function pickOption(input: { title: string; options: PickerOption[]; selected?: string }): Promise<string | null> {
   if (!available) return null;

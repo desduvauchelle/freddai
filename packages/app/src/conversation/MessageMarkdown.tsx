@@ -11,7 +11,7 @@ import { GeneratedFile, InlineImage, LocalPageContext, isGeneratedFile, isHtmlFi
 import { splitMarkdownBlocks } from "./markdown-blocks";
 import { ThreadChip, threadLinkId } from "./ThreadChip";
 import { renderSpoken } from "./voiceCallMarkup";
-import { LocalhostPreviewChips } from "./localhostPreview";
+import { LocalhostPreviewChips, PreviewConfirm, PreviewContext, PreviewErrorText, describePreviewError, normalizeLocalhostUrl, useLocalhostPreview, type PreviewOpen } from "./localhostPreview";
 
 // Hoisted so every message and block shares one stable plugin list and component map.
 const remarkPlugins = [remarkGfm];
@@ -23,10 +23,15 @@ const components: Components = {
 };
 
 /** `freddai://thread/<id>` opens that thread as a live chip. Web URLs open externally; local file paths open a preview/actions dialog; other schemes stay plain text. */
+const noPreview: PreviewOpen = () => Promise.resolve();
+
 function MessageLink({ children, href, title }: React.ComponentProps<"a">) {
   const [error, setError] = useState(false);
   const openBrowser = useContext(BrowserContext);
+  const previewOpen = useContext(PreviewContext);
   const resolvePage = useContext(LocalPageContext);
+  const local = previewOpen && href ? normalizeLocalhostUrl(href) : undefined;
+  const preview = useLocalhostPreview(local?.url ?? "", previewOpen ?? noPreview);
   const threadId = href ? threadLinkId(href) : undefined;
   if (threadId) return <ThreadChip threadId={threadId} title={title}>{children}</ThreadChip>;
   if (href && isGeneratedFile(href)) {
@@ -37,6 +42,11 @@ function MessageLink({ children, href, title }: React.ComponentProps<"a">) {
   let webUrl = false;
   try { webUrl = ["http:", "https:"].includes(new URL(href ?? "").protocol); } catch { /* Not an absolute URL. */ }
   if (!webUrl || !href) return <span title={title}>{children}</span>;
+  const openSide = () => {
+    if (!local) { openBrowser?.(href); return; }
+    preview.click();
+  };
+  const localLabel = local?.url.replace(/^https?:\/\//, "") ?? "";
   const external = () => {
     setError(false);
     if (isTauri()) void openUrl(href).catch(() => setError(true));
@@ -46,12 +56,12 @@ function MessageLink({ children, href, title }: React.ComponentProps<"a">) {
     if (!isTauri()) return;
     event.preventDefault();
     setError(false);
-    if (openBrowser && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { openBrowser(href); return; }
+    if ((local || openBrowser) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { openSide(); return; }
     external();
   }}>{children}</a><span className="message-link-actions">
-    {openBrowser && <button type="button" title="Open in side panel" aria-label={`Open in side panel: ${href}`} onClick={() => { setError(false); openBrowser(href); }}><PanelRightOpen size={13} aria-hidden="true" /></button>}
+    {(local || openBrowser) && <button type="button" title="Open in side panel" aria-label={`Open in side panel: ${href}`} onClick={() => { setError(false); openSide(); }}><PanelRightOpen size={13} aria-hidden="true" /></button>}
     <button type="button" title="Open in default browser" aria-label={`Open in default browser: ${href}`} onClick={external}><ExternalLink size={13} aria-hidden="true" /></button>
-  </span></span>{error && <small role="alert">Couldn’t open the browser. Copy the link and open it manually.</small>}</>;
+  </span></span>{error && <small role="alert">Couldn’t open the browser. Copy the link and open it manually.</small>}{local && preview.state === "starting" && <small role="status">{describePreviewError("preview_server_starting", "", localLabel)}</small>}{local && preview.confirm && <PreviewConfirm label={localLabel} confirm={preview.confirm} onStart={preview.start} />}{local && preview.error && <PreviewErrorText code={preview.error.code} detail={preview.error.detail} label={localLabel} />}</>;
 }
 
 /** Local HTML opens in the side browser panel; icons mirror web links (default app, reveal, copy path). */

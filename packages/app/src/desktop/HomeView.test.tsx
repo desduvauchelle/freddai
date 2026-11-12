@@ -1,7 +1,8 @@
 import { resetDrafts } from "./drafts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HomeView, homeProjects } from "./HomeView";
+import { HOME_RECENT_ONLY_KEY } from "../office/officeFilter";
 import { resolveHomeLaunch, type HomeLaunchPlan } from "./home-launch";
 import type { Account, Project, Session } from "./types";
 
@@ -20,7 +21,7 @@ vi.mock("./VoiceControls", () => ({
   MicButton: ({ onText }: { onText: (t: string, b: HTMLElement) => void }) => mic.ready ? <button type="button" aria-label="Dictate" onClick={e => onText("ship it", e.currentTarget)} /> : null,
   VoiceNotice: () => null,
 }));
-afterEach(() => { cleanup(); resetDrafts(); mic.ready = false; });
+afterEach(() => { cleanup(); resetDrafts(); mic.ready = false; localStorage.removeItem(HOME_RECENT_ONLY_KEY); });
 
 const db = (over: Record<string, unknown> = {}) => ({ accounts: [account], projects: [project("alpha", "Alpha"), project("beta", "Beta")], sessions: [], preferences: { fallback: "a" }, ...over }) as never;
 const props = (sessions: Session[], projects = [project("alpha", "Alpha"), project("beta", "Beta")]) => ({
@@ -30,8 +31,10 @@ const props = (sessions: Session[], projects = [project("alpha", "Alpha"), proje
 
 HTMLElement.prototype.scrollIntoView ??= () => {};
 function chooseDashboard(label: string, option: string) {
-  fireEvent.keyDown(screen.getByRole('combobox', { name: label }), { key: 'Enter' });
-  fireEvent.click(screen.getByRole('option', { name: option }));
+  if (!screen.queryByRole('dialog')) fireEvent.click(screen.getByRole('button', { name: 'Assistant and difficulty' }));
+  if (label === 'Difficulty') fireEvent.click(screen.getByRole('button', { name: 'Project defaults' }));
+  else if (screen.queryByRole('button', { name: /Back to assistants/ })) fireEvent.click(screen.getByRole('button', { name: /Back to assistants/ }));
+  fireEvent.click(screen.getByRole('button', { name: option }));
 }
 it("lists all projects in their configured order regardless of thread activity", () => {
   const projects = [project("alpha", "Alpha"), project("beta", "Beta"), project("gamma", "Gamma"), project("empty", "Empty")];
@@ -73,6 +76,8 @@ it("does not render a counters row or project colour square on project cards", (
   const tile = within(screen.getByRole("article", { name: "Project Alpha" }));
   expect(tile.queryByLabelText("2 working")).toBeNull();
   expect(document.querySelector(".home-counts, .home-tile .home-project-dot")).toBeNull();
+  const actions = screen.getByRole("button", { name: "New thread in Alpha" }).parentElement!;
+  expect(actions.querySelector("button")?.getAttribute("aria-label")).toBe("New thread in Alpha");
   expect(screen.getByRole("article", { name: "Project Beta" })).toBeTruthy();
 });
 
@@ -178,7 +183,7 @@ it("changes the single shared Home model under Projects", () => {
   const onHomeSelection = vi.fn();
   render(<HomeView {...props([thread("1")])} homeSelections={{ a: { model: "opus", effort: "default" } }} onHomeSelection={onHomeSelection} />);
   const header = screen.getByRole("group", { name: "Dashboard task defaults" });
-  expect(within(header).getByRole("combobox", { name: "Difficulty" }).textContent).toContain("Custom");
+  expect(within(header).getByRole("button", { name: "Assistant and difficulty" }).textContent).toContain("Opus");
   chooseDashboard("Difficulty", "Fast");
   expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "freddai-level:fast", effort: "default" });
 });
@@ -279,8 +284,10 @@ it("lets the dashboard choose a connected provider and shows that account's mode
   const view = render(<HomeView {...p} accounts={accounts} homeAccount="" onHomeAccount={onHomeAccount} onHomeSelection={onHomeSelection} />);
   chooseDashboard("Agent provider for dashboard threads", "Codex · Coding");
   expect(onHomeAccount).toHaveBeenCalledWith("b");
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
   view.rerender(<HomeView {...p} accounts={accounts} homeAccount="b" onHomeAccount={onHomeAccount} onHomeSelection={onHomeSelection} homeSelections={{ b: { model: "chosen-codex-model", effort: "default" } }} />);
-  expect((screen.getByLabelText("Custom model ID") as HTMLInputElement).value).toBe("chosen-codex-model");
+  expect(screen.getByRole("button", { name: "Assistant and difficulty" }).textContent).toContain("Chosen-codex-model");
+  expect(screen.queryByLabelText("Custom model ID")).toBeNull();
 
   chooseDashboard("Agent provider for dashboard threads", "Project defaults");
   expect(onHomeAccount).toHaveBeenLastCalledWith("");
@@ -305,10 +312,10 @@ it('displays the last-selected integration while keeping automatic dashboard sel
   const resolveLaunch = (id: string) => resolveHomeLaunch(db({ accounts, preferences }), id, 'bypass');
   const p = { ...props([]), accounts, resolveLaunch, onHomeAccount };
   const view = render(<HomeView {...p} />);
-  expect(screen.getByRole('combobox', { name: 'Agent provider for dashboard threads' }).textContent).toBe('Codex · RS');
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).textContent).toContain('Codex · RS');
   preferences.last_selected = 'a';
   view.rerender(<HomeView {...p} />);
-  expect(screen.getByRole('combobox', { name: 'Agent provider for dashboard threads' }).textContent).toBe('Claude · Main');
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).textContent).toContain('Claude · Main');
   expect(onHomeAccount).not.toHaveBeenCalled();
 });
 
@@ -378,4 +385,67 @@ it("shows an empty project sheet with a New thread action", () => {
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "New thread" }));
   expect(onNewThread).toHaveBeenCalledWith("beta");
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+describe("old projects filter", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const mixed = () => ({ ...props([thread("new", { project: "alpha", updated: NOW - DAY }), thread("old", { project: "beta", updated: NOW - 8 * DAY })]), schedules: [] });
+  const names = () => screen.queryAllByRole("article").map(n => n.getAttribute("aria-label"));
+
+  it("hides projects with no recent activity by default", () => {
+    render(<HomeView {...mixed()} />);
+    expect(names()).toEqual(["Project Alpha"]);
+  });
+  it("shows a counted toggle that reveals old projects, flips its label and persists", () => {
+    const p = mixed();
+    const { unmount } = render(<HomeView {...p} />);
+    const toggle = screen.getByRole("button", { name: /Show old projects \(1\)/ });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.getAttribute("title")).toContain("last 7 days");
+    fireEvent.click(toggle);
+    expect(names()).toEqual(["Project Alpha", "Project Beta"]);
+    expect(screen.getByRole("button", { name: /Hide old projects/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem(HOME_RECENT_ONLY_KEY)).toBe("false");
+    unmount();
+    render(<HomeView {...p} />);
+    expect(names()).toEqual(["Project Alpha", "Project Beta"]);
+  });
+  it("renders no toggle when nothing is old", () => {
+    render(<HomeView {...props([thread("a"), thread("b", { project: "beta" })])} schedules={[]} />);
+    expect(screen.queryByRole("button", { name: /old projects/ })).toBeNull();
+  });
+  it("offers a way back when every project is old", () => {
+    render(<HomeView {...props([thread("a", { updated: NOW - 9 * DAY }), thread("b", { project: "beta", updated: NOW - 9 * DAY })])} schedules={[]} />);
+    expect(screen.getByText(/All 2 projects are old\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show old projects." }));
+    expect(names()).toEqual(["Project Alpha", "Project Beta"]);
+  });
+  it("keeps an old project with an enabled schedule", () => {
+    const p = mixed();
+    render(<HomeView {...p} schedules={[{ id: "s1", name: "Nightly", project: "beta", next_due: NOW + DAY, enabled: true }]} />);
+    expect(names()).toEqual(["Project Alpha", "Project Beta"]);
+  });
+  it("reorders relative to a visible neighbour so hidden projects keep their place in the saved order", () => {
+    const projects = [project("alpha", "Alpha"), project("hidden", "Hidden"), project("gamma", "Gamma")];
+    const p = props([thread("a", { project: "alpha" }), thread("g", { project: "gamma" }), thread("h", { project: "hidden", updated: NOW - 9 * DAY })], projects);
+    const onMoveProject = vi.fn();
+    render(<HomeView {...p} schedules={[]} onMoveProject={onMoveProject} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Alpha" }), { altKey: true, key: "ArrowDown" });
+    expect(onMoveProject).toHaveBeenCalledWith("alpha", "gamma", true);
+  });
+});
+
+describe("needs you section", () => {
+  afterEach(cleanup);
+  it("is hidden when nothing is waiting", () => {
+    render(<HomeView {...props([thread("a")])} schedules={[]} />);
+    expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+    expect(screen.queryByText("Nothing is waiting on you.")).toBeNull();
+  });
+  it("appears before Projects when a thread is waiting", () => {
+    render(<HomeView {...props([thread("a", { pending })])} schedules={[]} />);
+    const needs = screen.getByRole("region", { name: "Needs you" });
+    const projects = screen.getByRole("region", { name: "Projects" });
+    expect(needs.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

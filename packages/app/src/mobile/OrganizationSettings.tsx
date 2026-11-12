@@ -1,3 +1,4 @@
+import { ProjectEditorButton, useProjectEditor, type ProjectEditorClient } from "../desktop/project-editor";
 import { useState } from 'react';
 import { Button } from '@freddai/ui/components/button';
 import { Input } from '@freddai/ui/components/input';
@@ -20,11 +21,12 @@ function ProjectEditor({ project, disabled, onSave }: {
   </form>;
 }
 
-export function OrganizationSettings({ snapshot, disabled, onSave, onMove }: {
-  snapshot: CompanionSnapshot; disabled: boolean;
+export function OrganizationSettings({ snapshot, disabled, onSave, onMove, projectEditor }: {
+  snapshot: CompanionSnapshot; disabled: boolean; projectEditor?: ProjectEditorClient;
   onSave?: (id: string, name: string, color: string) => Promise<unknown>;
   onMove?: (id: string, target: string, after: boolean) => Promise<unknown>;
 }) {
+  const editorAvailable = useProjectEditor(disabled ? undefined : projectEditor);
   const order = [...new Set([...(snapshot.threadList?.projectOrder ?? []), ...snapshot.projects.map(p => p.id)])];
   const projects = order.flatMap(id => snapshot.projects.find(p => p.id === id) ?? []);
   return <section aria-label="Project organization" className="space-y-4">
@@ -33,6 +35,7 @@ export function OrganizationSettings({ snapshot, disabled, onSave, onMove }: {
     {!projects.length && <p>Your Mac has no projects yet.</p>}
     {projects.map((project, index) => <div key={project.id} className="companion-organization-card">
       {onSave ? <ProjectEditor key={`${project.id}:${project.name}:${project.color}`} project={project} disabled={disabled} onSave={onSave}/> : <h3>{project.name}</h3>}
+      {editorAvailable && project.kind !== "commander" && <ProjectEditorButton client={projectEditor} project={project.id} remote disabled={disabled} />}
       {onMove && snapshot.canReorderProjects && <div className="flex gap-2">
         <Button variant="outline" disabled={disabled || index === 0} aria-label={`Move ${project.name} up`} onClick={() => void onMove(project.id, projects[index - 1].id, false)}>Move up</Button>
         <Button variant="outline" disabled={disabled || index === projects.length - 1} aria-label={`Move ${project.name} down`} onClick={() => void onMove(project.id, projects[index + 1].id, true)}>Move down</Button>

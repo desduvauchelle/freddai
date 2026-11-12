@@ -3,6 +3,8 @@
 //! Source files are included directly (like tests/preview_tunnel.rs) so the Tauri app is not linked.
 #[path = "../src/companion_crypto.rs"]
 mod companion_crypto;
+#[path = "../src/preview_url.rs"]
+mod preview_url;
 #[allow(dead_code)]
 #[path = "../src/preview_tunnel.rs"]
 mod preview_tunnel;

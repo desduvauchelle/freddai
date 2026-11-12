@@ -1,14 +1,13 @@
+import { ComposerAgentPicker } from './ComposerAgentPicker';
 import { ProjectTile } from "./ProjectTile";
 import { formatProjectName } from "../projectName";
 import { dashboardProjectGroups } from "../mobile/dashboard-projects";
-import { DashboardSelect } from "./DashboardSelect";
 import { Dot, labelStatus } from "./ThreadStatus";
 import { newThreadDraftKey, useDraft, setDraft } from "./drafts";
 import { agentDisplayName } from "./types";
-import { AgentControls } from "./AgentControls";
 import { BugWalkButton } from "./bug-walk/BugWalkButton";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
-import { Activity, ArrowUpRight, Check, CircleAlert, FolderPlus, GripVertical, Plus, X } from "lucide-react";
+import { Activity, ArrowUpRight, Check, CircleAlert, Eye, EyeOff, FolderPlus, GripVertical, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@freddai/ui/components/button";
 import { Input } from "@freddai/ui/components/input";
@@ -30,6 +29,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { dropOutcome, withEmptyGroups, type DropPosition } from "./workspace-order";
 import "./home.css";
 import { OfficeOrder } from "../office/OfficeOrder";
+import { HOME_RECENT_ONLY_KEY, RECENT_WINDOW_MS, readRecentOnly, recentProjects, writeRecentOnly } from "../office/officeFilter";
+
+const RECENT_DAYS = Math.round(RECENT_WINDOW_MS / 86_400_000);
+const OLD_PROJECTS_HINT = `Projects with no activity in the last ${RECENT_DAYS} days`;
 
 export { homeRunState } from "./home-state";
 
@@ -69,6 +72,7 @@ export function homeProjects(sessions: readonly Session[], projects: readonly Pr
 export const needsYou = (sessions: readonly Session[]) => sessions.filter(t => isLive(t) && !!t.pending).sort(compareThreadRecency);
 
 export type HomeViewProps = {
+  modelConfiguration?: import("./model-levels").ModelConfiguration;
   projectNameUppercase?: boolean;
   homeAccount?: string;
   onHomeAccount?: (account: string) => void;
@@ -134,18 +138,18 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
     setError("");
     if (!plan.ok) { setError(plan.reason); return; }
     setDictating(true);
-    try { const title = await onCreate(transcript); setArmed(false); confirm(transcript, title); }
+    try { await onCreate(transcript); setArmed(false); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setDictating(false); }
   }
   return <ProjectTile uppercase={uppercase} project={project} hasThreads={!!entry.latest}
     recent={[...entry.pending, ...entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))].slice(0, 3)}
     onOpen={onOpen} onOpenThread={id => { if (!id.startsWith("pending:")) onOpenThread(id); }} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
-        <MicButton target={false} onText={t => void dictate(t)} />
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
           title="New thread" aria-expanded={open} disabled={!canCreate} onClick={onToggle}>
           {open ? <X size={14} /> : <Plus size={14} />}
         </Button>
+        <MicButton target={false} onText={t => void dictate(t)} />
       </div>}>
     {micUsed && <VoiceNotice target />}
     {(open || armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
@@ -193,17 +197,24 @@ function DropGroup({ groupId, name, ids, over, children }: { groupId: string; na
   </section>;
 }
 
-export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, onMoveProjectToWorkspace, homeAccount = "", onHomeAccount, projectNameUppercase = false }: HomeViewProps) {
+export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, onMoveProjectToWorkspace, homeAccount = "", onHomeAccount, projectNameUppercase = false, modelConfiguration }: HomeViewProps) {
   const [items, setItems] = useState<Record<string, string[]> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const origin = useRef("");
   const dragging = useRef(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const clock = now ?? Date.now();
-  const tiles = useMemo(() => homeProjects(sessions, projects, clock, pendingLaunches), [sessions, projects, clock, pendingLaunches]);
+  const [recentOnly, setRecentOnly] = useState(() => readRecentOnly(HOME_RECENT_ONLY_KEY));
+  const setRecent = (value: boolean) => { setRecentOnly(value); writeRecentOnly(value, HOME_RECENT_ONLY_KEY); };
+  // Hidden projects stay in `projects` (and therefore in the persisted order); only the rendered tiles are filtered.
+  const workplaceProjects = useMemo(() => projects.filter(p => p.kind !== "commander"), [projects]);
+  const visibleWorkplace = useMemo(() => recentOnly ? recentProjects(workplaceProjects, sessions, schedules, clock) : workplaceProjects, [recentOnly, workplaceProjects, sessions, schedules, clock]);
+  const visibleProjects = useMemo(() => { const keep = new Set(visibleWorkplace.map(p => p.id)); return projects.filter(p => p.kind === "commander" || keep.has(p.id)); }, [projects, visibleWorkplace]);
+  const hiddenCount = workplaceProjects.length - visibleWorkplace.length;
+  const tiles = useMemo(() => homeProjects(sessions, visibleProjects, clock, pendingLaunches), [sessions, visibleProjects, clock, pendingLaunches]);
   const entries = new Map(tiles.map(entry => [entry.project.id, entry]));
-  const baseGroups = dashboardProjectGroups({ projects, workspaces });
-  const layoutKey = JSON.stringify([projects.map(p => p.id), workspaces?.map(w => w.projects)]);
+  const baseGroups = dashboardProjectGroups({ projects: visibleProjects, workspaces });
+  const layoutKey = JSON.stringify([visibleProjects.map(p => p.id), workspaces?.map(w => w.projects)]);
   // Optimistic layout: kept after a drop until the saved order/membership arrives (or 1.5s passes) so the card never snaps back.
   useEffect(() => {
     if (dragging.current) return;
@@ -285,18 +296,34 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
 
     {commander && <CommanderCluster onOpen={commander.onOpen} onSend={commander.onSend} bugWalk={native ? <BugWalkButton className="commander-circle-button" /> : undefined} />}
 
-    <Office proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
+    {waiting.length > 0 && <section className="home-section" aria-label="Needs you">
+      <div className="home-section-title"><span>Needs you</span><span className="home-count">{waiting.length}</span></div>
+      <div className="home-queue">
+        <ThreadList threads={waiting} renderRow={thread => <article className="home-request" aria-label={`Request in ${thread.title}`}>
+          <header>
+            <span className="home-request-project">{formatProjectName(projectName(thread.project), projectNameUppercase)}</span>
+            <strong title={thread.title}>{thread.title}</strong>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onOpenThread(thread.id)}>Open thread<ArrowUpRight size={12} aria-hidden="true" /></Button>
+          </header>
+          {thread.pending && <Permission key={`${thread.id}:${JSON.stringify(thread.pending.request_id ?? thread.pending.id)}`}
+            pending={thread.pending} provider={accounts.find(a => a.id === thread.account)?.provider || "codex"}
+            onReply={(allow, answers) => onRespond(thread, allow, answers)} />}
+        </article>} />
+      </div>
+    </section>}
+
+    <Office projectNameUppercase={projectNameUppercase} proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
       onSend={text => onCreateThread(project, text)} renderMic={(onText, disabled) => <><MicButton target={false} disabled={disabled} onListening={onListening} label={`Give an order to ${projectName(project)}`} onText={onText} /><VoiceNotice target /></>} />} variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
 
     <section className="home-section" aria-label="Projects">
       <div className="dashboard-project-toolbar">
       <div className="home-section-title"><span>Projects</span>
         <Button type="button" variant="ghost" size="sm" onClick={onAddProject}><FolderPlus size={13} aria-hidden="true" />Add project</Button>
+        {(hiddenCount > 0 || !recentOnly) && <Button type="button" variant="ghost" size="sm" aria-pressed={!recentOnly} aria-label={recentOnly ? `Show old projects (${hiddenCount}). ${OLD_PROJECTS_HINT}` : `Hide old projects. ${OLD_PROJECTS_HINT}`} title={OLD_PROJECTS_HINT} onClick={() => setRecent(!recentOnly)}>
+          {recentOnly ? <Eye size={13} aria-hidden="true" /> : <EyeOff size={13} aria-hidden="true" />}{recentOnly ? `Show old projects (${hiddenCount})` : "Hide old projects"}</Button>}
       </div>
       <div className="dashboard-launch-controls" role="group" aria-label="Dashboard task defaults">
-          {onHomeAccount && <DashboardSelect label="Agent provider for dashboard threads" displayValue={modelAccounts[0] ? agentDisplayName(modelAccounts[0]) : 'Choose provider'} value={selectedAccount?.id || ''} disabled={!canCreate || !accounts.length}
-            onChange={onHomeAccount} options={[{ value: '', label: 'Project defaults' }, ...accounts.map(account => ({ value: account.id, label: agentDisplayName(account) }))]} />}
-          {onHomeSelection && modelAccounts.map(account => <AgentControls key={account.id} inline account={account} native={native} value={homeSelections[account.id] ?? defaultSelection} onChange={selection => onHomeSelection(account.id, selection)} disabled={!canCreate} context="all new dashboard tasks" />)}
+          {(onHomeAccount || onHomeSelection) && <ComposerAgentPicker displayLabel={modelAccounts[0] ? agentDisplayName(modelAccounts[0]) : undefined} options={[{ id: '', label: 'Project defaults' }, ...accounts.map(account => ({ id: account.id, label: agentDisplayName(account), account }))]} agent={selectedAccount?.id || ''} onAgentChange={id => onHomeAccount?.(id)} account={modelAccounts[0]} native={native} modelConfiguration={modelConfiguration} value={modelAccounts[0] ? homeSelections[modelAccounts[0].id] ?? defaultSelection : defaultSelection} onChange={selection => { if (modelAccounts[0]) onHomeSelection?.(modelAccounts[0].id, selection); }} disabled={!canCreate || !accounts.length}/>}
           
       </div>
       </div>
@@ -309,23 +336,9 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
               {renderTile(entry)}</SortableCard>; })}
           </DropGroup>; })}
         <DragOverlay>{activeId && entries.get(activeId) ? <div className="home-project-card home-project-card--overlay">{renderTile(entries.get(activeId)!)}</div> : null}</DragOverlay>
-      </DndContext> : <p className="home-empty">No projects yet. Add a project to get started.</p>}
-    </section>
-
-    <section className="home-section" aria-label="Needs you">
-      <div className="home-section-title"><span>Needs you</span><span className="home-count">{waiting.length}</span></div>
-      {waiting.length ? <div className="home-queue">
-        <ThreadList threads={waiting} renderRow={thread => <article className="home-request" aria-label={`Request in ${thread.title}`}>
-          <header>
-            <span className="home-request-project">{formatProjectName(projectName(thread.project), projectNameUppercase)}</span>
-            <strong title={thread.title}>{thread.title}</strong>
-            <Button type="button" variant="ghost" size="sm" onClick={() => onOpenThread(thread.id)}>Open thread<ArrowUpRight size={12} aria-hidden="true" /></Button>
-          </header>
-          {thread.pending && <Permission key={`${thread.id}:${JSON.stringify(thread.pending.request_id ?? thread.pending.id)}`}
-            pending={thread.pending} provider={accounts.find(a => a.id === thread.account)?.provider || "codex"}
-            onReply={(allow, answers) => onRespond(thread, allow, answers)} />}
-        </article>} />
-      </div> : <p className="home-empty">Nothing is waiting on you.</p>}
+      </DndContext> : hiddenCount > 0 && recentOnly
+        ? <p className="home-empty">All {hiddenCount} project{hiddenCount === 1 ? " is" : "s are"} old. <button type="button" className="home-empty-action" onClick={() => setRecent(false)}>Show old projects.</button></p>
+        : <p className="home-empty">No projects yet. Add a project to get started.</p>}
     </section>
 
     <section className="home-section home-summaries" aria-label="Daily summaries">

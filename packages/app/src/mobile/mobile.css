@@ -547,6 +547,15 @@
   background: transparent;
   color: inherit;
 }
+.companion-composer-tools > .composer-agent-trigger {
+  width: auto;
+  max-width: min(240px, 100%);
+  height: 36px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--adaptive-border, #7775);
+  border-radius: 9px;
+}
 .companion-composer-tools > .companion-send {
   width: 36px;
   height: 36px;
@@ -1104,7 +1113,7 @@
 
 /* The web companion and Mac satellite share the desktop project card. */
 .companion-dashboard article.home-tile { padding: 8px 10px; border-radius: 5px; background: var(--card); }
-.companion-dashboard .home-tile .companion-project-actions { display: flex; align-items: center; gap: 4px; }
+.companion-dashboard .home-tile .companion-project-actions { display: flex; align-items: center; gap: 12px; padding-block: 8px; flex-shrink: 0; }
 .companion-dashboard .home-tile .companion-project-controls { margin: 0; }
 .companion-dashboard .home-tile .dashboard-mic { width: 44px; padding: 0; font-size: 0; gap: 0; background: transparent; color: inherit; }
 .companion-container { height: 100%; }
@@ -1187,3 +1196,26 @@
 .companion-nav-tile svg { flex-shrink: 0; width: 16px; height: 16px; color: var(--muted-foreground); }
 
 .new-thread-project-required { margin: 8px 0; padding: 10px 12px; border: 1px solid currentColor; border-radius: 8px; color: var(--adaptive-fg, var(--foreground)); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+
+/* Window drag affordance for the companion desktop window. */
+.companion-desktop-brand, .companion-desktop-toolbar { cursor: grab; transition: background 120ms; }
+.companion-desktop-brand:active, .companion-desktop-toolbar:active { cursor: grabbing; }
+.companion-desktop-brand:hover, .companion-desktop-toolbar:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.companion-desktop-brand button, .companion-desktop-toolbar button { cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .companion-desktop-brand, .companion-desktop-toolbar { transition: none; }
+}
+
+.companion-settings-group { margin: 0 0 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--background); }
+.companion-settings-group > summary { padding: 18px 16px; cursor: pointer; font-size: 17px; font-weight: 600; }
+.companion-settings-group > summary span { display: block; margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; font-weight: 400; }
+.companion-settings-group > div { padding: 0 16px 20px; }
+.companion-settings-group .workspace-settings > form { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.companion-settings-group .workspace-settings > section[aria-label="Available projects"] { display: none; }
+@media (min-width: 768px) { .companion-settings-sheet { max-width: 800px; margin-inline: auto; } }
+@media (max-width: 600px) {
+  .companion-settings-group .workspace-settings > form { display: grid; grid-template-columns: auto 1fr; align-items: end; }
+  .companion-settings-group .workspace-settings > form > label { grid-column: 1 / -1; }
+  .companion-settings-group .workspace-settings > form > button { min-height: 44px; }
+}
+.companion-settings-group .workspace-card[aria-label="No workspace"]:has(> div:empty) { display: none; }

@@ -8,6 +8,8 @@ struct DashboardModel: Decodable {
     let activity: String; let model: String; let canStart: Bool
     var recent: [RecentThread]? = nil
   }
+  struct NeedsYouThread: Decodable { let id: String; let title: String; let project: String; var projectName: String? = nil; var status: String? = nil; var unread: Bool? = nil }
+  var needsYou: [NeedsYouThread]?
   struct ProjectGroup: Decodable { let id: String; let name: String?; let projects: [String] }
   var projectGroups: [ProjectGroup]?
   struct Summary: Decodable {
@@ -34,7 +36,7 @@ struct DashboardModel: Decodable {
   var difficulty: String?
   var hasControls: Bool?
   var workspaceName: String?
-  private enum CodingKeys: String, CodingKey { case model, difficulty, hasControls, projectGroups, commander, summaries, schedules, message, expanded, workspaceHeight, connected, busy, agent, projects; case workspaceName = "workspace" }
+  private enum CodingKeys: String, CodingKey { case model, difficulty, hasControls, projectGroups, commander, needsYou, summaries, schedules, message, expanded, workspaceHeight, connected, busy, agent, projects; case workspaceName = "workspace" }
   var summaries: [Summary]?
   var schedules: Bool?
   var message: String?
@@ -238,7 +240,9 @@ final class DashboardView: UIScrollView {
       let rect = anchor.convert(anchor.bounds, to: self)
       let width = min(256, bounds.width)
       let x = min(max(bounds.minX, rect.midX - width + 38), bounds.maxX - width)
-      let y = max(bounds.minY + safeAreaInsets.top, rect.minY - height - 8)
+      let top = bounds.minY + safeAreaInsets.top + 8
+      let above = rect.minY - height - 8
+      let y = max(top, min(above >= top ? above : rect.maxY + 8, bounds.maxY - safeAreaInsets.bottom - height - 8))
       bar.frame = CGRect(x: x, y: y, width: width, height: height)
     } else {
       let height = height + safeAreaInsets.bottom
@@ -284,12 +288,61 @@ final class DashboardView: UIScrollView {
     button.addAction(UIAction { _ in action() }, for: .touchUpInside)
     return button
   }
+  /// "Needs you" list under the commander cluster: one tappable row per waiting thread (title, project), opening the thread.
+  private func addNeedsYouSection(_ waiting: [DashboardModel.NeedsYouThread]) {
+    if let last = stack.arrangedSubviews.last { stack.setCustomSpacing(24, after: last) }
+    let label = UILabel()
+    label.attributedText = NSAttributedString(string: "NEEDS YOU · \(waiting.count)", attributes: [.font: Self.scaled(13, .semibold, .footnote), .foregroundColor: UIColor.secondaryLabel, .kern: 0.5])
+    label.accessibilityLabel = "Needs you, \(waiting.count)"; label.accessibilityTraits = .header
+    stack.addArrangedSubview(label); stack.setCustomSpacing(8, after: label)
+    let list = UIStackView(); list.axis = .vertical; list.spacing = 0
+    list.accessibilityIdentifier = "dashboard-needs-you"
+    for thread in waiting {
+      var config = UIButton.Configuration.plain()
+      config.baseForegroundColor = .label
+      let link = UIButton(configuration: config)
+      link.configurationUpdateHandler = { button in
+        var c = button.configuration
+        c?.background.backgroundColor = button.isHighlighted ? DashboardView.rowHighlight : .clear
+        c?.background.cornerRadius = 8
+        button.configuration = c
+      }
+      link.addAction(UIAction { [weak self] _ in
+        self?.onAction?(DashboardActionPayload(action: "thread", project: thread.project, thread: thread.id))
+      }, for: .touchUpInside)
+      link.accessibilityIdentifier = "dashboard-needs-you-" + thread.id
+      link.contentHorizontalAlignment = .leading
+      let indicator = StatusIndicatorView()
+      let spoken = indicator.configure(status: "waiting", unread: thread.unread ?? false)
+      let title = UILabel(); title.text = thread.title
+      title.font = Self.scaled(14, .regular, .subheadline); title.numberOfLines = 1; title.lineBreakMode = .byTruncatingTail
+      let project = UILabel(); project.text = thread.projectName ?? ""
+      project.font = Self.scaled(12, .regular, .caption1); project.textColor = .systemOrange; project.numberOfLines = 1
+      let text = UIStackView(arrangedSubviews: project.text?.isEmpty == false ? [title, project] : [title]); text.axis = .vertical; text.spacing = 1
+      text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+      let content = UIStackView(arrangedSubviews: [text, indicator])
+      content.alignment = .center; content.spacing = 4
+      content.isUserInteractionEnabled = false; content.translatesAutoresizingMaskIntoConstraints = false
+      link.addSubview(content)
+      NSLayoutConstraint.activate([
+        content.leadingAnchor.constraint(equalTo: link.leadingAnchor, constant: 8),
+        content.trailingAnchor.constraint(equalTo: link.trailingAnchor),
+        content.topAnchor.constraint(equalTo: link.topAnchor, constant: 4),
+        content.bottomAnchor.constraint(equalTo: link.bottomAnchor, constant: -4),
+      ])
+      link.accessibilityLabel = [thread.title, thread.projectName ?? "", spoken].filter { !$0.isEmpty }.joined(separator: ", ")
+      link.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+      list.addArrangedSubview(link)
+    }
+    stack.addArrangedSubview(list)
+  }
   private func render() {
     renderedColumns = columns
     stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
     guard let model = model else { return }
     let heading = UILabel(); heading.text = "Your projects"; heading.font = .preferredFont(forTextStyle: .title2); heading.adjustsFontForContentSizeCategory = true
     if let commander = model.commander { stack.addArrangedSubview(commanderCluster(commander, model: model)) }
+    if let waiting = model.needsYou, !waiting.isEmpty { addNeedsYouSection(waiting) }
     let workspaceRow = UIView()
     workspaceRow.addSubview(workspace)
     workspace.translatesAutoresizingMaskIntoConstraints = false
@@ -342,9 +395,9 @@ final class DashboardView: UIScrollView {
       defaults.distribution = .fillEqually
       stack.addArrangedSubview(defaults)
     }
-    if !model.connected || model.projects.isEmpty || model.busy || awaitingTranscript {
+    if !model.connected || model.projects.isEmpty {
       let status = UILabel(); status.numberOfLines = 0; status.font = .preferredFont(forTextStyle: .body)
-      status.text = model.busy || awaitingTranscript ? "Transcribing…" : !model.connected ? "Connect to your Mac to start tasks." : "Your projects will appear here."
+      status.text = !model.connected ? "Connect to your Mac to start tasks." : "Your projects will appear here."
       stack.addArrangedSubview(status)
     }
     let groups = model.projectGroups ?? [DashboardModel.ProjectGroup(id: "", name: nil, projects: model.projects.map { $0.id })]
@@ -445,16 +498,10 @@ final class DashboardView: UIScrollView {
     return button
   }
 
-  /// Header row (dot, name, + and mic) over a top-aligned list of thread rows. The name takes the project colour.
+  /// Header row (name, + and mic) over a top-aligned list of thread rows. The name takes the project colour.
   private func projectCard(_ project: DashboardModel.Project, model: DashboardModel) -> UIView {
     let card = DashboardCardView()
     let emit: (String) -> Void = { [weak self] action in self?.onAction?(DashboardActionPayload(action: action, project: project.id, assistant: project.assistant)) }
-
-    let dot = UIView(); dot.layer.cornerRadius = 4
-    dot.backgroundColor = Self.color(hex: project.color) ?? .tertiaryLabel
-    dot.accessibilityIdentifier = "dashboard-dot-" + project.id
-    dot.widthAnchor.constraint(equalToConstant: 8).isActive = true
-    dot.heightAnchor.constraint(equalToConstant: 8).isActive = true
 
     let title = button(project.name) { emit("open") }
     title.accessibilityLabel = project.name
@@ -493,19 +540,19 @@ final class DashboardView: UIScrollView {
     let header: UIStackView
     let narrow = !(renderedColumns >= 3 || bounds.width >= 600)
     if !narrow {
-      header = UIStackView(arrangedSubviews: [dot, title, create, mic])
+      header = UIStackView(arrangedSubviews: [title, create, mic])
       header.axis = .horizontal; header.alignment = .center; header.spacing = 0
-      header.setCustomSpacing(8, after: dot)
+      header.setCustomSpacing(12, after: create)
     } else {
-      // Narrow two-column cards: the dot and name are centred as a unit (the name truncates); + and mic are centred as a pair on the next line.
+      // Narrow two-column cards: the name is centred (the name truncates); + and mic are centred as a pair on the next line.
       title.constraints.filter { $0.firstAttribute == .height }.forEach { $0.isActive = false }
       title.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
       title.setContentHuggingPriority(.required, for: .horizontal)
-      let name = UIStackView(arrangedSubviews: [dot, title]); name.alignment = .center; name.spacing = 8
-      let icons = UIStackView(arrangedSubviews: [create, mic]); icons.alignment = .center
+      let name = UIStackView(arrangedSubviews: [title]); name.alignment = .center; name.spacing = 8
+      let icons = UIStackView(arrangedSubviews: [create, mic]); icons.alignment = .center; icons.spacing = 12
       header = UIStackView(arrangedSubviews: [name, icons]); header.axis = .vertical; header.alignment = .center; header.spacing = 0
       header.layoutMargins = .zero
-      header.setCustomSpacing(-6, after: name)
+      header.setCustomSpacing(8, after: name)
     }
 
     let threads = UIStackView(); threads.axis = .vertical; threads.spacing = 0
@@ -573,10 +620,10 @@ final class DashboardView: UIScrollView {
 
     for view in [header, threads] { view.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(view) }
     NSLayoutConstraint.activate([
-      header.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
+      header.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
       header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: narrow ? 8 : 14),
       header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: narrow ? -8 : -4),
-      threads.topAnchor.constraint(equalTo: header.bottomAnchor),
+      threads.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
       threads.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 6),
       threads.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
       threads.bottomAnchor.constraint(lessThanOrEqualTo: card.bottomAnchor, constant: -10),

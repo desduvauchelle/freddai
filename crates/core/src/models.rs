@@ -127,6 +127,25 @@ out({'id':2,'result':{'data':[{'model':'hidden','hidden':True}],'nextCursor':Non
         );
     }
     #[test]
+    fn catalog_passes_service_tiers_through() {
+        let mut cmd = Command::new("python3");
+        cmd.args(["-u", "-c", r#"import json,sys
+def read(): return json.loads(sys.stdin.readline())
+def out(v): print(json.dumps(v),flush=True)
+read(); out({'id':1,'result':{}})
+read(); read()
+out({'id':2,'result':{'data':[{'model':'fixture','defaultServiceTier':'default','serviceTiers':[{'id':'priority','name':'Fast','description':'Faster'}]}],'nextCursor':None}})
+"#]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let models = query(cmd, Duration::from_secs(2)).unwrap();
+        assert_eq!(models[0]["serviceTiers"][0]["id"], "priority");
+        assert_eq!(models[0]["defaultServiceTier"], "default");
+    }
+    #[test]
     fn stalled_discovery_is_bounded() {
         let mut cmd = Command::new("python3");
         cmd.args(["-c", "import time; time.sleep(30)"]);

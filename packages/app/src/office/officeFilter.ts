@@ -3,6 +3,7 @@ import { agentState, type OfficeSchedule } from "./officeModel";
 
 export const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const OFFICE_RECENT_ONLY_KEY = "freddai.office.recent-only.v1";
+export const HOME_RECENT_ONLY_KEY = "freddai.home.recent-only.v1";
 
 type FilterSession = Pick<Session, "id" | "project" | "status" | "pending" | "updated" | "archived" | "deleted_at"> & { last_user_message_at?: number | null; turn_started_at?: number | null };
 
@@ -34,9 +35,9 @@ export function recentProjects<P extends Pick<Project, "id" | "kind">>(
   return projects.filter(p => p.kind === "commander" || keep.has(p.id));
 }
 
-export function readRecentOnly(storage: Pick<Storage, "getItem"> | undefined = typeof localStorage === "undefined" ? undefined : localStorage): boolean {
-  try { return storage?.getItem(OFFICE_RECENT_ONLY_KEY) !== "false"; } catch { return true; }
+export function readRecentOnly(key: string = OFFICE_RECENT_ONLY_KEY, storage: Pick<Storage, "getItem"> | undefined = typeof localStorage === "undefined" ? undefined : localStorage): boolean {
+  try { return storage?.getItem(key) !== "false"; } catch { return true; }
 }
-export function writeRecentOnly(value: boolean, storage: Pick<Storage, "setItem"> | undefined = typeof localStorage === "undefined" ? undefined : localStorage) {
-  try { storage?.setItem(OFFICE_RECENT_ONLY_KEY, String(value)); } catch (e) { console.warn("office.recent-only.persist-failed", e); }
+export function writeRecentOnly(value: boolean, key: string = OFFICE_RECENT_ONLY_KEY, storage: Pick<Storage, "setItem"> | undefined = typeof localStorage === "undefined" ? undefined : localStorage) {
+  try { storage?.setItem(key, String(value)); } catch (e) { console.warn("office.recent-only.persist-failed", e); }
 }

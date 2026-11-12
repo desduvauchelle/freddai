@@ -1,3 +1,4 @@
+import { VOICE_CALL_SUFFIX } from "../conversation/voiceCallMarkup";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { disconnectedClient, type CompanionClient, type CompanionSnapshot } from './companion';
@@ -84,12 +85,12 @@ it('starts a thread with the chosen project, agent and model, then opens the con
   shell.pickOption.mockResolvedValueOnce('p2');
   await act(async () => { screen.getByRole('button', { name: 'Project: First' }).click(); });
   await screen.findByRole('button', { name: 'Project: Second' });
-  shell.pickOption.mockResolvedValueOnce('b');
+  shell.pickOption.mockResolvedValueOnce(JSON.stringify({agent:'b', model:'freddai-level:normal'}));
   await act(async () => { screen.getByRole('button', { name: /^Coding agent/ }).click(); });
   await screen.findByRole('button', { name: 'Coding agent: Codex · Work' });
-  shell.pickOption.mockResolvedValueOnce('gpt-x').mockResolvedValueOnce('high');
+  shell.pickOption.mockResolvedValueOnce(JSON.stringify({agent:'b', model:'__custom'})).mockResolvedValueOnce('gpt-x').mockResolvedValueOnce('high');
   await act(async () => { (shell.handlers.threadAction as (p: {action: string}) => void)({action:'model'}); });
-  expect(shell.pickOption).toHaveBeenCalledWith(expect.objectContaining({title: 'Reasoning effort'}));
+  expect(shell.pickOption).toHaveBeenCalledWith(expect.objectContaining({title: 'Thinking'}));
   shell.pickOption.mockResolvedValueOnce('bypass');
   await act(async () => { (shell.handlers.threadAction as (p: {action: string}) => void)({action:'permissions'}); });
   await send('Build the thing');
@@ -447,9 +448,9 @@ it('carries native dashboard project agent, model and effort through the compose
   await renderNew(<MobileApp client={client} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await act(async () => { shell.handlers.dashboard(); });
-  shell.pickOption.mockResolvedValueOnce('b');
+  shell.pickOption.mockResolvedValueOnce(JSON.stringify({agent:'b', model:'freddai-level:normal'}));
   await dashboardAction({ action: 'agent' });
-  shell.pickOption.mockResolvedValueOnce('offline-model').mockResolvedValueOnce('high');
+  shell.pickOption.mockResolvedValueOnce('__custom').mockResolvedValueOnce('offline-model').mockResolvedValueOnce('high');
   await dashboardAction({ action: 'model', project: 'p2', assistant: 'b' });
   await dashboardAction({ action: 'new', project: 'p2', assistant: 'b' });
   await screen.findByRole('button', { name: 'Coding agent: Codex · Work' });
@@ -462,9 +463,9 @@ it('applies the shared dashboard model and difficulty to tasks in different proj
   await renderNew(<MobileApp client={client} />);
   await screen.findByRole('button', { name: 'Project: First' });
   await act(async () => { shell.handlers.dashboard(); });
-  shell.pickOption.mockResolvedValueOnce('b');
+  shell.pickOption.mockResolvedValueOnce(JSON.stringify({agent:'b', model:'freddai-level:normal'}));
   await dashboardAction({ action: 'agent' });
-  shell.pickOption.mockResolvedValueOnce('__custom').mockResolvedValueOnce('shared-model').mockResolvedValueOnce('high');
+  shell.pickOption.mockResolvedValueOnce(JSON.stringify({agent:'b', model:'__custom'})).mockResolvedValueOnce('shared-model').mockResolvedValueOnce('high');
   await dashboardAction({ action: 'dashboard-effort' });
   await dashboardAction({ action: 'new', project: 'p1', assistant: 'b' });
   await send('First shared task');
@@ -834,7 +835,7 @@ it('starts a companion call, delivers speech through the outbox, and preserves t
   expect(callIo.start).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('button', { name: 'End call' })).toBeTruthy();
   await act(async () => { callIo.handler({ type: 'segment', text: 'Spoken message' }); });
-  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 't1', prompt: 'Spoken message' })), { timeout: 2500 });
+  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 't1', prompt: 'Spoken message' + VOICE_CALL_SUFFIX })), { timeout: 2500 });
   expect(JSON.parse(localStorage.getItem('freddai.companion.drafts')!).t1).toBe('Keep my draft');
   expect(shell.setVoice).toHaveBeenCalledWith(false, 'idle');
   await act(async () => { screen.getByRole('button', { name: 'End call' }).click(); });
@@ -874,7 +875,7 @@ it('starts a call on a new thread and creates the thread from speech without con
   expect(callIo.start).toHaveBeenCalledTimes(1);
   expect(client.start).not.toHaveBeenCalled();
   await act(async () => { callIo.handler({ type: 'segment', text: 'Start from speech' }); });
-  await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p1', prompt: 'Start from speech' })), { timeout: 2500 });
+  await waitFor(() => expect(client.start).toHaveBeenCalledWith(expect.objectContaining({ project: 'p1', prompt: 'Start from speech' + VOICE_CALL_SUFFIX })), { timeout: 2500 });
   expect(screen.getByRole('button', { name: 'End call' })).toBeTruthy();
   expect(callIo.stop).not.toHaveBeenCalled();
   expect(JSON.parse(localStorage.getItem('freddai.companion.drafts')!).new).toBe('Keep my new draft');
@@ -893,10 +894,10 @@ it('queues further speech behind the first call message while thread creation is
   await waitFor(() => expect(JSON.parse(localStorage.getItem('freddai.companion.outbox.v1')!).length).toBe(2), { timeout: 2500 });
   expect(client.start).toHaveBeenCalledTimes(1);
   await act(async () => { finish('created-call-thread'); });
-  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 'created-call-thread', prompt: 'Second spoken message' })));
+  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 'created-call-thread', prompt: 'Second spoken message' + VOICE_CALL_SUFFIX })));
   expect(screen.getByRole('button', { name: 'End call' })).toBeTruthy();
   await act(async () => { callIo.handler({ type: 'segment', text: 'Third spoken message' }); });
-  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 'created-call-thread', prompt: 'Third spoken message' })), { timeout: 2500 });
+  await waitFor(() => expect(client.reply).toHaveBeenCalledWith(expect.objectContaining({ thread: 'created-call-thread', prompt: 'Third spoken message' + VOICE_CALL_SUFFIX })), { timeout: 2500 });
   expect(client.start).toHaveBeenCalledTimes(1);
 });
 
@@ -1017,7 +1018,7 @@ it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the i
   // Reviewing on native presents the web view in the page sheet; the call state rides along on every set_mode.
   await waitFor(() => expect(rawModeCalls().at(-1)).toEqual(['callReview', expect.objectContaining({ threadSheet: true, call: expect.objectContaining({ active: true, muted: false, startedAt: expect.any(Number) }) })]));
   fireEvent.change(instruction, { target: { value: 'Say hello to check this works.' } });
-  if (action === 'agent') fireEvent.change(within(card).getByRole('combobox', { name: 'Agent' }), { target: { value: 'b' } });
+  if (action === 'agent') { fireEvent.click(within(card).getByRole('button', { name: 'Assistant and difficulty' })); fireEvent.click(screen.getByRole('button', { name: 'Codex · Work' })); fireEvent.click(screen.getByRole('button', { name: 'Normal' })); fireEvent.click(screen.getByRole('button', { name: 'Done' })); }
   if (action === 'unready') {
     expect((within(card).getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1033,7 +1034,7 @@ it.each(['button', 'voice', 'retry', 'cancel', 'unready', 'agent'])('turns the i
     if (action === 'retry') (client.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Mac disconnected'));
     await act(async () => {
       if (action === 'voice') callIo.handler({ type: 'segment', text: 'go' });
-      else within(card).getByRole('button', { name: 'Send' }).click();
+      else within(screen.getByRole('region', { name: 'Command review' })).getByRole('button', { name: 'Send' }).click();
     });
     if (action === 'retry') {
       // Delivery goes through the outbox now: the failure is reported loudly on the dashboard instead of in the card.
@@ -1082,4 +1083,55 @@ it('project sheet in native mode renders only that project\'s threads, with no w
   expect(screen.queryByRole('option', { name: 'All projects' })).toBeNull();
   expect(container.querySelector('.companion-filters, .companion-search, nav, header')).toBeNull();
   expect(container.querySelector('.companion-project-dot > .state-dot')).toBeTruthy();
+});
+
+it('Custom for claude lists the concrete models, never asks for a typed ID, and thinking is a tap', async () => {
+  const { chooseSelection, modelOptions, modelPillLabel } = await import('./native-home');
+  const titles: string[] = [], labels: Record<string, string[]> = {};
+  const replies = ['__custom', 'fable', 'high', 'standard'];
+  const choose = async (title: string, options: { id: string; label: string }[]) => { titles.push(title); labels[title] = options.map(o => o.label); return replies.shift() ?? null; };
+  const result = await chooseSelection(choose, 'claude', [], { model: 'freddai-level:normal', effort: 'default' });
+  expect(result).toEqual({ model: 'fable', effort: 'high', speed: undefined });
+  expect(titles).toEqual(['Difficulty', 'Model', 'Thinking', 'Speed']);
+  expect(labels.Speed).toEqual(['Standard', 'Fast mode']);
+  expect(labels.Difficulty).toEqual(['Smart', 'Normal', 'Fast', 'Custom']);
+  expect(labels.Model).toEqual(['Sonnet', 'Opus', 'Haiku', 'Fable']);
+  expect(labels.Model).not.toContain('Enter model ID…');
+  expect(labels.Thinking).toEqual(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Ultracode (Extra high + workflows)']);
+  expect(modelOptions('claude', []).map(o => o.detail)).toEqual(['Fable', 'Opus', 'Sonnet', undefined]);
+  expect(modelOptions('gemini', []).map(o => o.label)).toEqual(['Smart', 'Normal', 'Fast']);
+  expect(modelOptions('gemini', [])[0].detail).toBe('Provider default');
+  expect(modelPillLabel('claude', { model: 'fable', effort: 'high' }, [])).toBe('Fable · High');
+  expect(modelPillLabel('claude', { model: 'opus', effort: 'default' }, [])).toBe('Opus · Default');
+  expect(modelPillLabel('claude', { model: 'fable', effort: 'high', speed: 'fast' }, [])).toBe('Fable · High · Fast');
+  expect(modelPillLabel('claude', { model: 'freddai-level:smart', effort: 'default' }, [])).toBe('Smart');
+});
+
+it('Custom speed sheet: Fast mode is picked, Sonnet and presets skip it', async () => {
+  const { chooseSelection } = await import('./native-home');
+  const run = async (replies: (string | null)[]) => { const titles: string[] = []; const choose = async (t: string) => { titles.push(t); return replies.shift() ?? null; }; return { result: await chooseSelection(choose, 'claude', [], { model: 'freddai-level:normal', effort: 'default' }), titles }; };
+  const fast = await run(['__custom', 'fable', 'high', 'fast']);
+  expect(fast.result).toEqual({ model: 'fable', effort: 'high', speed: 'fast' });
+  const sonnet = await run(['__custom', 'sonnet', 'high']);
+  expect(sonnet.titles).toEqual(['Difficulty', 'Model', 'Thinking']);
+  expect(sonnet.result).toEqual({ model: 'sonnet', effort: 'high', speed: undefined });
+  const preset = await run(['freddai-level:smart']);
+  expect(preset.titles).toEqual(['Difficulty']);
+  expect(preset.result?.speed).toBeUndefined();
+  expect((await run(['__custom', 'fable', 'high', null])).result).toBeNull();
+});
+
+it('never renders a free-text custom model sheet', async () => {
+  const client = clientWith();
+  await renderNew(<MobileApp client={client} />);
+  await screen.findByRole('button', { name: 'Project: First' });
+  expect(screen.queryByLabelText('Custom model ID')).toBeNull();
+  expect(screen.queryByText('Use model')).toBeNull();
+});
+
+it('native picker preserves Ultracode through the selection flow', async () => {
+  const { chooseSelection } = await import('./native-home');
+  const replies = ['__custom', 'opus', 'ultracode', 'standard'];
+  const result = await chooseSelection(async () => replies.shift() ?? null, 'claude', [], { model: '', effort: 'default' });
+  expect(result).toEqual({ model: 'opus', effort: 'ultracode', speed: undefined });
 });

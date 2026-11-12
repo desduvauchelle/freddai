@@ -6,6 +6,7 @@ import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { LocalPageContext } from "./GeneratedFile";
 import { BrowserContext } from "./browser-context";
+import { PreviewContext } from "./localhostPreview";
 import { ThreadLinksContext } from "./ThreadLinksContext";
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => true) }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue(undefined), openPath: vi.fn(), revealItemInDir: vi.fn() }));
@@ -103,5 +104,50 @@ describe("thread links", () => {
     render(<MessageMarkdown text={"See [Fix login](freddai://thread/abc123)."} />);
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.getByText("Fix login")).toBeTruthy();
+  });
+});
+
+describe("localhost links with a preview host", () => {
+  it("routes a plain click through the preview opener, not the browser opener", () => {
+    const preview = vi.fn().mockResolvedValue(undefined);
+    const openBrowser = vi.fn();
+    render(<BrowserContext.Provider value={openBrowser}><PreviewContext.Provider value={preview}><MessageMarkdown text="[app](http://127.0.0.1:3000/home)" /></PreviewContext.Provider></BrowserContext.Provider>);
+    fireEvent.click(screen.getByRole("link", { name: "app" }));
+    expect(preview).toHaveBeenCalledWith("http://localhost:3000/home");
+    expect(openBrowser).not.toHaveBeenCalled();
+  });
+  it("shows the failure with its raw code", async () => {
+    const preview = vi.fn().mockRejectedValue("preview_port_unreachable");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<PreviewContext.Provider value={preview}><MessageMarkdown text="[app](http://localhost:3000/)" /></PreviewContext.Provider>);
+    fireEvent.click(screen.getByRole("link", { name: "app" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Nothing is listening on localhost:3000/");
+    expect(alert.textContent).toContain("preview_port_unreachable");
+  });
+  it("offers a Start server button when the link needs confirmation", async () => {
+    const preview = vi.fn().mockRejectedValueOnce("preview_server_confirm: npm run dev @ /Users/x/app").mockResolvedValue(undefined);
+    render(<PreviewContext.Provider value={preview}><MessageMarkdown text="[app](http://localhost:3000/)" /></PreviewContext.Provider>);
+    fireEvent.click(screen.getByRole("link", { name: "app" }));
+    const start = await screen.findByRole("button", { name: "Start server for localhost:3000/" });
+    expect(screen.getByRole("alert").textContent).toContain("in ~/app");
+    fireEvent.click(start);
+    await vi.waitFor(() => expect(preview).toHaveBeenLastCalledWith("http://localhost:3000/", { start: true }));
+  });
+  it("sends a privileged-port localhost link to the browser opener", () => {
+    const preview = vi.fn().mockResolvedValue(undefined);
+    const openBrowser = vi.fn();
+    render(<BrowserContext.Provider value={openBrowser}><PreviewContext.Provider value={preview}><MessageMarkdown text="[web](http://localhost:80/)" /></PreviewContext.Provider></BrowserContext.Provider>);
+    fireEvent.click(screen.getByRole("link", { name: "web" }));
+    expect(openBrowser).toHaveBeenCalledWith("http://localhost:80/");
+    expect(preview).not.toHaveBeenCalled();
+  });
+  it("keeps non-localhost links on the browser opener", () => {
+    const preview = vi.fn().mockResolvedValue(undefined);
+    const openBrowser = vi.fn();
+    render(<BrowserContext.Provider value={openBrowser}><PreviewContext.Provider value={preview}><MessageMarkdown text="[docs](https://example.com/docs)" /></PreviewContext.Provider></BrowserContext.Provider>);
+    fireEvent.click(screen.getByRole("link", { name: "docs" }));
+    expect(openBrowser).toHaveBeenCalledWith("https://example.com/docs");
+    expect(preview).not.toHaveBeenCalled();
   });
 });

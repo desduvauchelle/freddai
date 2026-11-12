@@ -10,7 +10,7 @@ pub fn validate(config: &Configuration) -> Result<(), String> {
     for (provider, levels) in config {
         if provider.is_empty() || provider.len() > 100 || !provider.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') { return Err("Invalid provider".into()); }
         for (level, mapping) in levels {
-            if (!["codex","claude"].contains(&provider.as_str()) && mapping.effort != "default") || !["smart", "normal", "fast"].contains(&level.as_str()) || mapping.family.len() > 120 || !mapping.family.bytes().all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c)) || !["default","low","medium","high","xhigh","max"].contains(&mapping.effort.as_str()) { return Err("Invalid model configuration".into()); }
+            if (!["codex","claude"].contains(&provider.as_str()) && mapping.effort != "default") || !["smart", "normal", "fast"].contains(&level.as_str()) || mapping.family.len() > 120 || !mapping.family.bytes().all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c)) || !( ["default","low","medium","high","xhigh","max"].contains(&mapping.effort.as_str()) || (provider == "claude" && mapping.effort == "ultracode")) { return Err("Invalid model configuration".into()); }
         }
     }
     Ok(())
@@ -55,6 +55,13 @@ pub fn resolve(config: &Configuration, provider: &str, model: Option<&str>, effo
 #[cfg(test)]
 mod tests {
     use super::*; use serde_json::json;
+    #[test] fn ultracode_mapping_is_claude_only() {
+        let levels = HashMap::from([("smart".into(), Mapping { family: "opus".into(), effort: "ultracode".into() })]);
+        let c = HashMap::from([("claude".into(), levels.clone())]);
+        assert!(validate(&c).is_ok());
+        assert_eq!(resolve(&c, "claude", Some("freddai-level:smart"), None, &|| Err("no discovery".into())).unwrap(), (Some("opus".into()), Some("ultracode".into())));
+        assert!(validate(&HashMap::from([("codex".into(), levels)])).is_err());
+    }
     #[test] fn follows_versions_and_pins_exact_ids() {
         let rows=vec![json!({"model":"gpt-6.9-sol"}),json!({"model":"gpt-6.10-sol"}),json!({"model":"gpt-8-sol","hidden":true})];
         assert_eq!(resolve_codex("sol","default",&rows).unwrap(),"gpt-6.10-sol");

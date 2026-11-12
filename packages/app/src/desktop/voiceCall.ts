@@ -1,3 +1,5 @@
+import { remoteSpeech } from "../conversation/remoteSpeech";
+import { desktopSpeechConnection } from "./commander/SpeechSettings";
 /** Hands-free voice call: bundling / interrupt / speak state machine (framework-free, unit-testable) plus its Tauri binding and React hook. */
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -49,8 +51,8 @@ const PREFS_KEY = "freddai.voiceCall.prefs";
 export function loadCallPrefs(): CallPrefs {
   try {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
-    return { speak: parsed.speak === true, mode: parsed.mode === "queue" ? "queue" : "interrupt" };
-  } catch { return { speak: false, mode: "interrupt" }; }
+    return { speak: parsed.speak !== false, mode: parsed.mode === "queue" ? "queue" : "interrupt" };
+  } catch { return { speak: true, mode: "interrupt" }; }
 }
 export function saveCallPrefs(prefs: CallPrefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (error) { console.error("voice_call.prefs_save_failed", error); }
@@ -227,13 +229,16 @@ export class VoiceCallController {
   }
 }
 
+let remoteHandler: (event: CallEvent) => void = () => {};
+const remote = remoteSpeech(desktopSpeechConnection, e => remoteHandler(e));
 export const tauriCallIo: CallIo = {
   start: () => invoke("voice_call_start", {}),
   stop: () => invoke("voice_call_stop"),
   setListening: listening => invoke("voice_call_set_listening", { listening }),
-  speak: text => invoke("voice_speak", { text }),
-  stopSpeaking: () => invoke("voice_stop_speaking"),
+  speak: async text => { if (!await remote.speak(text)) await invoke("voice_speak", { text }); },
+  stopSpeaking: async () => { remote.stop(); await invoke("voice_stop_speaking"); },
   async listen(handler) {
+    remoteHandler = handler;
     const offs = await Promise.all([
       listen<{ state: EngineState; error?: string }>("voice-call://state", e => handler({ type: "state", state: e.payload.state, error: e.payload.error })),
       listen("voice-call://speech-start", () => handler({ type: "speech-start" })),

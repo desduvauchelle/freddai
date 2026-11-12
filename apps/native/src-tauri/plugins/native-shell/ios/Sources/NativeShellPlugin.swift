@@ -290,7 +290,7 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
       else if self?.threadSheetOpen == true, let container = self?.container {
         container.dismiss(animated: true) { [weak self] in self?.restoreShell() }
       }
-      self?.shell?.apply(mode: mode, title: mode == .callReview ? "Review command" : args.title, placeholder: args.placeholder, back: args.back ?? false, call: args.call ?? .none)
+      self?.shell?.apply(mode: mode, title: mode == .callReview ? "Review command" : args.title, placeholder: args.placeholder, back: args.back ?? false, threadSheet: args.threadSheet ?? false, call: args.call ?? .none)
       if args.threadSheet != true {
         self?.sheetDestinationReady = true
         self?.revealSheetDestination()

@@ -1,8 +1,9 @@
 import "./WorkspaceSettings.css";
 import { ColorField } from "./ColorField";
 import { useRef, useState, type PointerEvent } from "react";
-import { GripVertical, Plus, Trash2, X } from "lucide-react";
+import { Check, GripVertical, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@freddai/ui/components/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@freddai/ui/components/sheet";
 import { Input } from "@freddai/ui/components/input";
 import type { Project, Workspace } from "./types";
 
@@ -14,6 +15,13 @@ export function WorkspaceSettings({ projects, workspaces, disabled, onSave }: {
   const [name, setName] = useState("");
   const [color, setColor] = useState("#b59ae9");
   const [adding, setAdding] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [savingProject, setSavingProject] = useState<string | null>(null);
+  const saving = useRef(false);
+  const [pickerError, setPickerError] = useState("");
+  const pickerWorkspace = workspaces.find(w => w.id === adding);
+  const pickerHeading = useRef<HTMLHeadingElement | null>(null);
+  const addTrigger = useRef<HTMLButtonElement | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -96,7 +104,7 @@ export function WorkspaceSettings({ projects, workspaces, disabled, onSave }: {
     </form>
     <section aria-label="Available projects" className="space-y-2">
       <h2 className="font-medium">Your projects</h2>
-      <p className="text-sm text-muted-foreground">Drag a project below into a workspace to add it. Drag a workspace member to move it, or drop it in No workspace to unassign it. Add project keeps existing memberships.</p>
+      <p className="text-sm text-muted-foreground">Use Add projects in a workspace to choose its projects. A project can belong to more than one workspace. You can also drag projects between groups.</p>
       <div className="flex flex-wrap gap-2">{projects.map(p => <span key={p.id} draggable={false} className="workspace-project-source" data-dragging={dragging === p.id}
         {...projectPointer(p.id)}>{p.name}</span>)}</div>
       {!projects.length && <p className="text-sm text-muted-foreground">Add projects in Settings → Projects first.</p>}
@@ -151,16 +159,40 @@ export function WorkspaceSettings({ projects, workspaces, disabled, onSave }: {
           else e.target.value = w.name;
         }} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}/>
         <ColorField compact label={`Color for ${w.name}`} value={w.color} disabled={disabled} onChange={color => void update({ ...w, color })}/>
-        <Button variant="outline" disabled={disabled} onClick={() => setAdding(adding === w.id ? null : w.id)}><Plus size={14}/>Add project</Button>
+        <Button variant="outline" disabled={disabled} onClick={e => { addTrigger.current = e.currentTarget; setQuery(""); setPickerError(""); setAdding(w.id); }}><Plus size={14}/>Add projects</Button>
         <Button variant="ghost" size="icon" aria-label={`Delete workspace ${w.name}`} title="Delete workspace" disabled={disabled} onClick={() => setConfirmDelete(w.id)}><Trash2 size={16}/></Button>
       </div>
       {confirmDelete === w.id && <div className="flex flex-wrap items-center gap-2 text-sm"><p>Delete this workspace? Projects and threads will be kept.</p><Button variant="destructive" disabled={disabled} onClick={async () => { await onSave(workspaces.filter(other => other.id !== w.id)); setConfirmDelete(null); }}>Delete workspace</Button><Button variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button></div>}
-      {adding === w.id && <div className="flex flex-wrap gap-2" aria-label={`Add projects to ${w.name}`}>
-        {projects.filter(p => !w.projects.includes(p.id)).map(p => <Button key={p.id} variant="outline" disabled={disabled} onClick={() => addProject(w, p.id)}><Plus size={12}/>{p.name}</Button>)}
-        {projects.every(p => w.projects.includes(p.id)) && <p className="text-sm text-muted-foreground">All projects have been added.</p>}
-      </div>}
       <div className="flex flex-wrap gap-2">{projects.filter(p => w.projects.includes(p.id)).map(p => <span key={p.id} className="workspace-member"><button type="button" className="project-drag-handle" disabled={disabled} aria-label={`Move ${p.name} from ${w.name}`} {...projectPointer(p.id, w.id)}><GripVertical size={14}/><span>{p.name}</span></button><Button variant="ghost" size="icon" aria-label={`Remove ${p.name} from ${w.name}`} disabled={disabled} onClick={() => void update({ ...w, projects: w.projects.filter(id => id !== p.id) })}><X size={12}/></Button></span>)}</div>
-      {!projects.some(p => w.projects.includes(p.id)) && <p className="text-sm text-muted-foreground">Drop projects here or click Add project.</p>}
+      {!projects.some(p => w.projects.includes(p.id)) && <p className="text-sm text-muted-foreground">No projects yet. Tap Add projects to choose some.</p>}
     </section>)}
+    <Sheet open={!!pickerWorkspace} onOpenChange={open => { if (!open) setAdding(null); }}>
+      <SheetContent side="bottom" className="workspace-project-sheet" showCloseButton={false}
+        onOpenAutoFocus={e => { e.preventDefault(); pickerHeading.current?.focus(); }}
+        onCloseAutoFocus={e => { e.preventDefault(); addTrigger.current?.focus(); }}>
+        <SheetHeader><SheetTitle ref={pickerHeading} tabIndex={-1}>Add projects to {pickerWorkspace?.name}</SheetTitle><SheetDescription>Tap a project to add it. Changes save immediately.</SheetDescription></SheetHeader>
+        <div className="workspace-project-search"><Input aria-label="Search projects" placeholder="Search projects…" value={query} onChange={e => setQuery(e.target.value)}/></div>
+        <div className="workspace-project-options">
+          {projects.filter(p => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map(p => {
+            const added = !!pickerWorkspace?.projects.includes(p.id);
+            return <button type="button" key={p.id} className="workspace-project-option" aria-label={`${p.name}${added ? ', added' : ''}`} disabled={disabled || added || !!savingProject}
+              onClick={async () => {
+                if (!pickerWorkspace || saving.current || disabled || added) return;
+                saving.current = true; setSavingProject(p.id); setPickerError("");
+                try {
+                  const result = await update({ ...pickerWorkspace, projects: [...pickerWorkspace.projects, p.id] });
+                  if (result === false) setPickerError(`Could not add ${p.name}. Try again.`);
+                } catch (error) { setPickerError(error instanceof Error ? error.message : String(error)); }
+                finally { saving.current = false; setSavingProject(null); }
+              }}>
+              <span className="workspace-project-dot" style={{ background: p.color }}/><span>{p.name}</span>
+              <span className="workspace-project-status">{added ? <><Check size={18}/>Added</> : savingProject === p.id ? 'Adding…' : <Plus size={18}/>}</span>
+            </button>;
+          })}
+          {!projects.length ? <p>Add a project folder first, then choose it here.</p> : !projects.some(p => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) && <p>No projects match “{query}”.</p>}
+        </div>
+        <SheetFooter>{pickerError && <p role="alert">{pickerError}</p>}<p role="status">{pickerWorkspace?.projects.filter(id => projects.some(p => p.id === id)).length ?? 0} projects in this workspace</p><Button onClick={() => setAdding(null)}>Done</Button></SheetFooter>
+      </SheetContent>
+    </Sheet>
   </div>;
 }

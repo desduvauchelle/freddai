@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Input } from "@freddai/ui/components/input";
 import { Button } from "@freddai/ui/components/button";
 
-const palette = ["#b59ae9", "#77b9df", "#8ec6a2", "#e7a17d", "#e89cbd", "#d9c079", "#ef4444", "#3b82f6", "#22c55e", "#64748b"];
+const palette = [
+  "#b59ae9", "#77b9df", "#8ec6a2", "#e7a17d", "#e89cbd",
+  "#d9c079", "#ef4444", "#3b82f6", "#22c55e", "#64748b",
+  "#f87171", "#fb923c", "#fbbf24", "#a3e635", "#34d399",
+  "#2dd4bf", "#22d3ee", "#38bdf8", "#818cf8", "#a78bfa",
+  "#c084fc", "#e879f9", "#f472b6", "#fb7185", "#d6a779",
+  "#94a3b8", "#cbd5e1", "#bef264", "#5eead4", "#fda4af",
+];
 /** Keep color selection inside the WebView: native color wells can crash NSColorPanel. */
 export function ColorField({ label, value, onChange, disabled = false, compact = false }: {
   label: string; value: string; onChange: (color: string) => void; disabled?: boolean; compact?: boolean;

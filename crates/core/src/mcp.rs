@@ -32,8 +32,8 @@ pub fn tools() -> Vec<Value> {
             "new_chat":{"type":"boolean","default":true},"thread":text,"notifications":{"type":"string","enum":["off","important","all"]}
         }), &["name","prompt","cron","timezone"], false),
         tool("freddai_schedule_action", "Pause, resume, run once now, or delete a schedule the user asked to change. Run consumes provider usage; delete removes the schedule. Does not approve thread permissions.", json!({"schedule":text,"action":{"type":"string","enum":["pause","resume","run","delete"]}}), &["schedule","action"], false),
-        tool("freddai_start_task", "Start a new task only when the user requests it. Uses an existing configured agent; default is the calling thread's agent. Normal approval policy applies. Reuse request_id on retries to avoid duplicate work. Returns {thread, link, title, project, status}.", json!({"project":project,"account":text,"prompt":text,"request_id":text}), &["prompt","request_id"], false),
-        tool("freddai_share_preview", "Share a web app running on this Mac at http://localhost:<port> so the user can open it in the Freddai companion app on their phone. Call after starting or changing a dev server.", json!({"port":{"type":"integer","minimum":1024,"maximum":65535},"path":{"type":"string","description":"URL path to open. Default \"/\"."},"title":{"type":"string","description":"Short label for the preview."}}), &["port"], false),
+        tool("freddai_start_task", "Start a new task only when the user requests it. Uses an existing configured agent; default is the target project's configured agent, then the calling thread's agent. Normal approval policy applies. Reuse request_id on retries to avoid duplicate work. Returns {thread, link, title, project, status}.", json!({"project":project,"account":text,"prompt":text,"request_id":text,"user_requested":{"type":"boolean","description":"True only when the user explicitly asked for this task in the current conversation; never for automated check-ins or your own suggestions."}}), &["prompt","request_id"], false),
+        tool("freddai_share_preview", "Share a web app running on this Mac at http://localhost:<port> so the user can open it as a Preview in Freddai (desktop and phone). Processes you start are stopped when your turn ends, so always pass `command` and `cwd` when you started the server yourself; the user is asked before the command runs, and only starts it with an explicit click.", json!({"port":{"type":"integer","minimum":1024,"maximum":65535},"path":{"type":"string","description":"URL path to open. Default \"/\"."},"title":{"type":"string","description":"Short label for the preview."},"command":{"type":"string","description":"Shell command that starts the dev server listening on this port, e.g. `npm run dev -- --port 3000`. This tool only records it; when the user opens the preview and nothing is listening, Freddai shows the command and runs it detached only after the user clicks Start."},"cwd":{"type":"string","description":"Absolute directory to run the command in. Required when command is given."}}), &["port"], false),
     ]
 }
 
@@ -187,13 +187,28 @@ pub fn dispatch(
         let result = crate::commander::call_tool(rt, name, &args, context);
         (result, if held { "held" } else { "executed" })
     } else if crate::commander::is_outward(rt, name, &args) {
-        let gate = if name == "freddai_start_task" { Some(crate::commander_autonomy::start_gate(rt, &store, &args)) } else { None };
+        let gate = if name == "freddai_start_task" {
+            Some(if args["user_requested"].as_bool() == Some(true) {
+                crate::commander_autonomy::Gate::Allow("explicit user request".into())
+            } else { crate::commander_autonomy::start_gate(rt, &store, &args) })
+        } else { None };
         if let Some(crate::commander_autonomy::Gate::Allow(reason)) = gate {
             // Budgeted autonomy: within budget the start runs without approval; the reason is logged.
             let result = dispatch_inner(rt, name, args.clone(), context);
             store.log_action(name, &args, "auto_allowed", result.is_ok(), Some(&reason));
             return match result {
-                Ok(value) => Ok(value),
+                Ok(mut value) => {
+                    if let Some(thread) = value["thread"].as_str() {
+                        let tracked = (|| -> Result<(), String> {
+                            if store.todo_for_thread(thread)?.is_none() {
+                                store.todo_save(&json!({"title":crate::commander::clip(args["prompt"].as_str().unwrap_or("Delegated task"),100),"description":args["prompt"],"project":args["project"],"owner":"thread","thread":thread,"status":"in_progress"}), "commander")?;
+                            }
+                            Ok(())
+                        })();
+                        if let Err(error) = tracked { value["tracking_error"] = json!(error); }
+                    }
+                    Ok(value)
+                },
                 Err(error) => Ok(json!({"ok":false,"error":error})),
             };
         }
@@ -422,7 +437,8 @@ fn dispatch_inner(
         }
         "freddai_start_task" => {
             let project = selected(&args, "project", context.project.as_deref())?;
-            let account = selected(&args, "account", caller.map(|s| s.account.as_str()))?;
+            let project_account = db.projects.iter().find(|p| p.id == project).and_then(|p| p.account.as_deref());
+            let account = selected(&args, "account", project_account.or_else(|| caller.map(|s| s.account.as_str())))?;
             let from_commander = is_commander_caller(rt, context);
             if from_commander && db.projects.iter().any(|p| p.id == project && p.is_commander()) {
                 return Err("Commander cannot delegate a task to itself; pick another project.".into());
@@ -449,10 +465,40 @@ fn dispatch_inner(
             if !path.starts_with('/') || path.starts_with("//") || path.len() > 2048 || path.bytes().any(|b| b <= 0x20 || b == 0x7f) {
                 return Err("path must start with a single / and contain no spaces or control characters".into());
             }
-            crate::preview_grants::record(&rt.root_dir(), port)?;
+            let command = match args.get("command") {
+                None | Some(Value::Null) => None,
+                Some(v) => {
+                    let c = v.as_str().ok_or("command must be a string")?;
+                    if c.trim().is_empty() || c.len() > 4096 || c.contains('\0') { return Err("command must be non-empty, at most 4096 bytes, and contain no NUL".into()); }
+                    Some(c)
+                }
+            };
+            let cwd = match args.get("cwd") {
+                None | Some(Value::Null) => None,
+                Some(v) => {
+                    let c = std::path::Path::new(v.as_str().ok_or("cwd must be a string")?);
+                    if !c.is_absolute() || !c.is_dir() { return Err("cwd must be an absolute path to an existing directory".into()); }
+                    Some(c)
+                }
+            };
+            if command.is_some() && cwd.is_none() { return Err("cwd is required with command".into()); }
+            let root = rt.root_dir();
+            crate::preview_grants::record_share(&root, port, command, cwd)?;
             let url = format!("http://localhost:{port}{path}");
             let label = args["title"].as_str().filter(|t| !t.is_empty()).map(|t| format!("{t}: ")).unwrap_or_default();
-            Ok(json!({"ok":true,"port":port,"url":url,"text":format!("{label}{url}\nOpen it from the Freddai companion app with Preview.")}))
+            let mut result = json!({"ok":true,"port":port,"url":url});
+            let mut note = String::new();
+            // Never start anything here: only an explicit click in the UI may run the command.
+            if !crate::preview_grants::is_listening(port) {
+                let w = match command {
+                    Some(c) => format!("nothing is listening on localhost:{port} yet; the user will be asked to start it (`{c}`) when they open the preview"),
+                    None => format!("nothing is listening on localhost:{port} right now; pass command and cwd so the user can be offered to start it"),
+                };
+                note = format!("\nWarning: {w}.");
+                result["warning"] = json!(w);
+            }
+            result["text"] = json!(format!("{label}{url}\nOpen it from the Freddai companion app with Preview.{note}"));
+            Ok(result)
         }
         _ => Err("Unknown Freddai tool".into()),
     }
@@ -822,6 +868,19 @@ mod tests {
         assert!(dispatch(&rt, "freddai_share_preview", json!({}), &ctx).is_err());
         assert!(dispatch(&rt, "freddai_share_preview", json!({"port":"3000"}), &ctx).is_err());
         assert_eq!(crate::preview_grants::active(&root).len(), 2);
+        let idle = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let idle_share = dispatch(&rt, "freddai_share_preview", json!({"port":idle}), &ctx).unwrap();
+        assert!(idle_share["warning"].as_str().unwrap().contains("nothing is listening") && idle_share["text"].as_str().unwrap().contains("Warning"));
+        let cwd = std::env::temp_dir();
+        assert!(dispatch(&rt, "freddai_share_preview", json!({"port":3001,"command":"true"}), &ctx).unwrap_err().contains("cwd is required"));
+        assert!(dispatch(&rt, "freddai_share_preview", json!({"port":3001,"command":"true","cwd":"/nonexistent-freddai-dir"}), &ctx).is_err());
+        assert!(dispatch(&rt, "freddai_share_preview", json!({"port":3001,"command":"","cwd":cwd}), &ctx).is_err());
+        let recorded = dispatch(&rt, "freddai_share_preview", json!({"port":3002,"command":"echo boom; exit 3","cwd":cwd}), &ctx).unwrap();
+        let w = recorded["warning"].as_str().unwrap();
+        assert!(w.contains("the user will be asked to start it") && w.contains("echo boom; exit 3"), "{w}");
+        assert!(!root.join("companion").join("preview-servers.json").exists() && !root.join("companion").join("preview-3002.log").exists());
+        let share = crate::preview_grants::share(&root, 3002).unwrap();
+        assert_eq!((share.command.as_deref(), share.cwd.as_deref()), (Some("echo boom; exit 3"), Some(cwd.as_path())));
         drop(rt);
         let _ = std::fs::remove_dir_all(root);
     }

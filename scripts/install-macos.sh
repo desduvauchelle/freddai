@@ -22,6 +22,11 @@ if ! command -v pnpm >/dev/null; then
 fi
 # Marks this as a local build: the in-app updater stays quiet about published releases.
 FREDDAI_LOCAL_BUILD=1 pnpm --filter @freddai/native tauri build --bundles app
+# Stamp the build before signing so the signature seals it.
+build_sha="$(git rev-parse --short HEAD)"
+if [ -n "$(git status --porcelain)" ]; then build_sha="$build_sha-dirty"; fi
+printf '%s\n' "$build_sha" > target/release/bundle/macos/Freddai.app/Contents/Resources/build-sha
+echo "Build: $build_sha"
 # Use an explicitly selected identity, or the only available Developer ID identity.
 identity="${FREDDAI_SIGNING_IDENTITY:-}"
 if [ -z "$identity" ]; then
@@ -64,3 +69,17 @@ for pid in pids:
     if role=='app window' and path!=current:
         print('RESTART REQUIRED: save your draft, quit Freddai, then reopen /Applications/Freddai.app.')
 PY
+# Cached host copies share the bundle id; make LaunchServices resolve only /Applications.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+for cached in "$HOME/Library/Application Support/com.freddai.desktop/host-binaries/"*.app; do
+  [ -e "$cached" ] || continue
+  "$LSREGISTER" -u "$cached" || echo "WARNING: lsregister -u failed for $cached" >&2
+done
+"$LSREGISTER" -f /Applications/Freddai.app
+resolved="$(osascript -e 'POSIX path of (path to application id "com.freddai.desktop")')"
+if [ "$resolved" != "/Applications/Freddai.app/" ]; then
+  echo "ERROR: bundle id com.freddai.desktop resolves to '$resolved', expected /Applications/Freddai.app/" >&2
+  exit 1
+fi
+echo "Bundle id resolves to: $resolved"
+echo "Installed build: $(cat /Applications/Freddai.app/Contents/Resources/build-sha)"

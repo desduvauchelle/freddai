@@ -41,6 +41,9 @@ pub(crate) fn claude_args(s: &Session, commander: bool) -> Vec<String> {
     if let Some(effort) = &s.options.effort {
         args.extend(["--effort".into(), effort.clone()]);
     }
+    if s.options.speed.as_deref() == Some("fast") {
+        args.extend(["--fast-mode".into(), "on".into()]);
+    }
     if let Some(resume) = &s.provider_id {
         args.extend(["--resume".into(), resume.clone()]);
     }
@@ -54,6 +57,12 @@ pub(crate) fn claude_args(s: &Session, commander: bool) -> Vec<String> {
         ]);
     }
     args
+}
+/// Codex `serviceTier` for fast launches (`priority`); standard speed sends nothing.
+fn apply_codex_speed(v: &mut Value, speed: Option<&str>) {
+    if speed == Some("fast") {
+        v["params"]["serviceTier"] = json!("priority");
+    }
 }
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -169,6 +178,9 @@ pub struct LaunchOptions {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    /// Per-launch speed: `"fast"` (Claude `--fast-mode on`, Codex `priority` tier) or absent.
+    #[serde(default)]
+    pub speed: Option<String>,
     #[serde(default)]
     pub attachments: Vec<String>,
     #[serde(default)]
@@ -189,6 +201,7 @@ impl LaunchOptions {
         if next.update_agent_controls && !next.scheduled {
             self.model = next.model.clone();
             self.effort = next.effort.clone();
+            self.speed = next.speed.clone();
         }
     }
 }
@@ -2341,11 +2354,16 @@ impl Runtime {
                         "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
                     ]
                     .contains(&effort),
-                    "claude" => ["low", "medium", "high", "xhigh", "max"].contains(&effort),
+                    "claude" => ["low", "medium", "high", "xhigh", "max", "ultracode"].contains(&effort),
                     _ => false,
                 };
                 if !supported {
                     return Err("Unsupported reasoning effort".into());
+                }
+            }
+            if let Some(speed) = s.options.speed.as_deref().filter(|v| !v.is_empty()) {
+                if speed != "fast" || !matches!(a.provider.as_str(), "claude" | "codex") {
+                    return Err("Unsupported speed".into());
                 }
             }
             if s.options
@@ -2754,7 +2772,8 @@ impl Runtime {
                 .filter_map(|q| {
                     Some((
                         sessions.iter().find(|s| s.id == q.session)?.clone(),
-                        q.messages.iter().find(|m| !crate::commander_autonomy::is_completion_card(&m.id))?.clone(),
+                        q.messages.iter().filter(|m| !crate::commander_autonomy::is_completion_card(&m.id))
+                            .min_by_key(|m| m.id.starts_with(crate::commander_autonomy::WAKE_ID_PREFIX))?.clone(),
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -3571,6 +3590,7 @@ impl Runtime {
                                     if let Some(model) = &s.options.model {
                                         v["params"]["model"] = json!(model);
                                     }
+                                    apply_codex_speed(&mut v, s.options.speed.as_deref());
                                     if p.is_commander() {
                                         v["params"]["sandbox"] = json!("read-only");
                                         v["params"]["approvalPolicy"] = json!("on-request");
@@ -3593,6 +3613,7 @@ impl Runtime {
                                     if let Some(e) = &s.options.effort {
                                         v["params"]["effort"] = json!(e);
                                     }
+                                    apply_codex_speed(&mut v, s.options.speed.as_deref());
                                     v
                                 })?;
                             }
@@ -3931,6 +3952,12 @@ impl Runtime {
                                     continue;
                                 }
                                 let failed = v["is_error"].as_bool().unwrap_or(true);
+                                if s.options.speed.as_deref() == Some("fast") && v["fast_mode_state"].as_str() != Some("on") {
+                                    let reason = v["fast_mode_disabled_reason"].as_str().unwrap_or("not reported by Claude Code");
+                                    preferences_log(&root, &format!("ev=fast_mode.not_applied level=warn thread={} state={} reason={}", s.id, v["fast_mode_state"].as_str().unwrap_or("missing"), reason));
+                                    let note = format!("Fast mode was not applied: {reason}");
+                                    self.update(&s.id, |s| s.messages.push(Message { id: id(), role: "assistant".into(), text: note.into(), attachments: vec![] }));
+                                }
                                 let verdict = gate.on_result(&v, failed, tracker.pending(), std::time::Instant::now());
                                 preferences_log(&root, &format!("ev=turn.result thread={} provider_session={} subtype={} is_error={} num_turns={} output_seen={} no_response_placeholder={} pending={} ignored={} verdict={:?}", s.id, v["session_id"].as_str().unwrap_or(""), v["subtype"].as_str().unwrap_or(""), v["is_error"], v["num_turns"], gate.has_output(), gate.placeholder_seen(), tracker.pending(), gate.ignored(), verdict));
                                 match verdict {
@@ -4703,6 +4730,41 @@ mod tests {
         assert_eq!(saved.permission_mode, Some(PermissionMode::Bypass));
         saved.update_controls(&LaunchOptions { scheduled: true, permission_mode: Some(PermissionMode::Ask), ..Default::default() });
         assert_eq!(saved.permission_mode, Some(PermissionMode::Ask));
+    }
+    #[test]
+    fn speed_is_copied_with_controls_and_maps_to_provider_flags() {
+        let mut saved = LaunchOptions { speed: Some("fast".into()), ..Default::default() };
+        saved.update_controls(&LaunchOptions { scheduled: true, ..Default::default() });
+        assert_eq!(saved.speed.as_deref(), Some("fast"));
+        saved.update_controls(&LaunchOptions { update_agent_controls: true, speed: Some("fast".into()), ..Default::default() });
+        assert_eq!(saved.speed.as_deref(), Some("fast"));
+        saved.update_controls(&LaunchOptions { update_agent_controls: true, ..Default::default() });
+        assert!(saved.speed.is_none());
+        let mut s: Session = serde_json::from_value(json!({"id":"t","project":"p","account":"a","title":"T","status":"starting","updated":1,"provider_id":null,"messages":[],"pending":null,"error":null,"options":{"speed":"fast"}})).unwrap();
+        assert!(claude_args(&s, false).windows(2).any(|w| w == ["--fast-mode", "on"]));
+        s.options.effort = Some("ultracode".into());
+        assert!(claude_args(&s, false).windows(2).any(|w| w == ["--effort", "ultracode"]));
+        s.options.speed = None;
+        assert!(!claude_args(&s, false).iter().any(|a| a == "--fast-mode"));
+        let mut v = protocol::user_message("codex", "hi", "tid");
+        apply_codex_speed(&mut v, Some("fast"));
+        assert_eq!(v["params"]["serviceTier"], "priority");
+        let mut v = protocol::codex_start("/tmp", None, PermissionMode::default());
+        apply_codex_speed(&mut v, None);
+        assert!(v["params"].get("serviceTier").is_none());
+    }
+    #[test]
+    fn unsupported_speed_is_rejected_for_other_providers_and_values() {
+        let (root, rt, target, _) = commander_fixture();
+        for account in &mut rt.0.lock().unwrap().db.accounts {
+            account.provider = "gemini".into();
+        }
+        for speed in ["turbo", "fast"] {
+            let options = LaunchOptions { speed: Some(speed.into()), ..Default::default() };
+            let err = rt.launch_with(target.id.clone(), None, "hi".into(), None, options).unwrap_err();
+            assert!(err.contains("Unsupported speed"), "{speed}: {err}");
+        }
+        let _ = fs::remove_dir_all(root);
     }
     #[test]
     fn resumed_controls_preserve_legacy_settings_and_allow_explicit_reset() {
@@ -6707,6 +6769,21 @@ mod tests {
         rt.0.lock().unwrap().db.sessions.push(serde_json::from_value(json!({"id":"loop","project":commander.id,"account":"a","title":"Loop","status":"done","updated":2,"provider_id":"x","messages":[],"pending":null,"error":null,"origin":{"kind":"commander","thread":"chief"}})).unwrap());
         crate::commander::on_turn_finished(&rt, "loop");
         assert!(store.todo_for_thread("loop").unwrap().is_none());
+        // An explicit request starts immediately, keeps its normal permission policy and is idempotent.
+        let args = json!({"project":target.id,"prompt":"Research offline transcription","request_id":"explicit-research","user_requested":true});
+        let started = dispatch(&rt, "freddai_start_task", args.clone(), &chief).unwrap();
+        let id = started["thread"].as_str().expect("requested work starts without another proposal");
+        assert!(started.get("held").is_none());
+        assert!(store.todo_for_thread(id).unwrap().is_some());
+        assert_eq!(dispatch(&rt, "freddai_start_task", args, &chief).unwrap()["thread"], id);
+        wait_for("explicit task finishes", || rt.session_brief(id).is_some_and(|t| t.status == "failed"));
+        // The host computes relative times; model date arithmetic cannot move an hour to tomorrow.
+        let before = chrono::Utc::now();
+        let reminder = dispatch(&rt, "freddai_todo_add", json!({"title":"Call Sam","owner":"me","delay_minutes":60}), &chief).unwrap();
+        let at = chrono::DateTime::parse_from_rfc3339(reminder["todo"]["check_back_at"].as_str().unwrap()).unwrap();
+        assert!((at.with_timezone(&chrono::Utc) - before).num_seconds() >= 3600 && (at.with_timezone(&chrono::Utc) - before).num_seconds() < 3605);
+        assert_eq!(reminder["todo"]["owner"], "me");
+
         let _ = fs::remove_dir_all(root);
     }
     #[test]

@@ -70,6 +70,7 @@ fn load_into(g: &mut Option<Loaded>, root: &Path, id: &str) -> Result<(), String
 
 /// Load the active model in a background thread so the next transcription is fast.
 pub fn warm(root: &Path) {
+    if super::connections::remote_ready(root).ok().flatten().is_some() { return; }
     let root = root.to_path_buf();
     let _ = std::thread::Builder::new().name("voice-warm".into()).spawn(move || {
         let id = match super::ready(&root) {
@@ -107,6 +108,7 @@ pub fn transcribe_samples(root: &Path, samples: &[f32]) -> Result<Transcript, St
     if samples.len() < MIN_SAMPLES || rms(samples) < 1e-4 {
         return Ok(Transcript { text: String::new(), duration_ms, model: id, segments: vec![] });
     }
+    if super::connections::remote_ready(root)?.is_some() { return super::connections::transcribe(root, samples); }
     let started = Instant::now();
     let params = WhisperInferenceParams {
         language: if language == "auto" || language.is_empty() { None } else { Some(language) },

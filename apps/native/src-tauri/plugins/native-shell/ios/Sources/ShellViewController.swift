@@ -12,6 +12,9 @@ struct PickerOption: Decodable {
   let label: String
   var detail: String?
   var disabled: Bool?
+  var color: String?
+  var group: String?
+  var children: [PickerOption]?
 }
 
 /// Per-thread header metadata pushed from JS (`set_thread_meta`).
@@ -341,7 +344,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     navigationItem.titleView?.isHidden = floatingHeader
   }
 
-  func apply(mode newMode: ShellMode, title: String?, placeholder: String?, back: Bool = false, call newCall: CallState = .none) {
+  func apply(mode newMode: ShellMode, title: String?, placeholder: String?, back: Bool = false, threadSheet: Bool = false, call newCall: CallState = .none) {
     let modeChanged = mode != newMode
     if newMode != .dashboard { dashboard.cancelRecording() }
     mode = newMode
@@ -350,7 +353,7 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
     if let title = title { if titleLabel.text != title { Motion.crossfade(titleLabel) { self.titleLabel.text = title } }; navigationItem.title = title; refreshAccessibility() }
     // New threads can begin a call before the first spoken message creates the thread.
     updateRightItems()
-    let left: UIBarButtonItem? = back ? backItem : (newMode == .project || newMode == .callReview ? nil : menuItem)
+    let left: UIBarButtonItem? = back ? backItem : (threadSheet || newMode == .project || newMode == .callReview ? nil : menuItem)
     if navigationItem.leftBarButtonItem !== left { navigationItem.leftBarButtonItem = left }
     if let placeholder = placeholder { composer.placeholder = placeholder }
     if modeChanged {
@@ -375,23 +378,14 @@ final class ShellViewController: UIViewController, UITextViewDelegate, UIPopover
   func presentPicker(title: String, options: [PickerOption], selected: String?, completion: @escaping (String?) -> Void) {
     guard presentedViewController == nil else { completion(nil); return }
     pickerCompletion = completion
-    let current = options.first { $0.id == selected }?.label
-    let sheet = UIAlertController(title: title, message: current.map { "Current: \($0)" }, preferredStyle: .actionSheet)
-    for option in options {
-      let label = option.detail.map { "\(option.label) (\($0))" } ?? option.label
-      let action = UIAlertAction(title: label, style: .default) { [weak self] _ in self?.finishPicker(option.id) }
-      action.isEnabled = !(option.disabled ?? false)
-      sheet.addAction(action)
+    let picker = SettingsPickerController(title: title, options: options, selected: selected) { [weak self] id in
+      self?.dismiss(animated: true) { self?.finishPicker(id) }
     }
-    sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.finishPicker(nil) })
-    sheet.presentationController?.delegate = self
-    if let popover = sheet.popoverPresentationController {
-      popover.sourceView = view
-      popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-      popover.permittedArrowDirections = []
-      popover.delegate = self
-    }
-    present(sheet, animated: true)
+    let navigation = UINavigationController(rootViewController: picker)
+    navigation.modalPresentationStyle = .pageSheet
+    if let sheet = navigation.sheetPresentationController { sheet.detents = [.medium(), .large()]; sheet.prefersGrabberVisible = true }
+    navigation.presentationController?.delegate = self
+    present(navigation, animated: true)
   }
 
   private func finishPicker(_ id: String?) {
@@ -418,5 +412,51 @@ final class PassthroughNavigationBar: UINavigationBar {
       view = current.superview
     }
     return nil
+  }
+}
+
+/// Grouped, scrollable settings with a second page in the same sheet on every iPhone/iPad.
+private final class SettingsPickerController: UITableViewController {
+  private let options: [PickerOption]
+  private let selected: String?
+  private let completion: (String?) -> Void
+  private var groups: [String] { var result: [String] = []; for option in options { let group = option.group ?? ""; if !result.contains(group) { result.append(group) } }; return result }
+  init(title: String, options: [PickerOption], selected: String?, completion: @escaping (String?) -> Void) {
+    self.options = options; self.selected = selected; self.completion = completion
+    super.init(style: .insetGrouped); self.title = title
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
+    tableView.rowHeight = UITableView.automaticDimension; tableView.estimatedRowHeight = 60
+  }
+  @objc private func cancel() { completion(nil) }
+  private func rows(_ section: Int) -> [PickerOption] { options.filter { ($0.group ?? "") == groups[section] } }
+  override func numberOfSections(in tableView: UITableView) -> Int { groups.count }
+  override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { rows(section).count }
+  override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { groups[section].isEmpty ? nil : groups[section] }
+  override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    let option = rows(indexPath.section)[indexPath.row]
+    let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+    cell.textLabel?.text = option.label; cell.textLabel?.numberOfLines = 0
+    cell.textLabel?.font = .preferredFont(forTextStyle: .body); cell.textLabel?.adjustsFontForContentSizeCategory = true
+    cell.detailTextLabel?.text = option.detail; cell.detailTextLabel?.numberOfLines = 0
+    cell.accessoryType = option.children == nil ? (option.id == selected ? .checkmark : .none) : .disclosureIndicator
+    if option.id == selected { cell.accessibilityTraits.insert(.selected) }
+    cell.isUserInteractionEnabled = !(option.disabled ?? false); cell.contentView.alpha = option.disabled == true ? 0.4 : 1
+    if let hex = option.color, let value = UInt32(hex.replacingOccurrences(of: "#", with: ""), radix: 16) {
+      cell.imageView?.image = UIImage(systemName: "circle.fill")
+      cell.imageView?.tintColor = UIColor(red: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+    return cell
+  }
+  override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    let option = rows(indexPath.section)[indexPath.row]
+    if let children = option.children {
+      let next = SettingsPickerController(title: "Choose difficulty", options: children, selected: nil, completion: completion)
+      next.navigationItem.prompt = option.label
+      navigationController?.pushViewController(next, animated: true)
+    } else { completion(option.id) }
   }
 }

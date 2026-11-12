@@ -1,3 +1,4 @@
+import { formatProjectName } from "../projectName";
 import { createPortal } from "react-dom";
 import { Eye, EyeOff, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -10,6 +11,7 @@ import { Bench, Bubble, Character, ClockAdmirer, CoffeeMachine, DeskFurniture, F
 import "./office.css";
 
 export type OfficeProps = {
+  projectNameUppercase?: boolean;
   sessions: readonly Session[];
   projects: readonly Project[];
   /** Commander proposals; pending `freddai_start_task` holds appear as sticky notes on empty desks. */
@@ -464,7 +466,9 @@ function useViewportHeight(): number {
   return h;
 }
 
-export function Office({ sessions, projects: allProjects, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose, renderTaskControls, onOpenCommander, proposals, onProposalRespond }: OfficeProps) {
+export function Office({ sessions, projects: sourceProjects, projectNameUppercase = false, schedules, queuedThreadIds, now, variant, onOpenThread, onExpand, onClose, renderTaskControls, onOpenCommander, proposals, onProposalRespond }: OfficeProps) {
+  // Presentation copies only: ids, stored names and task routing remain unchanged.
+  const allProjects = useMemo(() => sourceProjects.map(p => ({ ...p, name: formatProjectName(p.name, projectNameUppercase) })), [sourceProjects, projectNameUppercase]);
   const clock = now ?? Date.now();
   const [recentOnly, setRecentOnly] = useState(readRecentOnly);
   const toggleRecent = useCallback(() => setRecentOnly(v => { writeRecentOnly(!v); return !v; }), []);

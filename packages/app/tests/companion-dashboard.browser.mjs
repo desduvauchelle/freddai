@@ -18,22 +18,21 @@ try {
   assert.equal(await columns(), 3, 'iPad mini landscape with sidebar fits three project cards');
   const a = await first.boundingBox(), b = await second.boundingBox();
   assert.ok(Math.abs(a.y - b.y) < 1 && b.x > a.x, 'first two cards share a row');
-  async function choose(label, option) {
-    await page.getByRole('combobox', { name: label, exact: true }).click();
-    await page.getByRole('option', { name: option, exact: true }).click();
-  }
-  await choose('Coding agent', 'Codex · Second');
   const defaults = page.getByRole('group', { name: 'Dashboard task defaults' });
-  await choose('Model', 'Custom model…');
-  await defaults.getByRole('textbox', { name: 'Custom model ID' }).fill('offline-model');
-  await choose('Difficulty', 'High');
+  // The composer picker is a click-only dialog; at 813px it is the wide three-column layout (Assistant / Model / Thinking) closed with Done.
+  const picker = defaults.getByRole('button', { name: 'Assistant and difficulty' });
+  await picker.click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Codex · Second', exact: true }).click();
+  await dialog.getByRole('group', { name: 'Thinking' }).getByRole('button', { name: 'High', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
   assert.equal(await first.getByRole('combobox').count(), 0, 'no model controls on project cards');
   await first.getByRole('button', { name: 'New thread in Project One' }).click();
   assert.equal(await page.getByRole('combobox', { name: 'Coding assistant' }).inputValue(), 'second');
   await page.getByRole('button', { name: 'Back to threads' }).click();
   await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
-  assert.equal(await defaults.getByRole('textbox', { name: 'Custom model ID' }).inputValue(), 'offline-model');
-  assert.match(await defaults.getByRole('combobox', { name: 'Difficulty' }).textContent(), /High/);
+  assert.match(await defaults.getByRole('button', { name: 'Assistant and difficulty' }).textContent(), /High/);
   await mkdir('output/playwright', { recursive: true });
   await page.screenshot({ path: 'output/playwright/dashboard-ipad-sidebar.png', fullPage: true });
   for (const [width, height, sidebar, count] of [[390,844,false,2], [744,1060,false,2], [1024,720,false,3], [1400,900,false,3]]) {
@@ -49,11 +48,11 @@ try {
     } else assert.ok(controls.y >= heading.y + heading.height, `${width}: defaults under heading`);
     assert.ok(controls.x >= 0 && controls.x + controls.width <= width, `${width}: defaults fit viewport`);
     assert.equal(await page.locator('.companion-project-card select').count(), 0);
-    for (const name of ['Model', 'Difficulty']) {
-      const control = defaults.getByRole('combobox', { name, exact: true });
-      assert.ok(await control.isVisible(), `${width}: ${name} visible`);
+    {
+      const control = defaults.getByRole('button', { name: 'Assistant and difficulty' });
+      assert.ok(await control.isVisible(), `${width}: picker visible`);
       const box = await control.boundingBox();
-      assert.ok((width >= 620 || box.y >= heading.y + heading.height) && box.x >= 0 && box.x + box.width <= width, `${width}: ${name} under heading and within viewport`);
+      assert.ok((width >= 620 || box.y >= heading.y + heading.height) && box.x >= 0 && box.x + box.width <= width, `${width}: picker under heading and within viewport`);
     }
 
     assert.ok(await first.getByRole('button', { name: 'New thread in Project One' }).isVisible(), 'new thread is directly on the card');

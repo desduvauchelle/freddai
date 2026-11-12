@@ -6,10 +6,12 @@ import { ApprovalCard } from "./ApprovalCard";
 import { commanderApi, type NoteSummary, type Proposal, type Todo } from "./api";
 import type { CommanderData } from "./useCommander";
 import { MemoryTab, msg, useLoad } from "./CommanderMemory";
+import { CommanderSettings } from "./CommanderSettings";
 import { CommanderProfile } from "./CommanderProfile";
 
-export type ToolsTab = "threads" | "waiting" | "todos" | "notes" | "memory" | "schedules" | "connections";
+export type ToolsTab = "settings" | "threads" | "waiting" | "todos" | "notes" | "memory" | "schedules" | "connections";
 const TABS: { id: ToolsTab; label: string }[] = [
+  { id: "settings", label: "Settings" },
   { id: "waiting", label: "Waiting on you" }, { id: "todos", label: "To-dos" }, { id: "notes", label: "Notes" },
   { id: "memory", label: "Memory" }, { id: "schedules", label: "Schedules" }, { id: "connections", label: "Connections" }, { id: "threads", label: "Sub-threads" },
 ];
@@ -160,6 +162,7 @@ export function CommanderTools({ data, projects, schedules = [], threads = [], c
       <CommanderProfile onSaved={() => void data.refresh()} onDirtyChange={setProfileDirty} />
     </div> : <>
     <div id="cmd-tabpanel" role="tabpanel" aria-labelledby={`cmd-tab-${tab}`} className="commander-tools-body">
+      {tab === "settings" && <CommanderSettings projects={projects} />}
       {tab === "waiting" && <WaitingTab data={data} projects={projects} onOpenThread={onOpenThread} />}
       {tab === "todos" && <TodosTab data={data} projects={projects} commanderId={commanderId} onOpenThread={onOpenThread} />}
       {tab === "threads" && <SubThreads threads={threads} projects={projects} onOpenThread={onOpenThread} />}

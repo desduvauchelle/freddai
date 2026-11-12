@@ -22,9 +22,9 @@ export function formatElapsed(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-export type CommandLaunch = { projectId: string; accountId: string; model: string; effort: string; prompt: string };
+export type CommandLaunch = { projectId: string; accountId: string; model: string; effort: string; speed?: string; prompt: string };
 export type CommandCenterProps = {
-  projects: Project[]; accounts: Account[]; native: boolean; homeAccountId?: string;
+  projects: Project[]; accounts: Account[]; native: boolean; homeAccountId?: string; modelConfiguration?: import("./model-levels").ModelConfiguration;
   homeSelections: Record<string, AgentSelection>; launch: (args: CommandLaunch) => Promise<void>;
 };
 
@@ -45,8 +45,9 @@ export function serialDispatch(send: (text: string) => Promise<void>) {
   };
 }
 
-export function DashboardCall({ visible, enabled, hideLauncher = false, connected = true, io, sendText, purgeVoiceQueue, view, onActive, onCallState, onReview, syncError, commandCenter }: {
+export function DashboardCall({ visible, enabled, hideLauncher = false, connected = true, io, sendText, purgeVoiceQueue, view, onActive, onCallState, onReview, syncError, commandCenter, projectNameUppercase }: {
   purgeVoiceQueue?: () => Promise<void>;
+  projectNameUppercase?: boolean;
   commandCenter?: CommandCenterProps | CompanionCommandCenterProps;
   syncError?: string; hideLauncher?: boolean; visible: boolean; enabled: boolean; connected?: boolean; io?: CallIo;
   sendText: (text: string) => Promise<void>; view: ThreadView; onActive?: (active: boolean) => void;
@@ -74,7 +75,7 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
     const project = c?.projects.find(p => p.id === projectId);
     const account = c?.accounts.find(a => a.id === project?.account) ?? c?.accounts.find(a => a.id === c.homeAccountId) ?? c?.accounts[0];
     const picked = (account && c?.homeSelections[account.id]) || defaultSelection;
-    return { accountId: account?.id ?? '', model: picked.model, effort: picked.effort };
+    return { accountId: account?.id ?? '', model: picked.model, effort: picked.effort, speed: picked.speed };
   }, []);
   const selectionFor = (projectId: string): CommandSelection => overrideRef.current?.projectId === projectId ? overrideRef.current : defaultsFor(projectId);
 
@@ -103,7 +104,7 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
     sendingRef.current = true; setSending(true); setCardError('');
     try {
       if ('launchDraft' in c) await c.launchDraft({ projectId, instruction: instruction.trim() });
-      else await c.launch({ projectId, accountId: sel.accountId, model: sel.model, effort: sel.effort, prompt: instruction.trim() });
+      else await c.launch({ projectId, accountId: sel.accountId, model: sel.model, effort: sel.effort, speed: sel.speed, prompt: instruction.trim() });
       applyRef.current({ type: 'launched' });
       speakRef.current(`Starting in ${name}`);
     } catch (error) {
@@ -157,7 +158,7 @@ export function DashboardCall({ visible, enabled, hideLauncher = false, connecte
   const wake = commandCenter && (phase === 'listening' || phase === 'starting') ? (cmd.kind === 'awaitingProject' ? 'Which project? Say its name.' : cmd.kind === 'idle' ? `Listening for "${WAKE_WORD}"` : '') : '';
   const label = wake || PHASE_LABELS[phase as CallPhase];
   const error = [snap.error, syncError].filter(Boolean).join(' ');
-  const card = reviewing && commandCenter ? ('launchDraft' in commandCenter ? commandCenter.renderReview({ draft: (cmd as Extract<CommandState, { kind: 'reviewing' }>).draft, onChangeInstruction: text => apply({ type: 'edit', text }), onSend: () => void launchNow(), onDismiss: () => apply({ type: 'dismiss' }), error: cardError, sending }) : <CommandCard draft={(cmd as Extract<CommandState, { kind: 'reviewing' }>).draft} projects={commandCenter.projects} accounts={commandCenter.accounts} native={commandCenter.native}
+  const card = reviewing && commandCenter ? ('launchDraft' in commandCenter ? commandCenter.renderReview({ draft: (cmd as Extract<CommandState, { kind: 'reviewing' }>).draft, onChangeInstruction: text => apply({ type: 'edit', text }), onSend: () => void launchNow(), onDismiss: () => apply({ type: 'dismiss' }), error: cardError, sending }) : <CommandCard projectNameUppercase={projectNameUppercase} draft={(cmd as Extract<CommandState, { kind: 'reviewing' }>).draft} projects={commandCenter.projects} accounts={commandCenter.accounts} native={commandCenter.native} modelConfiguration={commandCenter.modelConfiguration}
       selection={selectionFor((cmd as Extract<CommandState, { kind: 'reviewing' }>).draft.projectId)} onChangeSelection={sel => setOverride({ ...sel, projectId: (cmd as Extract<CommandState, { kind: 'reviewing' }>).draft.projectId })}
       onChangeInstruction={text => apply({ type: 'edit', text })} onSend={() => void launchNow()} onDismiss={() => apply({ type: 'dismiss' })} error={cardError} sending={sending} />) : null;
   const placement = hideLauncher ? 'native' : commandCenter && 'launchDraft' in commandCenter ? 'bottom' : 'top-right';

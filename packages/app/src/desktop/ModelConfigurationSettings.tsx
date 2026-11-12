@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { effortLabel } from './agent-selection';
 import { levelMapping, levels, levelLabel, type ModelConfiguration } from './model-levels';
 import { providerName } from './types';
 import './model-configuration.css';
@@ -18,7 +19,7 @@ export function ModelConfigurationSettings({ configuration = {}, providers = [],
         const mapping = levelMapping(provider, level, value);
         const update = (patch: Partial<typeof mapping>) => { setDraft(old => ({ ...(old ?? configuration), [provider]: { ...(old ?? configuration)[provider], [level]: { ...mapping, ...patch } } })); setSaved(false); };
         return <td key={level}><label>Model family or ID<input aria-label={`${providerName(provider)} ${levelLabel(level)} model`} value={mapping.family} placeholder="Provider default" maxLength={120} disabled={disabled || saving} onChange={e => update({ family: e.target.value })}/></label>
-          <label>Reasoning effort<select aria-label={`${providerName(provider)} ${levelLabel(level)} reasoning effort`} disabled={disabled || saving || !['codex','claude'].includes(provider)} value={mapping.effort} onChange={e => update({ effort: e.target.value })}>{['default','low','medium','high','xhigh','max'].map(e => <option value={e} key={e}>{e === 'default' ? 'Provider default' : e === 'xhigh' ? 'Extra high' : levelLabel(e)}</option>)}</select></label>
+          <label>Reasoning effort<select aria-label={`${providerName(provider)} ${levelLabel(level)} reasoning effort`} disabled={disabled || saving || !['codex','claude'].includes(provider)} value={mapping.effort} onChange={e => update({ effort: e.target.value })}>{['default','low','medium','high','xhigh','max', ...(provider === 'claude' ? ['ultracode'] : [])].map(e => <option value={e} key={e}>{e === 'default' ? 'Provider default' : effortLabel(e)}</option>)}</select></label>
         </td>;
       })}</tr>)}
     </tbody></table></div>

@@ -43,14 +43,17 @@ it("sends the chosen opts for a new thread", async () => {
   expect(screen.getByText(/01:23 recorded · 1280×800 px/)).toBeTruthy();
   await userEvent.selectOptions(screen.getByLabelText("Project"), "p2");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  expect(call).toHaveBeenCalledWith("bug_walk_send", { id: "w1", opts: { project: "p2", account: "a1", model: null, effort: null, permission_mode: "bypass", split: "single" } });
+  expect(call).toHaveBeenCalledWith("bug_walk_send", { id: "w1", opts: { project: "p2", account: "a1", model: null, effort: null, speed: null, permission_mode: "bypass", split: "single" } });
 });
 it("preselects project, agent and reply_to_thread from a thread origin", async () => {
   const { call } = await setup(walk({ origin: { thread: "t1", project: "p2" } }));
   expect((screen.getByLabelText("Project") as HTMLSelectElement).value).toBe("p2");
-  expect((screen.getByLabelText("Agent") as HTMLSelectElement).disabled).toBe(true);
+  await userEvent.click(screen.getByRole('button', {name:'Assistant and difficulty'}));
+  expect(screen.queryByRole('button', {name:'Claude · Work'})).toBeNull();
+  expect(screen.getByRole('button', {name:'Codex · Home'})).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', {name:'Close'}));
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
-  expect(call).toHaveBeenCalledWith("bug_walk_send", { id: "w1", opts: { project: "p2", account: "a2", model: "gpt-x", effort: "high", permission_mode: "ask", split: "single", reply_to_thread: "t1" } });
+  expect(call).toHaveBeenCalledWith("bug_walk_send", { id: "w1", opts: { project: "p2", account: "a2", model: "gpt-x", effort: "high", speed: null, permission_mode: "ask", split: "single", reply_to_thread: "t1" } });
 });
 it("sends the Threads choice and defaults it from last_split", async () => {
   const call = vi.fn(async (cmd: string) => cmd === "bug_walk_settings_get" ? { shortcut: "x", enabled: true, last_split: "per_item" } : undefined);
@@ -77,5 +80,5 @@ it("Cancel discards the recording", async () => {
 });
 it("buildSendOpts drops effort and permissions for providers that ignore them", () => {
   expect(buildSendOpts({ project: "p", account: "a", provider: "gemini", selection: { model: " m ", effort: "high" }, permission: "bypass" }))
-    .toEqual({ project: "p", account: "a", model: "m", effort: null, permission_mode: "ask", split: "single" });
+    .toEqual({ project: "p", account: "a", model: "m", effort: null, speed: null, permission_mode: "ask", split: "single" });
 });

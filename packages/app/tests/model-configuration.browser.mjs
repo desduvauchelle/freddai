@@ -22,9 +22,9 @@ try {
   assert.equal(JSON.parse(await page.getByLabel('Session selection').textContent()).model,'freddai-level:smart');
   await page.getByRole('combobox',{name:'Difficulty',exact:true}).click();
   await page.getByRole('option',{name:'Custom',exact:true}).click();
-  await page.getByLabel('Custom model ID').fill('gpt-specific');
+  await page.getByLabel('Model',{exact:true}).selectOption('fable');
   await page.getByLabel('Reasoning effort',{exact:true}).selectOption('high');
-  assert.deepEqual(JSON.parse(await page.getByLabel('Session selection').textContent()),{model:'gpt-specific',effort:'high'});
+  assert.deepEqual(JSON.parse(await page.getByLabel('Session selection').textContent()),{model:'fable',effort:'high'});
   assert.deepEqual(errors,[]);
-  console.log('PASS shared mapping editor, four difficulty choices, Custom model/effort, and phone/tablet/desktop layout. No accounts or provider turns.');
+  console.log('PASS shared mapping editor, four difficulty choices, Custom model (select) and effort, and phone/tablet/desktop layout. No accounts or provider turns.');
 } finally {await browser.close();}

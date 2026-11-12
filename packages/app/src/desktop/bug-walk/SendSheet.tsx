@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@freddai/ui/components/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@freddai/ui/components/dialog";
-import { AgentControls } from "../AgentControls";
+import { ComposerAgentPicker } from "../ComposerAgentPicker";
 import { defaultSelection, type AgentSelection } from "../agent-selection";
 import { PermissionSelect, effectivePermissionMode } from "../PermissionSelect";
 import { agentDisplayName, resolveAccount, type Database, type PermissionMode } from "../types";
@@ -28,6 +28,7 @@ export function buildSendOpts(input: { project: string; account: string; provide
     project: input.project, account: input.account,
     model: input.selection.model.trim() || null,
     effort: tunable && input.selection.effort !== "default" ? input.selection.effort : null,
+    speed: tunable && input.selection.speed === "fast" ? "fast" : null,
     permission_mode: effectivePermissionMode(input.provider, input.permission),
     split: input.replyTo ? "single" : input.split ?? "single",
     ...(input.replyTo ? { reply_to_thread: input.replyTo } : {}),
@@ -45,7 +46,7 @@ export function SendSheet({ walk, db, native = true, defaultPermission = "ask", 
   };
   const [project, setProject] = useState(() => thread?.project ?? walk.origin?.project ?? projects[0]?.id ?? "");
   const [account, setAccount] = useState(() => thread?.account ?? accountFor(thread?.project ?? walk.origin?.project ?? projects[0]?.id ?? ""));
-  const [selection, setSelection] = useState<AgentSelection>(() => ({ model: thread?.options?.model ?? "", effort: thread?.options?.effort ?? "default" }));
+  const [selection, setSelection] = useState<AgentSelection>(() => ({ model: thread?.options?.model ?? "", effort: thread?.options?.effort ?? "default", speed: thread?.options?.speed === "fast" ? "fast" : undefined }));
   const [permission, setPermission] = useState<PermissionMode>(thread?.options?.permission_mode ?? defaultPermission);
   const [split, setSplit] = useState<BugWalkSplit>("single");
   // Default from the remembered choice, unless the user already picked one while settings were loading.
@@ -78,14 +79,9 @@ export function SendSheet({ walk, db, native = true, defaultPermission = "ask", 
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </label>
-        <label>Agent
-          <select aria-label="Agent" value={account} disabled={!!replyTo} onChange={e => { setAccount(e.target.value); setSelection(defaultSelection); }}>
-            {db.accounts.map(a => <option key={a.id} value={a.id}>{agentDisplayName(a)}</option>)}
-          </select>
-        </label>
         {replyTo && <p className="bug-walk-hint">Replying in “{thread?.title}”. Project and agent follow that thread.</p>}
         <div className="bug-walk-row">
-          <AgentControls account={acct} native={native} value={selection} onChange={setSelection} disabled={!acct} context="this bug walk" />
+          <ComposerAgentPicker options={db.accounts.filter(a => !replyTo || a.id === account).map(a => ({ id: a.id, label: agentDisplayName(a), account: a }))} agent={account} onAgentChange={id => { setAccount(id); setSelection(defaultSelection); }} account={acct} native={native} modelConfiguration={db.preferences.model_configuration} value={selection} onChange={setSelection} disabled={!acct}/>
           {!replyTo && <div className="bug-walk-split" role="group" aria-label="Threads">
             <span className="bug-walk-split-label">Threads</span>
             {([["single", "One thread"], ["per_item", "One per bug"]] as const).map(([value, label]) =>

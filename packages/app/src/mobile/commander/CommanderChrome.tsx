@@ -1,3 +1,4 @@
+import { CommanderSettings } from "../../desktop/commander/CommanderSettings";
 import { SubThreads, type SubThread } from "../../desktop/commander/SubThreads";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ArrowUpRight, Check, CircleAlert, CircleHelp, Pencil, Plus, X } from 'lucide-react';
@@ -8,8 +9,8 @@ import type { CommanderData } from './useCommanderData';
 import '../../desktop/commander/commander.css';
 import './commander-mobile.css';
 
-export type CommanderTab = 'todos' | 'notes' | 'waiting' | 'threads';
-export const TABS: { id: CommanderTab; label: string }[] = [{ id: 'todos', label: 'To-dos' }, { id: 'notes', label: 'Notes' }, { id: 'waiting', label: 'Waiting' }, { id: 'threads', label: 'Sub-threads' }];
+export type CommanderTab = 'settings' | 'todos' | 'notes' | 'waiting' | 'threads';
+export const TABS: { id: CommanderTab; label: string }[] = [{ id: 'todos', label: 'To-dos' }, { id: 'notes', label: 'Notes' }, { id: 'waiting', label: 'Waiting' }, { id: 'threads', label: 'Sub-threads' }, { id: 'settings', label: 'Settings' }];
 const msg = (e: unknown) => e instanceof Error ? e.message : String(e);
 export const pendingProposals = (proposals: readonly Proposal[]) => proposals.filter(p => p.status === 'pending');
 export const reviewTodos = (todos: readonly Todo[]) => todos.filter(t => t.status === 'needs_review');
@@ -228,6 +229,7 @@ export function CommanderPanel({ tab, client, data, projects, commanderId, threa
   if (!commander) return null;
   return <section className="companion-commander-panel" role="tabpanel" aria-label={TABS.find(t => t.id === tab)?.label}>
     <h2 ref={heading} tabIndex={-1} className="sr-only">{TABS.find(t => t.id === tab)?.label}</h2>
+    {tab === 'settings' && commander.getCommanderSettings && commander.saveCommanderSettings && <CommanderSettings projects={projects} speechConnection={client.speechConnection} api={commander as Required<Pick<CommanderClient, 'getCommanderSettings' | 'saveCommanderSettings'>>} />}
     {tab === 'todos' && <TodosTab data={data} commander={commander} projects={projects} commanderId={commanderId} onOpenThread={onOpenThread} />}
     {tab === 'threads' && <SubThreads threads={threads} projects={projects} onOpenThread={onOpenThread} />}
     {tab === 'notes' && <NotesTab data={data} commander={commander} />}

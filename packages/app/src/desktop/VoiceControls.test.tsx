@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => native);
-import { MicButton } from './VoiceControls';
+import { MicButton, VoiceNotice } from './VoiceControls';
 import { voice } from './voice';
 beforeEach(async () => {
   native.invoke.mockImplementation(async (command: string) => command === 'voice_status' ? { ready: true, shortcut: 'AltRight' } : command === 'voice_stop_recording' ? { text: 'Hello', durationMs: 500, model: 'test' } : command === 'voice_recording_level' ? 0.2 : undefined);
@@ -59,4 +59,24 @@ it.each(['cancel', 'send', 'return'] as const)('tracks diagonal drags on separat
   if (action === 'return') expect(screen.getByRole('button', { name: 'Send recording' })).toBeTruthy();
   if (action === 'cancel') expect(native.invoke).toHaveBeenCalledWith('voice_cancel_recording');
   vi.unstubAllGlobals();
+});
+
+it('keeps project recording feedback out of the unrelated composer', async () => {
+  render(<><MicButton target={false} label="Project mic" onText={vi.fn()} /><div data-testid="composer"><VoiceNotice target /></div></>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Project mic' })); });
+  expect(screen.getByTestId('composer').textContent).toBe('');
+  expect(screen.getByRole('group', { name: 'Voice recording' }).parentElement).toBe(document.body);
+});
+it('keeps transcription busy feedback inside the originating button without extra rows', async () => {
+  let finish!: (value: unknown) => void;
+  native.invoke.mockImplementation(async (command: string) => command === 'voice_stop_recording' ? new Promise(resolve => { finish = resolve; }) : undefined);
+  const onText = vi.fn();
+  render(<><MicButton target={false} label="Project mic" onText={onText}/><VoiceNotice target /></>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Project mic' })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send recording' })); });
+  expect(screen.getByRole('button', { name: 'Transcribing…' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.queryByText('Transcribing…')).toBeNull();
+  await act(async () => { finish({ text: 'Project task' }); });
+  expect(onText).toHaveBeenCalledWith('Project task', expect.any(HTMLElement));
 });

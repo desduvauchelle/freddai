@@ -20,9 +20,10 @@ it("creates a trimmed workspace with a chosen color", async () => {
 it("adds projects through the plus button and by drag and drop without duplicates", () => {
   const save = vi.fn().mockResolvedValue(true);
   const view = render(<WorkspaceSettings projects={[project]} workspaces={[workspace]} disabled={false} onSave={save}/>);
-  fireEvent.click(screen.getByText("Add project"));
+  fireEvent.click(screen.getByText("Add projects"));
   fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
   expect(save).toHaveBeenLastCalledWith([{ ...workspace, projects: ["p"] }]);
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
   fireEvent.drop(screen.getByRole("region", { name: "Personal workspace" }), { dataTransfer: { getData: () => "p" } });
   expect(save).toHaveBeenCalledTimes(2);
   view.rerender(<WorkspaceSettings projects={[project]} workspaces={[{ ...workspace, projects: ["p"] }]} disabled={false} onSave={save}/>);
@@ -153,4 +154,33 @@ it("moves a member by touch between workspaces, preserves unrelated memberships,
     fireEvent.pointerUp(handle, { clientX: 100, clientY: 200 });
     expect(save).toHaveBeenCalledTimes(2);
   } finally { vi.unstubAllGlobals(); Reflect.deleteProperty(document, "elementFromPoint"); }
+});
+
+it("keeps the picker open after adding, searches, and returns to the workspace with Done", async () => {
+  const save = vi.fn().mockResolvedValue(true);
+  const other = { ...project, id: 'b', name: 'Beta' };
+  const view = render(<WorkspaceSettings projects={[project, other]} workspaces={[workspace]} disabled={false} onSave={save}/>);
+  fireEvent.click(screen.getByText('Add projects'));
+  const sheet = screen.getByRole('dialog', { name: 'Add projects to Personal' });
+  fireEvent.change(within(sheet).getByLabelText('Search projects'), { target: { value: 'alp' } });
+  expect(within(sheet).queryByRole('button', { name: 'Beta' })).toBeNull();
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Alpha' }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  view.rerender(<WorkspaceSettings projects={[project, other]} workspaces={[{ ...workspace, projects: ['p'] }]} disabled={false} onSave={save}/>);
+  expect(within(sheet).getByRole('button', { name: 'Alpha, added' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.change(within(sheet).getByLabelText('Search projects'), { target: { value: 'zzz' } });
+  expect(within(sheet).getByText('No projects match “zzz”.')).toBeTruthy();
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it("shows failed saves inside the sheet and permits retry without losing the selection flow", async () => {
+  const save = vi.fn().mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValue(true);
+  render(<WorkspaceSettings projects={[project]} workspaces={[workspace]} disabled={false} onSave={save}/>);
+  fireEvent.click(screen.getByText('Add projects'));
+  fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Connection lost'));
+  fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('dialog')).toBeTruthy();
 });

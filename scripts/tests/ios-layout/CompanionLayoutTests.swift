@@ -598,6 +598,23 @@ final class CompanionLayoutTests: XCTestCase {
     }
   }
 
+  @MainActor
+  func testDashboardRecordingControlsFlipBelowTopEdge() {
+    for size in [CGSize(width: 393, height: 852), CGSize(width: 768, height: 1024), CGSize(width: 1194, height: 834)] {
+      for x in [CGFloat(0), size.width - 48] {
+        let dashboard = DashboardView(frame: CGRect(origin: .zero, size: size))
+        let mic = UIButton(frame: CGRect(x: x, y: 8, width: 48, height: 48))
+        dashboard.addSubview(mic)
+        dashboard.presentRecordingBar(active: true, destination: "Sample", anchor: mic)
+        let bar = dashboard.subviews.compactMap { $0 as? DashboardRecordingBar }.first!
+        XCTAssertGreaterThanOrEqual(bar.frame.minY, mic.frame.maxY + 8)
+        XCTAssertLessThanOrEqual(bar.frame.maxY, dashboard.bounds.maxY)
+        XCTAssertGreaterThanOrEqual(bar.frame.minX, dashboard.bounds.minX)
+        XCTAssertLessThanOrEqual(bar.frame.maxX, dashboard.bounds.maxX)
+      }
+    }
+  }
+
   func testDashboardRecordingBarPinsToBottomAndMatchesComposerControls() throws {
     let animationsEnabled = UIView.areAnimationsEnabled
     UIView.setAnimationsEnabled(false)
@@ -745,7 +762,8 @@ final class CompanionLayoutTests: XCTestCase {
         let card = try XCTUnwrap(cards.first { create.isDescendant(of: $0) })
         XCTAssertEqual(create.bounds.size, CGSize(width: 44, height: 44))
         XCTAssertEqual(create.convert(create.bounds, to: card).minY, mic.convert(mic.bounds, to: card).minY, accuracy: 0.5)
-        if size.width >= 600 { XCTAssertEqual(create.convert(create.bounds, to: card).minY, 4, accuracy: 0.5) }
+        XCTAssertEqual(mic.convert(mic.bounds, to: card).minX - create.convert(create.bounds, to: card).maxX, 12, accuracy: 0.5)
+        if size.width >= 600 { XCTAssertEqual(create.convert(create.bounds, to: card).minY, 12, accuracy: 0.5) }
       }
       let row = try XCTUnwrap(views.first { $0.accessibilityIdentifier == "dashboard-thread-t1" })
       XCTAssertEqual(row.bounds.height, 34, accuracy: 0.5)

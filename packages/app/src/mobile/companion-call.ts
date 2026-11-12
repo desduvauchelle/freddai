@@ -1,3 +1,4 @@
+import { remoteSpeech } from "../conversation/remoteSpeech";
 import { addPluginListener, invoke } from '@tauri-apps/api/core';
 import type { CallEvent, CallIo } from '../desktop/voiceCall';
 import type { CompanionClient } from './companion';
@@ -50,6 +51,7 @@ export function companionCallIo(client: CompanionClient): CallIo {
     capture = recorder; recorder.start();
     state('listening');
   }
+  const remote = client.speechConnection ? remoteSpeech(client.speechConnection, e => handler(e)) : null;
   return {
     async listen(fn) {
       handler = fn;
@@ -96,7 +98,7 @@ export function companionCallIo(client: CompanionClient): CallIo {
         }, 80);
       } catch (e) { active = false; stopCapture(); throw e; }
     },
-    async stop() { generation++; active = false; stopCapture(); if (native) await command('stop'); },
+    async stop() { remote?.stop(); generation++; active = false; stopCapture(); if (native) await command('stop'); },
     async setListening(value) {
       listening = value;
       if (native) { await command(value ? 'resume' : 'pause'); return; }
@@ -105,6 +107,7 @@ export function companionCallIo(client: CompanionClient): CallIo {
       if (value) record(); else state('paused');
     },
     async speak(text) {
+      if (await remote?.speak(text)) return;
       if (native) { await command('speak', text); return; }
       if (!window.speechSynthesis) throw new Error('Spoken replies are unavailable on this device.');
       const utterance = new SpeechSynthesisUtterance(text);
@@ -113,6 +116,6 @@ export function companionCallIo(client: CompanionClient): CallIo {
       utterance.onerror = event => { error(event.error); handler({ type: 'tts-end' }); };
       window.speechSynthesis.speak(utterance);
     },
-    async stopSpeaking() { if (native) await command('stopSpeaking'); else window.speechSynthesis?.cancel(); },
+    async stopSpeaking() { remote?.stop(); if (native) await command('stopSpeaking'); else window.speechSynthesis?.cancel(); },
   };
 }

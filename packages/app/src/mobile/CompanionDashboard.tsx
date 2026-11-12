@@ -1,13 +1,12 @@
+import { ComposerAgentPicker } from '../desktop/ComposerAgentPicker';
 import { ProjectTile } from "../desktop/ProjectTile";
 import { dashboardAssistantFor, dashboardControlKey } from './native-dashboard';
-import { DashboardSelect } from "../desktop/DashboardSelect";
 import { dashboardProjectGroups } from './dashboard-projects';
 import { companionStatusRead } from "./companion";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OfficeOrder } from '../office/OfficeOrder';
 import { Office } from '../office/index';
 import { DaySummaries } from '../desktop/DaySummaries';
-import { AgentControls } from '../desktop/AgentControls';
 import { defaultSelection, type AgentSelection } from '../desktop/agent-selection';
 import { DashboardMic } from './DashboardMic';
 import { CommanderCluster } from './commander/CommanderCluster';
@@ -114,14 +113,17 @@ export function CompanionDashboard(props: Props) {
   return <div ref={root} className="companion-dashboard" data-native-content={props.nativeContent || undefined}>
     {showCommander && <CommanderCluster client={client!} name={commanderProject!.name} status={commander.state?.status ?? null} error={commander.error} connected={connected}
       onOpen={props.onOpenCommander!} onSend={props.onSendCommander!} />}
-    <Office proposals={showCommander ? commander.proposals : undefined} onProposalRespond={showCommander && client?.commander ? async (id, approve) => { await client.commander!.respond({ id, approve }); await commander.refresh(); } : undefined} onOpenCommander={props.onOpenCommander} renderTaskControls={client ? (projectId, onListening) => {
+    {!props.nativeCards && !!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
+      {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{formatProjectName(snapshot.projects.find(p => p.id === t.project)?.name, snapshot.threadList?.projectNameUppercase)} · Review decision</small></span></button>)}
+    </section>}
+    <Office projectNameUppercase={snapshot.threadList?.projectNameUppercase} proposals={showCommander ? commander.proposals : undefined} onProposalRespond={showCommander && client?.commander ? async (id, approve) => { await client.commander!.respond({ id, approve }); await commander.refresh(); } : undefined} onOpenCommander={props.onOpenCommander} renderTaskControls={client ? (projectId, onListening) => {
       const project = snapshot.projects.find(p => p.id === projectId)!;
       const assistant = project.assistants?.find(a => a.id === selections[projectId]) ?? project.assistants?.[0];
       const controlKey = `new:${projectId}:${assistant?.id || ''}:${assistant?.provider || project.provider || ''}`;
       const selection = props.controls?.[controlKey]?.selection ?? defaultSelection;
       return <OfficeOrder key={projectId} disabled={!connected || !project.canStart || (!!project.assistants && !assistant)}
         onSend={(prompt, requestId) => client.start({ project: projectId, assistant: assistant?.id, prompt, requestId,
-          options: { model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, permission_mode: 'bypass', update_agent_controls: true } })}
+          options: { model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, speed: selection.speed === 'fast' ? 'fast' : null, permission_mode: 'bypass', update_agent_controls: true } })}
         renderMic={(onText, disabled) => <DashboardMic client={client} project={project.name} disabled={disabled} onText={onText} onListening={onListening} />} />;
     } : undefined} variant="mini" onExpand={() => props.onOfficeExpandedChange?.(true)} onClose={() => props.onOfficeExpandedChange?.(false)} now={now} onOpenThread={onOpen}
       projects={snapshot.projects.map(p => ({ ...p, path: '', policy: 'inherit', account: null, last: null }))}
@@ -132,17 +134,16 @@ export function CompanionDashboard(props: Props) {
     <div className="dashboard-project-toolbar">
     <div className="companion-dashboard-heading"><h2>Your projects</h2></div>
     <div className="dashboard-launch-controls" role="group" aria-label="Dashboard task defaults">
-      {!!assistants.length && <DashboardSelect label="Coding agent" displayValue={controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider'} value={globalAssistant} disabled={!connected}
-        options={[{ value: '', label: 'Project defaults' }, ...assistants.map(a => ({ value: a.id, label: assistantLabel(a) }))]}
-        onChange={value => {
+      {!!assistants.length && <ComposerAgentPicker displayLabel={controlAssistant ? assistantLabel(controlAssistant) : undefined} agent={globalAssistant} disabled={!connected}
+        options={[{ id: '', label: 'Project defaults' }, ...assistants.map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color }))]}
+        onAgentChange={value => {
           setLocalGlobalAssistant(value); props.onGlobalAssistantChange?.(value);
           for (const project of snapshot.projects) {
             const assistant = project.assistants?.find(a => a.id === value);
             props.onAssistantChange?.(project.id, assistant?.id ?? project.defaultAssistant ?? project.assistants?.[0]?.id ?? '');
           }
-        }} />}
-      {controlProvider && <AgentControls inline provider={controlProvider} native={!!client?.models} loadModels={client?.models ? loadDashboardModels : undefined}
-        value={globalSelection} disabled={!connected} context="all new dashboard tasks" onChange={selection => {
+        }} provider={controlProvider} modelConfiguration={snapshot.modelConfiguration} native={!!client?.models} loadModels={client?.models ? loadDashboardModels : undefined}
+        value={globalSelection} onChange={selection => {
           setGlobalSelections(old => ({ ...old, [globalAssistant]: selection }));
           for (const project of snapshot.projects) {
             const assistant = project.assistants?.find(a => a.id === selections[project.id]);
@@ -152,9 +153,6 @@ export function CompanionDashboard(props: Props) {
     </div>
     </div>
     {!connected && <p>Connect to your Mac to refresh project activity.</p>}
-    {!!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
-      {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{formatProjectName(snapshot.projects.find(p => p.id === t.project)?.name, snapshot.threadList?.projectNameUppercase)} · Review decision</small></span></button>)}
-    </section>}
     {dashboardProjectGroups(snapshot).map(group => <section key={group.id} aria-label={group.name ?? undefined}>
       {group.name && <h3 className="companion-workspace-heading">{group.name}</h3>}
       <div className="companion-project-grid">{group.projects.map(project => <ProjectCard key={project.id} {...props} assistantSelections={selections} project={project} now={now} onProject={() => props.onProject ? props.onProject(project.id) : setOpenProject(project.id)} />)}</div>

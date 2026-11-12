@@ -12,11 +12,13 @@ it('starts with the selected assistant and preserves the prompt through polling'
   render(<MobileApp client={{ ...disconnectedClient, snapshot: async () => structuredClone(data), start }} />);
   fireEvent.click(await screen.findByRole('button', { name: 'New thread' }));
   fireEvent.change(screen.getByRole('combobox', { name: 'New thread project' }), { target: { value: 'p' } });
-  expect((screen.getByRole('combobox', { name: 'Coding assistant' }) as HTMLSelectElement).value).toBe('a');
+  expect(screen.getByRole('button', {name:'Assistant and difficulty'}).textContent).toContain('Codex · First');
   fireEvent.change(screen.getByRole('textbox', { name: 'New thread prompt' }), { target: { value: 'Synthetic task' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Coding assistant' }), { target: { value: 'b' } });
+  fireEvent.click(screen.getByRole('button', {name:'Assistant and difficulty'}));
+  fireEvent.click(screen.getByRole('button', {name:'Claude · Second'}));
+  fireEvent.click(screen.getByRole('button', {name:'Smart'}));
   fireEvent(document, new Event('visibilitychange')); 
-  await waitFor(() => expect((screen.getByRole('combobox', { name: 'Coding assistant' }) as HTMLSelectElement).value).toBe('b'));
+  await waitFor(() => expect(screen.getByRole('button', {name:'Assistant and difficulty'}).textContent).toContain('Claude · Second · Smart'));
   fireEvent.submit(screen.getByRole('textbox', { name: 'New thread prompt' }).closest('form')!);
   await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ assistant: 'b', project: 'p', prompt: 'Synthetic task', options: expect.objectContaining({ permission_mode: 'bypass' }) })));
 });

@@ -5,8 +5,11 @@ import { disconnectedClient, type CompanionSnapshot } from './companion';
 afterEach(cleanup);
 HTMLElement.prototype.scrollIntoView ??= () => {};
 function chooseDashboard(label: string, option: string) {
-  fireEvent.keyDown(screen.getByRole('combobox', { name: label }), { key: 'Enter' });
-  fireEvent.click(screen.getByRole('option', { name: option }));
+  if (!screen.queryByRole('dialog')) fireEvent.click(screen.getByRole('button', { name: 'Assistant and difficulty' }));
+  if (label === 'Difficulty') fireEvent.click(screen.getByRole('button', { name: 'Project defaults' }));
+  else if (screen.queryByRole('button', { name: /Back to assistants/ })) fireEvent.click(screen.getByRole('button', { name: /Back to assistants/ }));
+  fireEvent.click(screen.getByRole('button', { name: option }));
+  if (label !== 'Difficulty') fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 }
 it('counts activity across projects, retains empty projects and opens pending decisions', () => {
   const now = new Date(2026, 10, 4, 12).getTime(), onOpen = vi.fn(), onNew = vi.fn();
@@ -46,7 +49,7 @@ it('applies the global agent across projects and keeps thread navigation in the 
     threads: [{ id: 't', project: 'Two', title: 'Existing task', updated: 1, status: 'done', messages: [], canReply: true, queued: 0, error: null }],
   }} />);
   expect(screen.queryByText('Open latest thread')).toBeNull();
-  expect(screen.getAllByRole('combobox', { name: 'Coding agent' })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Assistant and difficulty' })).toHaveLength(1);
   chooseDashboard('Coding agent', 'Codex · Work');
   for (const name of ['One', 'Two']) {
     fireEvent.click(screen.getByRole('button', { name: `Open project ${name}` }));
@@ -124,8 +127,8 @@ it('shows one shared model and difficulty row outside project cards and saves it
   const onSelectionChange = vi.fn();
   render(<CompanionDashboard connected onNew={vi.fn()} onOpen={vi.fn()} onSelectionChange={onSelectionChange}
     snapshot={{ projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true, defaultAssistant: 'a', assistants: [{ id: 'a', name: 'Personal', provider: 'claude' }] }], threads: [] }} />);
-  expect(screen.getAllByRole('combobox', { name: 'Difficulty' })).toHaveLength(1);
-  expect(screen.getByRole('combobox', { name: 'Difficulty' }).closest('.companion-project-card')).toBeNull();
+  expect(screen.getAllByRole('button', { name: 'Assistant and difficulty' })).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).closest('.companion-project-card')).toBeNull();
   chooseDashboard('Difficulty', 'Smart');
   expect(onSelectionChange).toHaveBeenLastCalledWith('new:p:a:claude', { model: 'freddai-level:smart', effort: 'default' });
 });
@@ -136,9 +139,9 @@ it('shows the resolved saved provider and follows changes without pinning it', (
   const snapshot = (id: string): CompanionSnapshot => ({ projects: [{ id: 'p', name: 'Project', color: '#777', canStart: true, defaultAssistant: id, assistants }], threads: [] });
   const props = { connected: true, onNew, onOpen: vi.fn(), onGlobalAssistantChange, globalAssistant: '' };
   const view = render(<CompanionDashboard {...props} snapshot={snapshot('b')} />);
-  expect(screen.getByRole('combobox', { name: 'Coding agent' }).textContent).toBe('Codex · RS');
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).textContent).toContain('Codex · RS');
   view.rerender(<CompanionDashboard {...props} snapshot={snapshot('a')} />);
-  expect(screen.getByRole('combobox', { name: 'Coding agent' }).textContent).toBe('Claude · Personal');
+  expect(screen.getByRole('button', { name: 'Assistant and difficulty' }).textContent).toContain('Claude · Personal');
   fireEvent.click(screen.getByRole('button', { name: 'New thread in Project' }));
   expect(onNew).toHaveBeenCalledWith('p', 'a');
   expect(onGlobalAssistantChange).not.toHaveBeenCalled();
@@ -164,4 +167,15 @@ it('shows a pending row under the project instead of a Sending message paragraph
   expect(screen.getByRole('heading', { name: 'Project' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /Ship the release/ }));
   expect(onOpen).toHaveBeenCalledWith('outbox:o1');
+});
+
+it('places the Needs you section above the projects and hides it when nothing is pending', () => {
+  const base = { project: 'p', updated: 1, messages: [], canReply: true, queued: 0, error: null };
+  const projects = [{ id: 'p', name: 'Project', color: '#777', canStart: true }];
+  const { rerender } = render(<CompanionDashboard connected onOpen={vi.fn()} onNew={vi.fn()} snapshot={{ projects, threads: [
+    { ...base, id: 'pending', title: 'Approval', status: 'running', pending: { id: 'approval' } as never }] }} />);
+  const needs = screen.getByRole('region', { name: 'Needs you' });
+  expect(needs.compareDocumentPosition(screen.getByText('Your projects')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  rerender(<CompanionDashboard connected onOpen={vi.fn()} onNew={vi.fn()} snapshot={{ projects, threads: [{ ...base, id: 'done', title: 'Done', status: 'done' }] }} />);
+  expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
 });

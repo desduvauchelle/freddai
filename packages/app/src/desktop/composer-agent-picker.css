@@ -1,0 +1,34 @@
+.composer-agent-trigger { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; padding: 7px 10px; border: 1px solid var(--adaptive-border, #7775); border-radius: 9px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
+.composer-agent-trigger-label { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
+.composer-agent-trigger:disabled { opacity: .5; cursor: default; }
+.composer-agent-trigger-label > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.composer-agent-trigger-level { flex: 0 0 auto; white-space: nowrap; }
+.composer-agent-modal { width: min(460px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); overflow-y: auto; background: var(--adaptive-surface, #25262c); color: var(--adaptive-text, #eee); }
+.composer-agent-menu { display: grid; gap: 8px; min-width: 0; }
+.composer-agent-menu h3 { font-size: 12px; opacity: .7; margin: 16px 8px 6px; }
+.composer-agent-menu button { display: flex; width: 100%; align-items: center; gap: 10px; text-align: left; min-height: 48px; padding: 10px 12px; border-radius: 9px; background: transparent; color: inherit; border: 1px solid transparent; cursor: pointer; }
+.composer-agent-menu button:hover { background: #8882; }
+.composer-agent-menu button[aria-pressed=true] { background: #8882; border-color: var(--adaptive-border, #8886); }
+.composer-agent-menu button:focus-visible, .composer-agent-trigger:focus-visible { outline: 2px solid var(--ring, #b59ae9); outline-offset: 2px; }
+.composer-agent-menu button > .composer-agent-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.composer-agent-label > strong { font-weight: 600; }
+.composer-agent-menu .dashboard-agent-controls { display: grid; width: 100%; }
+.composer-agent-menu .agent-controls-panel { position: static; width: auto; box-shadow: none; }
+.composer-agent-menu small { display: block; font-size: 11px; opacity: .75; }
+.composer-agent-menu select, .composer-agent-menu input { width: 100%; min-height: 44px; padding: 8px; color: inherit; background: var(--adaptive-surface, #25262c); border: 1px solid var(--adaptive-border, #55515f); border-radius: 6px; }
+.composer-agent-modal [data-slot=dialog-description] { color: inherit; opacity: .72; }
+.composer-agent-modal.is-wide { width: min(760px, calc(100vw - 24px)); max-width: min(760px, calc(100vw - 24px)); }
+.composer-agent-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.composer-agent-columns[data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.composer-agent-column { align-content: start; gap: 4px; max-height: min(60dvh, 440px); overflow-y: auto; padding-right: 2px; }
+.composer-agent-column h2 { margin: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .65; }
+.composer-agent-column h3 { margin: 8px 8px 4px; }
+.composer-agent-column > hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--adaptive-border, #8884); }
+.composer-agent-column button, .composer-agent-efforts > button, .composer-agent-menu [role=group] > button { min-height: 40px; padding: 7px 10px; }
+.composer-agent-menu [role=group], .composer-agent-efforts { display: grid; gap: 4px; }
+.composer-agent-menu .composer-agent-muted { margin: 4px 8px; font-size: 12px; opacity: .7; }
+.composer-agent-menu button:disabled { opacity: .5; cursor: default; }
+.composer-agent-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--adaptive-border, #8884); font-size: 13px; }
+.composer-agent-footer > span { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.composer-agent-done { flex: 0 0 auto; padding: 7px 16px; border-radius: 9px; border: 1px solid var(--adaptive-border, #8886); background: #8882; color: inherit; cursor: pointer; font: inherit; }
+.composer-agent-done:focus-visible { outline: 2px solid var(--ring, #b59ae9); outline-offset: 2px; }

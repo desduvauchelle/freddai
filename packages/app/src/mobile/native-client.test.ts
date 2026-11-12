@@ -15,3 +15,10 @@ it('reads summaries without generating and generates only through the explicit c
   await nativeCompanionClient.summaries!.generate('2026-11-04', false);
   expect(invoke).toHaveBeenLastCalledWith('companion_composer', { operation: 'summarize_day', input: { date: '2026-11-04', force: false } });
 });
+it('passes the start flag to preview_open', async () => {
+  const { previewOpen } = await import('./native-client');
+  await previewOpen('t1', 'http://localhost:3000/');
+  expect(invoke).toHaveBeenLastCalledWith('preview_open', { threadId: 't1', url: 'http://localhost:3000/', start: false });
+  await previewOpen('t1', 'http://localhost:3000/', true);
+  expect(invoke).toHaveBeenLastCalledWith('preview_open', { threadId: 't1', url: 'http://localhost:3000/', start: true });
+});

@@ -26,6 +26,13 @@ function commanderModel(snapshot: CompanionSnapshot) {
   const threads = snapshot.threads.filter(t => t.project === project.id);
   return { sending: false, id: project.id, name: project.name, needsYou: threads.filter(t => nativeRunState(t) === 'waiting').length, running: threads.filter(t => nativeRunState(t) === 'running').length, doneToday: 0 };
 }
+function needsYouThreads(snapshot: CompanionSnapshot, read: Record<string, number>) {
+  const projects = new Map(snapshot.projects.filter(p => p.kind !== 'commander').map(p => [p.id, p]));
+  return snapshot.threads
+    .filter(t => projects.has(t.project) && !['archived', 'deleted'].includes(t.status) && nativeRunState(t) === 'waiting')
+    .sort(compareThreadRecency)
+    .map(t => ({ ...nativeThread(t, companionStatusRead(snapshot, read)), project: t.project, projectName: formatProjectName(projects.get(t.project)!.name, snapshot.threadList?.projectNameUppercase) }));
+}
 export function buildDashboardModel(snapshot: CompanionSnapshot, connected: boolean, selected: string,
   controls: Record<string, { selection: AgentSelection }>, busy: boolean, now = Date.now(), expanded = false, read: Record<string, number> = {}, outbox: Outgoing[] = []) {
   const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
@@ -34,12 +41,14 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
   const selection = controlProject ? controls[dashboardControlKey(controlProject, selected)]?.selection ?? defaultSelection : defaultSelection;
   const provider = controlAssistant?.provider ?? controlProject?.provider;
   return {
-    model: modelPillLabel(provider, { ...selection, effort: 'default' }, []),
+    model: modelPillLabel(provider, { ...selection, effort: 'default', speed: undefined }, []),
     difficulty: modelPillLabel(provider, selection, []),
     hasControls: !!provider,
     workspace: null as string | null, summaries: [] as NativeSummary[], schedules: false, message: '',
     connected, busy, expanded, workspaceHeight: 240, agent: controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider',
     commander: commanderModel(snapshot),
+    /** Waiting threads across all non-commander projects, newest first; rendered under the commander cluster and hidden when empty. */
+    needsYou: needsYouThreads(snapshot, read),
     projectGroups: dashboardProjectGroups(snapshot).map(group => ({ ...group, projects: group.projects.map(project => project.id) })),
     projects: snapshot.projects.filter(p => p.kind !== 'commander').map(project => {
       const assistant = dashboardAssistantFor(project, selected), provider = assistant?.provider || project.provider;

@@ -31,4 +31,6 @@
 .preview-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 10px; border: 1px solid var(--adaptive-border, var(--border)); border-radius: 999px; background: var(--adaptive-card, var(--card)); color: inherit; font: inherit; font-size: .9em; cursor: pointer; }
 .preview-chip span { opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .preview-chip:disabled { opacity: .6; cursor: default; }
+.preview-chip-code { margin-left: 4px; font-size: .8em; opacity: .65; }
+.preview-chip-status { font-size: .85em; opacity: .7; }
 .preview-chip-error { color: var(--destructive, #c0392b); font-size: .85em; }

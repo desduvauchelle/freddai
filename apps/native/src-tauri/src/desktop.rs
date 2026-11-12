@@ -61,6 +61,49 @@ impl Host {
         }
     }
 }
+#[cfg(target_os = "macos")]
+const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+/// Unregisters a cached bundle copy from LaunchServices so `open -b`/Dock never resolve to it.
+#[cfg(target_os = "macos")]
+fn lsregister_unregister(bundle: &std::path::Path) {
+    match Command::new(LSREGISTER).arg("-u").arg(bundle).output() {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => eprintln!("{}", json!({"event":"host_cache.lsregister_failed","path":bundle.to_string_lossy(),"status":o.status.code(),"stderr":String::from_utf8_lossy(&o.stderr)})),
+        Err(e) => eprintln!("{}", json!({"event":"host_cache.lsregister_failed","path":bundle.to_string_lossy(),"error":e.to_string()})),
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn lsregister_unregister(_: &std::path::Path) {}
+/// Removes cached host bundles older than 3 days that no process or the LaunchAgent still uses.
+#[cfg(target_os = "macos")]
+fn prune_host_cache(root: &std::path::Path) {
+    let dir = root.join("host-binaries");
+    let Ok(entries) = fs::read_dir(&dir) else { return };
+    let ps = Command::new("/bin/ps").args(["-axo", "command="]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    let Ok(ps) = ps else { eprintln!("{}", json!({"event":"host_cache.prune_skipped","reason":"ps failed"})); return };
+    let agent = std::env::var_os("HOME")
+        .and_then(|h| fs::read_to_string(PathBuf::from(h).join("Library/LaunchAgents/com.freddai.host.plist")).ok())
+        .unwrap_or_default();
+    let cutoff = Duration::from_secs(3 * 24 * 3600);
+    let mut pruned = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "app") { continue; }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        if name.starts_with('.') { continue; }
+        let age = entry.metadata().ok().and_then(|m| m.created().or_else(|_| m.modified()).ok()).and_then(|t| t.elapsed().ok());
+        if age.is_none_or(|a| a < cutoff) { continue; }
+        let needle = path.to_string_lossy();
+        let canon = fs::canonicalize(&path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        if ps.contains(needle.as_ref()) || (!canon.is_empty() && ps.contains(&canon)) || agent.contains(needle.as_ref()) { continue; }
+        lsregister_unregister(&path);
+        match fs::remove_dir_all(&path) {
+            Ok(()) => pruned += 1,
+            Err(e) => eprintln!("{}", json!({"event":"host_cache.prune_failed","path":needle,"error":e.to_string()})),
+        }
+    }
+    eprintln!("{}", json!({"event":"host_cache.pruned","count":pruned}));
+}
 fn host_binary(root: &std::path::Path) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     cache_host_binary(&exe, root)
@@ -101,6 +144,8 @@ fn cache_host_binary(exe: &std::path::Path, root: &std::path::Path) -> Result<Pa
                 let _ = fs::remove_dir_all(&stage);
             }
             result?;
+            // The copy shares the app's bundle id; keep LaunchServices from resolving it.
+            lsregister_unregister(&target);
         }
         verify_bundle(&target)?;
         return fs::canonicalize(
@@ -300,6 +345,14 @@ fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, Stri
         other => other,
     }
 }
+#[tauri::command]
+fn vscode_available() -> bool { crate::project_editor::available() }
+#[tauri::command]
+async fn open_project_vscode(h: State<'_, Host>, project: String) -> Result<(), String> {
+    let snapshot = rpc(h.inner().clone(), "snapshot", json!({})).await?;
+    let db = serde_json::from_value(snapshot).map_err(|e| format!("Could not read projects: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || crate::project_editor::open(&db, &project)).await.map_err(|e| e.to_string())?
+}
 /// Set when the account order changes so the next `snapshot_since` is answered with a full snapshot
 /// (an "unchanged" reply would never carry the re-sorted accounts).
 static ACCOUNT_ORDER_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -380,6 +433,34 @@ pub(crate) async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Va
     })
     .await
     .map_err(|e| e.to_string())?
+}
+/// Desktop side-panel preview (docs/preview-tunnel.md): makes sure the dev server behind a localhost URL is
+/// running, restarting a shared one if its agent's process group died. Returns `{status, url}` with status
+/// `listening`; `preview_server_confirm`/`preview_server_starting` are errors the UI handles (confirm shows a Start button, starting retries every 2 s); errors are `"<code>: <detail>"` strings.
+#[tauri::command]
+async fn preview_open(h: State<'_, Host>, thread_id: String, url: String, start: Option<bool>) -> Result<Value, String> {
+    let root = h.root.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || preview_open_blocking(&root, &url, start.unwrap_or(false), std::time::Duration::from_secs(5)))
+        .await
+        .map_err(|e| e.to_string())?;
+    match &result {
+        Ok(v) => eprintln!("preview_desktop_open thread={thread_id} port={} status={}", v["port"], v["status"].as_str().unwrap_or("?")),
+        Err(e) => eprintln!("preview_desktop_open thread={thread_id} status=error error={e:?}"),
+    }
+    result
+}
+fn preview_open_blocking(root: &std::path::Path, url: &str, start: bool, wait: std::time::Duration) -> Result<Value, String> {
+    let (port, path) = crate::preview_host::parse_localhost_url(url).map_err(|e| format!("{e}: expected http://localhost:<port>"))?;
+    crate::preview_host::import_shared(root);
+    freddai_core::preview_grants::check_port(port as u64).map_err(|reason| format!("preview_not_granted: {reason}"))?;
+    let normalized = format!("http://localhost:{port}{path}");
+    let ready = json!({"status": "listening", "url": normalized, "port": port});
+    if freddai_core::preview_grants::is_listening(port) { return Ok(ready); }
+    // Only a shared port can carry a command, so only shared ports are ever spawned.
+    if !crate::preview_host::is_granted(port) { return Err(format!("preview_port_unreachable: nothing listening on {port}")); }
+    // `preview_server_confirm` and `preview_server_starting` come back as Err strings; the UI handles both.
+    crate::preview_host::server_status(root, port, start, wait)?;
+    Ok(ready)
 }
 #[tauri::command]
 async fn agent_config(h: State<'_, Host>, request: Value) -> Result<Value, String> {
@@ -951,6 +1032,12 @@ async fn stop_all(h: State<'_, Host>) -> Result<Value, String> {
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
+async fn voice_connection(h: State<'_, Host>, operation: String, input: Value) -> Result<Value, String> {
+    let root=h.root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::voice::connections::call(&root,&operation,&input)).await.map_err(|e|e.to_string())?
+}
+#[cfg(target_os = "macos")]
+#[tauri::command]
 async fn voice_status(h: State<'_, Host>) -> Result<crate::voice::VoiceStatus, String> {
     Ok(crate::voice::status(&h.root))
 }
@@ -1145,6 +1232,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             let root = app.path().app_data_dir()?;
             fs::create_dir_all(&root)?;
             let binary = host_binary(&root)?;
+            #[cfg(target_os = "macos")]
+            prune_host_cache(&root);
             let host = Host::new(root, binary);
             ensure_host(&host).map_err(std::io::Error::other)?;
             if startup_status() {
@@ -1170,6 +1259,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            vscode_available, open_project_vscode,
+            preview_open,
             #[cfg(target_os = "macos")] crate::satellite::satellite_onboarding_needed,
             #[cfg(target_os = "macos")] crate::satellite::satellite_finish_onboarding,
             #[cfg(target_os = "macos")] crate::satellite::satellite_mode,
@@ -1292,6 +1383,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             crate::updater::open_release_page,
             #[cfg(target_os = "macos")]
             voice_status,
+            #[cfg(target_os = "macos")]
+            voice_connection,
             #[cfg(target_os = "macos")]
             voice_update_settings,
             #[cfg(target_os = "macos")]
@@ -1627,5 +1720,58 @@ mod upgrade_retry_tests {
         server.join().unwrap();
         let _ = fs::remove_dir_all(&root);
         assert!(error.contains("Quit Freddai"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod preview_open_tests {
+    use super::*;
+    use std::time::Duration;
+    fn root() -> std::path::PathBuf { let r = std::env::temp_dir().join(format!("freddai-preview-open-{}", crate::companion_crypto::random())); std::fs::create_dir_all(r.join("companion")).unwrap(); r }
+    fn free_port() -> u16 { std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port() }
+    fn code(e: &str) -> &str { e.split(':').next().unwrap() }
+    #[test]
+    fn rejects_bad_urls_and_ports() {
+        let r = root();
+        assert_eq!(code(&preview_open_blocking(&r, "http://example.com:3000", false, Duration::ZERO).unwrap_err()), "preview_invalid_url");
+        assert_eq!(code(&preview_open_blocking(&r, "http://localhost:81", false, Duration::ZERO).unwrap_err()), "preview_not_granted");
+        assert_eq!(code(&preview_open_blocking(&r, "http://localhost:49744", false, Duration::ZERO).unwrap_err()), "preview_not_granted");
+        let dead = free_port();
+        assert_eq!(code(&preview_open_blocking(&r, &format!("http://localhost:{dead}"), false, Duration::ZERO).unwrap_err()), "preview_port_unreachable", "unshared, nothing listening");
+        let _ = std::fs::remove_dir_all(r);
+    }
+    #[test]
+    fn listening_port_reports_listening_and_drops_fragment() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let r = root();
+        let v = preview_open_blocking(&r, &format!("http://127.0.0.1:{port}/a?b=1#frag"), false, Duration::ZERO).unwrap();
+        assert_eq!((v["status"].as_str(), v["url"].as_str()), (Some("listening"), Some(format!("http://localhost:{port}/a?b=1").as_str())));
+        let _ = std::fs::remove_dir_all(r);
+    }
+    #[test]
+    fn shared_command_is_started_then_listening() {
+        let r = root();
+        let port = free_port();
+        freddai_core::preview_grants::record_share(&r, port, Some(&format!("python3 -m http.server {port} --bind 127.0.0.1")), Some(&r)).unwrap();
+        let url = format!("http://localhost:{port}/");
+        let mut status = String::new();
+        let confirm = preview_open_blocking(&r, &url, false, Duration::from_secs(1)).unwrap_err();
+        assert_eq!(confirm, format!("preview_server_confirm: python3 -m http.server {port} --bind 127.0.0.1 @ {}", r.display()));
+        assert!(!r.join("companion/preview-servers.json").exists(), "nothing may spawn without start");
+        for _ in 0..20 {
+            match preview_open_blocking(&r, &url, true, Duration::from_secs(1)) {
+                Ok(v) => { status = v["status"].as_str().unwrap().to_owned(); if status == "listening" { break; } }
+                Err(e) if e.starts_with("preview_server_starting") => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
+        let registry = std::fs::read_to_string(r.join("companion/preview-servers.json")).unwrap_or_default();
+        let entries: Value = serde_json::from_str(&registry).unwrap_or(Value::Null);
+        for pid in entries.as_array().into_iter().flatten().filter_map(|e| e["pid"].as_u64()).filter(|p| *p > 1) {
+            let _ = std::process::Command::new("kill").arg("-9").arg(format!("-{pid}")).status();
+        }
+        let _ = std::fs::remove_dir_all(&r);
+        assert_eq!(status, "listening", "registry: {registry}");
     }
 }

@@ -116,7 +116,6 @@ export function MicButton({ target, onText, className = "", label: idleLabel = "
       onClick={e => { e.preventDefault(); if (e.detail === 0 && !active.current && !transcribing) begin(); }}
     >{transcribing ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}</Button>
     {mine && recording && <RecordingFeedback elapsed={elapsed} levels={levels} {...gesture} finger={finger} onCancel={abort} onSend={() => void end()} />}
-    {mine && transcribing && <span className="desktop-recording-pill" role="status">Transcribing…</span>}
   </span>;
 }
 
@@ -127,6 +126,6 @@ export function VoiceNotice({ target }: { target: boolean }) {
   if (snap.phase === "error" && snap.error) return <div className="voice-notice voice-notice-error" role="alert">
     <span>{snap.error}</span><Button type="button" variant="ghost" size="sm" onClick={() => voice.clearError()}>Dismiss</Button>
   </div>;
-  const text = snap.phase === "recording" ? "Listening…" : snap.phase === "transcribing" ? "Transcribing…" : snap.notice;
+  const text = snap.source === "hotkey" && snap.phase === "recording" ? "Listening…" : snap.notice;
   return text ? <div className="voice-notice" role="status">{text}</div> : null;
 }

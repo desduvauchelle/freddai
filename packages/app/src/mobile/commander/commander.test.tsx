@@ -126,7 +126,7 @@ it('shows the sheet tabs with a waiting badge, reports tab changes and closes fr
   const onTab = vi.fn(), onClose = vi.fn();
   render(<CommanderSheet open onClose={onClose} tab="waiting" onTab={onTab} waiting={3}><p>body</p></CommanderSheet>);
   expect(screen.getByRole('dialog', { name: 'Commander' }).getAttribute('data-detent')).toBe('medium');
-  expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['To-dos', 'Notes', 'Waiting3', 'Sub-threads']);
+  expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['To-dos', 'Notes', 'Waiting3', 'Sub-threads', 'Settings']);
   fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
   expect(onTab).toHaveBeenCalledWith('notes');
   fireEvent.click(screen.getByRole('button', { name: 'Expand sheet' }));
@@ -151,7 +151,7 @@ it('opens the Commander chat with a compact header and no pinned tabs or approva
   const avatar = await within(header).findByRole('button', { name: /open To-dos, Notes, Waiting and Sub-threads/ });
   expect(within(header).getByRole('status').textContent).toMatch(/\d/);
   fireEvent.click(avatar);
-  expect(screen.getAllByRole('tab').map(t => t.textContent?.replace(/\d+$/, ''))).toEqual(['To-dos', 'Notes', 'Waiting', 'Sub-threads']);
+  expect(screen.getAllByRole('tab').map(t => t.textContent?.replace(/\d+$/, ''))).toEqual(['To-dos', 'Notes', 'Waiting', 'Sub-threads', 'Settings']);
   const card = await screen.findByRole('article', { name: /Proposal: Start a task in Lucy Web/ });
   fireEvent.click(within(card).getByRole('button', { name: /Yes/ }));
   await waitFor(() => expect(within(card).getByRole('status').textContent).toContain('Started a task.'));

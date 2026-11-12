@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowUp, X } from 'lucide-react';
 import { recordingCueOffset } from './recording-gesture';
 import './recording-feedback.css';
@@ -22,24 +23,35 @@ function Cue({ axis, progress, finger, onClick }: { axis: 'horizontal' | 'vertic
 export function RecordingFeedback({ elapsed, levels = [], send, cancel, finger, onCancel, onSend }: {
   elapsed: number; levels?: number[]; send: number; cancel: number; finger: { x: number; y: number } | null; onCancel: () => void; onSend: () => void;
 }) {
-  const root = useRef<HTMLSpanElement>(null);
-  const [shift, setShift] = useState(0);
+  const anchor = useRef<HTMLSpanElement>(null);
+  const [position, setPosition] = useState({ left: 8, top: 8 });
   useLayoutEffect(() => {
     const fit = () => {
-      const node = root.current;
-      if (!node) return;
-      const rect = node.getBoundingClientRect();
-      const previous = Number(node.dataset.shift || 0);
-      const left = rect.left - previous, right = rect.right - previous;
-      setShift(Math.max(8 - left, Math.min(0, window.innerWidth - 8 - right)));
+      const rect = anchor.current?.parentElement?.getBoundingClientRect();
+      if (!rect) return;
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth, height = viewport?.height ?? window.innerHeight;
+      const above = rect.top - 116;
+      setPosition({
+        left: Math.max(left + 8, Math.min(rect.right - 268, left + width - 276)),
+        top: Math.max(top + 8, Math.min(above >= top + 8 ? above : rect.bottom + 8, top + height - 116)),
+      });
     };
-    fit(); window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
+    fit(); window.addEventListener('resize', fit); window.addEventListener('scroll', fit, true);
+    window.visualViewport?.addEventListener('resize', fit); window.visualViewport?.addEventListener('scroll', fit);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    if (anchor.current?.parentElement) observer?.observe(anchor.current.parentElement);
+    return () => {
+      window.removeEventListener('resize', fit); window.removeEventListener('scroll', fit, true);
+      window.visualViewport?.removeEventListener('resize', fit); window.visualViewport?.removeEventListener('scroll', fit);
+      observer?.disconnect();
+    };
   }, []);
-  return <span ref={root} data-shift={shift} style={{ transform: `translateX(${shift}px)` }} className="recording-feedback" role="group" aria-label="Voice recording">
+  return <><span ref={anchor} aria-hidden="true" />{createPortal(<span style={position} className="recording-feedback" role="group" aria-label="Voice recording">
     <span className="recording-capsule"><span role="timer">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>
       <span className="recording-wave" aria-hidden="true">{Array.from({ length: 16 }, (_, i) => <i key={i} style={{ height: 3 + 23 * Math.min(1, (levels[i] ?? 0) * 4) }} />)}</span></span>
     <Cue axis="horizontal" progress={cancel} finger={finger} onClick={onCancel} />
     <Cue axis="vertical" progress={send} finger={finger} onClick={onSend} />
-  </span>;
+  </span>, document.body)}</>;
 }

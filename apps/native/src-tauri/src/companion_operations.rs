@@ -1,6 +1,6 @@
 /// Mobile composer commands exposed through the paired Mac transport.
 pub(crate) fn validate(operation: &str) -> Result<(), String> {
-    if !["save_model_configuration", "browse_folders", "create_folder", "add_project", "update_project_organization", "resume_thread", "move_project", "save_workspaces", "generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action", "google_capability", "google_accounts", "google_disconnect", "google_triggers", "google_trigger_save", "google_trigger_delete", "commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore", "preview_open"].contains(&operation) {
+    if !["vscode_available", "open_project_vscode", "save_model_configuration", "browse_folders", "create_folder", "add_project", "update_project_organization", "resume_thread", "move_project", "save_workspaces", "generated_file", "models", "queue", "upload", "voice", "transcribe", "day_summary", "summarize_day", "save_schedule", "schedule_action", "google_capability", "google_accounts", "google_disconnect", "google_triggers", "google_trigger_save", "google_trigger_delete", "voice_connection", "commander_settings_get", "commander_settings_save", "commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore", "preview_open"].contains(&operation) {
         return Err("Unknown composer operation".into());
     }
     Ok(())
@@ -67,7 +67,7 @@ mod tests {
         }
     #[test]
     fn commander_operations_reach_the_mac() {
-        for op in ["commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore"] {
+        for op in ["voice_connection", "commander_settings_get", "commander_settings_save", "commander_state", "commander_proposals", "commander_proposal_respond", "commander_todos", "commander_todo_save", "commander_notes", "commander_note_read", "commander_note_write", "commander_profile", "commander_profile_save", "commander_revision_restore"] {
             assert_eq!(super::validate(op), Ok(()));
         }
         // Memory and settings stay desktop-only.

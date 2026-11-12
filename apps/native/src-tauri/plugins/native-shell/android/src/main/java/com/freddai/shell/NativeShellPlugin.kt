@@ -71,6 +71,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     private var sheetBackdrop: View? = null
     private var sheetDestinationReady = false
     private var backNav = false
+    private var sheetNavigation = false
     private lateinit var menuButton: Button
 
     private fun openThreadSheet() {
@@ -551,7 +552,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         navigation.visibility = if (visible) View.VISIBLE else View.GONE
         composer.visibility = if (mode == "conversation" || mode == "new") View.VISIBLE else View.GONE
         if (::menuButton.isInitialized) {
-            menuButton.visibility = if (mode == "project" || mode == "callReview") View.GONE else View.VISIBLE
+            menuButton.visibility = if (mode == "project" || mode == "callReview" || (sheetNavigation && !backNav)) View.GONE else View.VISIBLE
             menuButton.text = if (backNav) "←" else "☰"
             menuButton.contentDescription = if (backNav) "Back" else "Threads"
         }
@@ -568,6 +569,7 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
         val wantsSheet = args.optBoolean("threadSheet") && nextMode in listOf("new", "conversation", "commander", "project", "callReview")
         if (wantsSheet) openThreadSheet()
         backNav = args.optBoolean("back", false)
+        sheetNavigation = wantsSheet
         mode = args.optString("mode", "other").let { if (it == "commander") "conversation" else it }
         val call = args.optJSONObject("call")
         callActive = call?.optBoolean("active", false) ?: false
@@ -601,6 +603,9 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
             if (button is Button) button.text = meta.optString(key)
             button.contentDescription = (if (key == "model") "Difficulty: " else "Permissions: ") + meta.optString(key)
         }
+        modelButton.visibility = View.GONE
+        agentButton.text = listOf(meta.optString("agent", ""), meta.optString("model", "")).filter { it.isNotBlank() }.joinToString(" · ") + " ▾"
+        agentButton.contentDescription = "Assistant and difficulty: " + agentButton.text
     }
     @Command fun setDashboard(invoke: Invoke) = ui(invoke) {
         dashboardModel = invoke.getArgs().getJSONObject("model"); dashboard.apply(dashboardModel); applyMode()
@@ -972,15 +977,37 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     }
     @Command fun pickOption(invoke: Invoke) {
         host.runOnUiThread {
-            val args = invoke.getArgs(); val options = args.getJSONArray("options")
-            val enabled = (0 until options.length()).map { options.getJSONObject(it) }.filter { !it.optBoolean("disabled") }
+            val args = invoke.getArgs()
             var resolved = false
-            val dialog = AlertDialog.Builder(host).setTitle(args.getString("title"))
-                .setItems(enabled.map { (if (it.optString("id") == args.optString("selected")) "✓ " else "") + it.getString("label") + (it.optString("detail").takeIf { d -> d.isNotBlank() }?.let { d -> "\n$d" } ?: "") }.toTypedArray()) { _, index ->
-                    resolved = true; invoke.resolve(JSObject().apply { put("picked", true); put("id", enabled[index].getString("id")) })
-                }.create()
+            val rows = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(4), dp(16), dp(16)) }
+            val scroll = ScrollView(host).apply { addView(rows) }
+            val dialog = AlertDialog.Builder(host).setTitle(args.getString("title")).setView(scroll).setNegativeButton("Cancel", null).create()
+            fun showOptions(options: JSONArray, title: String, back: (() -> Unit)? = null) {
+                dialog.setTitle(title); rows.removeAllViews()
+                if (back != null) rows.addView(Button(host).apply { text = "← Back to assistants"; setOnClickListener { back() } })
+                var previousGroup = ""
+                for (index in 0 until options.length()) {
+                    val option = options.getJSONObject(index)
+                    val group = option.optString("group")
+                    if (group.isNotBlank() && group != previousGroup) {
+                        rows.addView(TextView(host).apply { text = group; setPadding(dp(8), dp(16), dp(8), dp(4)); textSize = 13f })
+                        previousGroup = group
+                    }
+                    val row = LinearLayout(host).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(52); setPadding(dp(8), dp(8), dp(8), dp(8)); isFocusable = true; isClickable = true; isEnabled = !option.optBoolean("disabled") }
+                    if (option.optString("color").isNotBlank()) row.addView(TextView(host).apply { text = "●"; textSize = 20f; setPadding(0, 0, dp(12), 0); try { setTextColor(android.graphics.Color.parseColor(option.getString("color"))) } catch (_: Exception) {} })
+                    row.addView(TextView(host).apply { text = option.getString("label") + (option.optString("detail").takeIf { it.isNotBlank() }?.let { "\n$it" } ?: "") + (if (option.optString("id") == args.optString("selected")) " ✓" else "") + (if (option.has("children")) " ›" else ""); textSize = 16f }, LinearLayout.LayoutParams(0, -2, 1f))
+                    row.setOnClickListener {
+                        val children = option.optJSONArray("children")
+                        if (children != null) showOptions(children, "Choose difficulty · " + option.getString("label")) { showOptions(args.getJSONArray("options"), args.getString("title")) }
+                        else { resolved = true; dialog.dismiss(); invoke.resolve(JSObject().apply { put("picked", true); put("id", option.getString("id")) }) }
+                    }
+                    rows.addView(row)
+                }
+            }
             dialog.setOnDismissListener { if (!resolved) invoke.resolve(JSObject().apply { put("picked", false) }) }
+            showOptions(args.getJSONArray("options"), args.getString("title"))
             dialog.show()
+
         }
     }
     // Only the Rust plugin handle invokes these; no WebView command grants access.

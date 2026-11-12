@@ -34,12 +34,22 @@ it("closes the list with Escape and leaves the composer draft alone", async () =
 });
 
 it("custom level shows a separate model chip that opens the custom panel", async () => {
-  render(<AgentControls native={false} provider="claude" value={{ model: "freddai-custom:", effort: "default" }} onChange={vi.fn()} />);
+  render(<AgentControls native={false} provider="claude" value={{ model: "opus", effort: "default" }} onChange={vi.fn()} />);
   const chip = screen.getByLabelText("Custom model");
   const details = chip.closest("details")!;
   await userEvent.click(chip);
   await waitFor(() => expect(details.open).toBe(true));
-  expect(screen.getByLabelText("Custom model ID")).toBeTruthy();
+  expect(screen.getByLabelText("Model")).toBeTruthy();
+  expect(screen.queryByLabelText("Custom model ID")).toBeNull();
   fireEvent.click(document.body);
   expect(details.open).toBe(false);
+});
+
+it("shows a Speed select for Opus and reports fast; hidden for Sonnet", async () => {
+  const onChange = vi.fn();
+  const { rerender } = render(<AgentControls native={false} provider="claude" inline value={{ model: "opus", effort: "default" }} onChange={onChange} />);
+  fireEvent.change(screen.getByLabelText("Speed"), { target: { value: "fast" } });
+  expect(onChange).toHaveBeenLastCalledWith({ model: "opus", effort: "default", speed: "fast" });
+  rerender(<AgentControls native={false} provider="claude" inline value={{ model: "sonnet", effort: "default" }} onChange={onChange} />);
+  expect(screen.queryByLabelText("Speed")).toBeNull();
 });

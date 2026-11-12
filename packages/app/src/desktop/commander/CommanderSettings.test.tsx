@@ -4,6 +4,7 @@ import type { Project } from "../types";
 
 const api = vi.hoisted(() => ({ getCommanderSettings: vi.fn(), saveCommanderSettings: vi.fn() }));
 vi.mock("./api", async orig => ({ ...(await orig<typeof import("./api")>()), commanderApi: api }));
+vi.mock("./SpeechSettings", () => ({ SpeechSettings: () => null }));
 import { DEFAULT_COMMANDER_SETTINGS } from "./api";
 import { CommanderSettings } from "./CommanderSettings";
 
@@ -29,6 +30,7 @@ it("saves the edited settings", async () => {
   render(<CommanderSettings projects={projects} />);
   fireEvent.click(await screen.findByRole("button", { name: /Budgeted/ }));
   fireEvent.click(screen.getByLabelText("Beta"));
+  fireEvent.click(screen.getByLabelText("Enable heartbeat"));
   fireEvent.change(screen.getByLabelText("Heartbeat interval"), { target: { value: "30" } });
   fireEvent.click(screen.getByRole("button", { name: "Save autonomy settings" }));
   await screen.findByText("Saved");

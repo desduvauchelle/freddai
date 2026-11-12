@@ -21,7 +21,7 @@ const STATE_FILE: &str = "autonomy_state.json";
 pub fn is_completion_card(id: &str) -> bool { id.starts_with("commander-completions-") }
 
 pub const WAKE_ID_PREFIX: &str = "commander-";
-pub const COMPLETION_COALESCE_MINUTES: i64 = 10;
+pub const COMPLETION_COALESCE_MINUTES: i64 = 0;
 /// Minimum gap between automatic Commander wakes of any kind (completion, due, heartbeat).
 pub const MIN_WAKE_GAP_MINUTES: i64 = 30;
 /// The host tick runs every 2s; Commander checks run at most this often.
@@ -410,22 +410,21 @@ fn tick_inner(rt: &Runtime, store: &Store, commander_id: &str) -> Result<(), Str
     let todos = store.todos()?;
     let gap_ok = wake_gap_ok(&state, now);
 
-    // Coalesced completions: one combined notice after the window and the minimum wake gap.
+    // Completed work is delivered on the next free tick, independently of heartbeat cooldown.
     if !state.pending_completions.is_empty() {
         if !completions_coalesced(&state, now) {
             log_deferred_once("completions:coalescing", json!({"event":"commander.wake_deferred","kind":"completions","reason":"coalescing","pending":state.pending_completions.len()}));
-        } else if !gap_ok {
-            log_deferred_once("completions:min_gap", json!({"event":"commander.wake_deferred","kind":"completions","reason":"min_wake_gap","minutes":MIN_WAKE_GAP_MINUTES,"pending":state.pending_completions.len()}));
+
         } else {
             if blocker(rt, &target, "completions").is_some() { return Ok(()); }
             let batch = state.pending_completions.clone();
+            let rid = format!("commander-wake-batch-{}", batch.iter().map(|c| format!("{}:{}", c.id,c.at)).collect::<Vec<_>>().join(","));
+            send(rt, store, &target.id, "completions", json!({"threads":batch.iter().map(|c| &c.id).collect::<Vec<_>>()}), completion_message(&batch), rid)?;
             with_state(store, |s| {
-                s.pending_completions.retain(|p| !batch.iter().any(|b| b.id == p.id));
+                s.pending_completions.retain(|p| !batch.iter().any(|b| b.id == p.id && b.at == p.at));
                 s.last_completion_wake = Some(stamp(now));
                 s.last_auto_wake_at = Some(stamp(now));
             })?;
-            let rid = format!("commander-wake-batch-{}", now.timestamp());
-            send(rt, store, &target.id, "completions", json!({"threads":batch.iter().map(|c| &c.id).collect::<Vec<_>>()}), completion_message(&batch), rid)?;
             return Ok(());
         }
     }
@@ -433,17 +432,12 @@ fn tick_inner(rt: &Runtime, store: &Store, commander_id: &str) -> Result<(), Str
     // Due / check-back wakes: once per to-do per timestamp; not marked fired until actually queued.
     let due = due_wakes(&todos, &state.due_fired, now);
     if !due.is_empty() {
-        if !gap_ok {
-            log_deferred_once("due:min_wake_gap", json!({"event":"commander.wake_deferred","kind":"due","reason":"min_wake_gap","minutes":MIN_WAKE_GAP_MINUTES}));
-            return Ok(());
-        }
         if blocker(rt, &target, "due").is_some() { return Ok(()); }
         let list = due.iter().map(|d| format!("- {} (todo {}): {} passed at {}", clip(&d.title, 80), d.todo_id, d.kind, d.at)).collect::<Vec<_>>().join("\n");
         let message = format!("Due notice (not a user message): these to-dos reached their due or check-back time. Review each and act, or tell the user briefly.\n{list}");
-        let rid = format!("commander-due-{}", clip(&due.iter().map(|d| d.key.as_str()).collect::<Vec<_>>().join(","), 120));
-        // Mark fired first so a failed send cannot turn into a 30-second retry loop; the failure is logged loudly.
-        with_state(store, |s| { s.due_fired.extend(due.iter().map(|d| d.key.clone())); s.last_auto_wake_at = Some(stamp(now)); })?;
+        let rid = format!("commander-due-{}", due.iter().map(|d| d.key.as_str()).collect::<Vec<_>>().join(","));
         send(rt, store, &target.id, "due", json!({"todos":due.iter().map(|d| &d.todo_id).collect::<Vec<_>>()}), message, rid)?;
+        with_state(store, |s| { s.due_fired.extend(due.iter().map(|d| d.key.clone())); s.last_auto_wake_at = Some(stamp(now)); })?;
         return Ok(());
     }
 
@@ -547,14 +541,14 @@ mod tests {
         }
         completion_push(&mut s, comp("a", t0)); // dedupe
         assert_eq!(s.pending_completions.len(), 3);
-        assert!(!completions_coalesced(&s, t0 + chrono::Duration::minutes(9)));
+        assert!(completions_coalesced(&s, t0));
         let ready = t0 + chrono::Duration::minutes(10);
         assert!(completions_coalesced(&s, ready) && wake_gap_ok(&s, ready));
         let msg = completion_message(&s.pending_completions);
         assert_eq!(msg.matches("\n- ").count(), 3, "one notice lists all three");
     }
     #[test]
-    fn second_batch_within_min_gap_is_deferred() {
+    fn heartbeat_gap_does_not_change_completion_readiness() {
         let t0 = Utc::now();
         let mut s = State { last_auto_wake_at: Some(stamp(t0)), ..State::default() };
         completion_push(&mut s, comp("d", t0 + chrono::Duration::minutes(1)));

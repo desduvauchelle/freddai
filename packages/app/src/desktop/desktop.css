@@ -645,6 +645,7 @@ html[data-freddai-appearance="light"] .state-dot.state-Interrupted { background:
 .native-workspace .chat-composer-tools .composer-mic { width: 32px; height: 32px; padding: 0; border-radius: 50%; background: transparent; color: var(--adaptive-text, #ded8eb); }
 .native-workspace .chat-composer-tools .composer-mic:hover:not(:disabled):not([data-state="recording"]) { background: #ffffff0d; }
 .native-workspace .chat-composer-tools > button { width: 32px; height: 32px; padding: 0; border-radius: 50%; color: var(--adaptive-text, #ded8eb); }
+.native-workspace .chat-composer-tools > .composer-agent-trigger { width: auto; max-width: min(240px, 100%); height: 32px; padding: 0 10px; border-radius: 9px; }
 .native-workspace .chat-composer-tools > button:hover { background: #ffffff0d; }
 .native-workspace .chat-composer-tools .composer-attach svg { width: 20px; height: 20px; }
 .native-workspace .chat-composer-tools .chat-send { margin-left: 0; background: var(--primary); color: var(--primary-foreground); }
@@ -999,7 +1000,7 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 .git-table-head > * { border-right: 1px solid var(--border); }
 .git-table-row .git-graph-cell { padding: 0; height: 28px; }
 .git-description { display: flex; align-items: center; gap: 6px; }
-.git-ref { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; max-width: 240px; overflow: hidden; border: 1px solid; border-radius: 3px; padding: 1px 5px; font-size: 10px; line-height: 16px; background: var(--muted); }
+.git-ref { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; max-width: min(240px, 100%); overflow: hidden; border: 1px solid; border-radius: 3px; padding: 1px 5px; font-size: 10px; line-height: 16px; background: var(--muted); }
 .git-table-meta, .git-table-row code { color: var(--muted-foreground); font-size: 11px; }
 .git-search-dim { opacity: .25; }
 .git-history .git-error, .git-history > .git-body > .git-empty { margin: 12px; }
@@ -1068,10 +1069,27 @@ html[data-freddai-appearance="light"] .approval-heading { color: #78500d; }
 }
 .titlebar-leading { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .titlebar-leading .dormouse-companion { -webkit-app-region: no-drag; }
-.titlebar-heading { display: flex; align-items: center; gap: 10px; flex: 1 1 0; min-width: 0; align-self: stretch; }
+.titlebar-heading { display: flex; align-items: center; gap: 10px; flex: 1 1 0; min-width: 0; align-self: center; height: 32px; padding: 0 8px; margin-left: -8px; }
 .titlebar-brand { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; font-size: 15px; font-weight: 650; letter-spacing: -.35px; color: var(--foreground); }
 .titlebar-brand > img { width: 28px; height: 28px; object-fit: contain; }
 .titlebar-brand-a { font-size: .8em; opacity: .5; }
+/* Window drag affordance: grab cursor and a faint highlight on the draggable strip. */
+.native-workspace .native-titlebar [data-tauri-drag-region],
+.thread-window .pane-title[data-tauri-drag-region] { cursor: grab; }
+.native-workspace .native-titlebar [data-tauri-drag-region]:active,
+.thread-window .pane-title[data-tauri-drag-region]:active { cursor: grabbing; }
+.native-workspace .native-titlebar .titlebar-actions,
+.native-workspace .native-titlebar .titlebar-leading .dormouse-companion,
+.native-workspace .native-titlebar button,
+.native-workspace .native-titlebar a { cursor: default; }
+.native-workspace .native-titlebar .titlebar-heading,
+.thread-window .pane-title[data-tauri-drag-region] { transition: background 120ms; }
+.native-workspace .native-titlebar .titlebar-heading:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); border-radius: 8px; }
+.thread-window .pane-title[data-tauri-drag-region]:hover { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .native-workspace .native-titlebar .titlebar-heading,
+  .thread-window .pane-title[data-tauri-drag-region] { transition: none; }
+}
 .titlebar-title { font-size: 13px; font-weight: 600; color: var(--foreground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .titlebar-divider { width: 1px; height: 14px; background: var(--bar-sep); flex-shrink: 0; }
 .titlebar-project, .titlebar-secondary { font-size: 12px; font-weight: 400; color: var(--muted-foreground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 100 auto; }

@@ -21,3 +21,10 @@ export const POLL_FAILURES_BEFORE_ERROR = 3;
 export function shouldSurfacePollError(consecutiveFailures: number): boolean {
   return consecutiveFailures >= POLL_FAILURES_BEFORE_ERROR;
 }
+
+/** An older host rejects options the new frontend offers; say so instead of showing the bare host error. */
+export function launchErrorMessage(error: string, db: { host_update_pending?: boolean } | null | undefined): string {
+  if (!db?.host_update_pending) return error;
+  if (!error.startsWith("Unsupported ") && error !== "Invalid model configuration") return error;
+  return `${error}. The background host has not restarted since the last update, so this option is not available yet. Use "Restart now" in the update banner.`;
+}

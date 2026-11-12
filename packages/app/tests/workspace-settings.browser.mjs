@@ -34,8 +34,13 @@ try {
       const bounds = await personal.locator('.workspace-header').evaluate(el => Array.from(el.children).map(child => child.getBoundingClientRect().y));
       assert.ok(Math.max(...bounds) - Math.min(...bounds) < 15, 'workspace controls share one row');
     }
-    await personal.getByRole('button', { name: 'Add project' }).click();
-    await personal.getByRole('button', { name: 'Beta', exact: true }).click();
+    await personal.getByRole('button', { name: 'Add projects' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Add projects to Personal' });
+    await sheet.getByRole('textbox', { name: 'Search projects' }).fill('Beta');
+    await sheet.getByRole('button', { name: 'Beta', exact: true }).click();
+    await sheet.getByRole('button', { name: 'Beta, added', exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/freddai-project-picker-${width}.png` });
+    await sheet.getByRole('button', { name: 'Done', exact: true }).click();
     await personal.getByRole('button', { name: 'Move Beta from Personal', exact: true }).waitFor();
     // Real touchscreen input exercises pointer capture and the touch-action rules.
     const source = page.getByRole('button', { name: 'Reorder workspace Personal' });

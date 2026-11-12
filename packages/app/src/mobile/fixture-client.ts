@@ -194,7 +194,7 @@ export function createFixtureClient(options: { many?: boolean; stallReplies?: bo
     transcribe: async () => ({ text: 'This is a dictated fixture sentence.', durationMs: 2000, model: 'fixture' }),
     start: async ({ project, prompt, assistant, options }) => {
       const id = `fx-new-${++seq}`;
-      state.threads.unshift({ id, project, title: prompt.slice(0, 60), status: 'running', updated: Date.now(), last_user_message_at: Date.now(), messages: [msg('user', prompt), msg('assistant', 'On it. (Fixture mode: no agent is running.)')], canReply: true, queued: 0, error: null, provider: assistants.find(a => a.id === assistant)?.provider ?? projects.find(p => p.id === project)?.provider, options: options && { model: options.model, effort: options.effort, permission_mode: options.permission_mode } });
+      state.threads.unshift({ id, project, title: prompt.slice(0, 60), status: 'running', updated: Date.now(), last_user_message_at: Date.now(), messages: [msg('user', prompt), msg('assistant', 'On it. (Fixture mode: no agent is running.)')], canReply: true, queued: 0, error: null, provider: assistants.find(a => a.id === assistant)?.provider ?? projects.find(p => p.id === project)?.provider, options: options && { model: options.model, effort: options.effort, speed: options.speed, permission_mode: options.permission_mode } });
       return id;
     },
     reply: async ({ thread, prompt }) => options.stallReplies ? new Promise<never>(() => {}) /* screenshot aid: keeps the message in the on-device queue strip */ : touch(thread, th => { th.messages.push(msg('user', prompt), msg('assistant', 'Got it. (Fixture mode: no agent is running.)')); }),

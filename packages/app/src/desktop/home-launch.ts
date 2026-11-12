@@ -4,7 +4,7 @@ import { agentDisplayName, resolveAccount, type Database, type PermissionMode } 
 
 /** What a Home tile will launch. One resolution shared by the tile's agent chip and `createHomeThread`, so they cannot disagree. */
 export type HomeLaunchPlan =
-  | { ok: true; project: string; account: string; provider: string; accountName: string; permission_mode: PermissionMode; worktree: boolean; model: string | null; effort: string | null; label: string }
+  | { ok: true; project: string; account: string; provider: string; accountName: string; permission_mode: PermissionMode; worktree: boolean; model: string | null; effort: string | null; speed: string | null; label: string }
   | { ok: false; reason: string };
 
 export function resolveHomeLaunch(db: Database, projectId: string, permissionMode: PermissionMode, selections: Record<string, AgentSelection> = {}, homeAccount = ""): HomeLaunchPlan {
@@ -20,7 +20,7 @@ export function resolveHomeLaunch(db: Database, projectId: string, permissionMod
   const effort = selection?.effort && selection.effort !== "default" && ["codex", "claude"].includes(account.provider) ? selection.effort : null;
   return {
     ok: true, project: project.id, account: account.id, provider: account.provider, accountName: account.name,
-    permission_mode: effectivePermissionMode(account.provider, permissionMode), worktree: db.preferences.use_worktree ?? false, model, effort,
-    label: [agentDisplayName(account), model ?? "default model", effort ?? "default effort"].join(" · "),
+    permission_mode: effectivePermissionMode(account.provider, permissionMode), worktree: db.preferences.use_worktree ?? false, model, effort, speed: selection?.speed === "fast" ? "fast" : null,
+    label: [agentDisplayName(account), model ?? "default model", effort ?? "default effort", ...(selection?.speed === "fast" ? ["Fast mode"] : [])].join(" · "),
   };
 }

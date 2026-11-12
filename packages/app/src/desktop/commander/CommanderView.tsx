@@ -1,7 +1,8 @@
+import { SubThreads } from "./SubThreads";
 import { isCommanderThread } from "../../commanderThreads";
 import type { Session } from "../types";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, CircleAlert, Phone, Send, Wrench, X } from "lucide-react";
+import { ArrowLeft, CircleAlert, Phone, Send, Settings, Wrench, X } from "lucide-react";
 import { Dormouse } from "../Dormouse";
 import { MASCOT_PRIORITY } from "../mascot-state";
 import type { Project, Schedule } from "../types";
@@ -47,10 +48,11 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
   const proj = (id: string | null) => projects.find(p => p.id === id);
   const cards = away && !dismissed ? awayCards(todos, proposals, projects, away.since) : [];
 
-  const tray = trayCards.length > 0 ? <div className="commander-approvals" aria-label="Waiting on you">
+  const delegated = threads.filter(t => t.origin?.kind === "commander" && t.origin.thread === threadId);
+  const tray = <><SubThreads threads={delegated} projects={projects} onOpenThread={onOpenThread} hideEmpty />{trayCards.length > 0 ? <div className="commander-approvals" aria-label="Waiting on you">
     {trayCards.map(p => <ApprovalCard key={p.id} proposal={decided[p.id] ?? p} projectName={proj(p.project)?.name} projectColor={proj(p.project)?.color}
       onDecided={r => { setDecided(d => ({ ...d, [r.id]: r })); void data.refresh(); }} onOpenThread={onOpenThread} />)}
-  </div> : null;
+  </div> : null}</>;
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -79,7 +81,8 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
         </span>
       </div>
       <div className="commander-header-actions">
-        <button type="button" className="commander-header-btn" disabled title="Coming soon" aria-label="Call (coming soon)"><Phone size={15} aria-hidden="true" /><span>Call</span></button>
+        {threadId && <button type="button" className="commander-header-btn" onClick={() => window.dispatchEvent(new Event("freddai:commander-call"))}><Phone size={15} aria-hidden="true" /><span>Call</span></button>}
+        <button type="button" className="commander-header-btn" onClick={() => setTools({ open: true, tab: "settings" })}><Settings size={15} aria-hidden="true" /><span>Settings</span></button>
         <button type="button" className="commander-header-btn" aria-expanded={tools.open} onClick={() => setTools(t => ({ ...t, open: !t.open }))}><Wrench size={15} aria-hidden="true" /><span>Tools</span></button>
       </div>
     </header>

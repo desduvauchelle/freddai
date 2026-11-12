@@ -9,7 +9,7 @@ export type BugWalkPhase = "selecting" | "recording" | "stopped" | "transcribing
 export type BugWalkRegion = { x: number; y: number; width: number; height: number; scale: number };
 export type BugWalkOrigin = { project?: string; thread?: string };
 export type BugWalkSplit = "single" | "per_item";
-export type BugWalkSendOpts = { project: string; account: string; model?: string | null; effort?: string | null; permission_mode: PermissionMode; reply_to_thread?: string | null; /** "per_item" starts one thread per bug; ignored by Rust when replying in a thread. */ split?: BugWalkSplit };
+export type BugWalkSendOpts = { project: string; account: string; model?: string | null; effort?: string | null; speed?: string | null; permission_mode: PermissionMode; reply_to_thread?: string | null; /** "per_item" starts one thread per bug; ignored by Rust when replying in a thread. */ split?: BugWalkSplit };
 export type BugWalkStateEvent = {
   id: string; phase: BugWalkPhase; region?: BugWalkRegion; elapsed_s?: number; level?: number; session_id?: string; session_ids?: string[]; /** `launching` progress when starting one thread per bug. */ launched?: number; total?: number; error?: string; transcript?: string; reason?: string;
 };

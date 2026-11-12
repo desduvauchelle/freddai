@@ -240,9 +240,10 @@ async fn transcribe_file_upload(h:&Companion,file:&std::path::Path)->Result<Valu
 }
 /// Opens a Mac `localhost:<port>` page through the preview tunnel (docs/preview-tunnel.md). Errors are named `preview_*` strings.
 #[tauri::command]
-async fn preview_open(app:tauri::AppHandle,h:State<'_,Companion>,thread_id:String,url:String)->Result<Value,String> {
+async fn preview_open(app:tauri::AppHandle,h:State<'_,Companion>,thread_id:String,url:String,start:Option<bool>)->Result<Value,String> {
     let auth=||{let c=credential(&h)?;Ok(crate::preview_device::TunnelAuth{relay:c.relay.clone(),token:c.device.mailbox.clone(),key:c.device.key.clone()})};
-    let rpc=|input:Value|call(&h,"/v1/composer",json!({"operation":"preview_open","input":input}));
+    let start=start.unwrap_or(false);
+    let rpc=|mut input:Value|{input["start"]=json!(start);call(&h,"/v1/composer",json!({"operation":"preview_open","input":input}))};
     crate::preview_device::open(app,thread_id,url,auth,rpc).await
 }
 #[tauri::command]

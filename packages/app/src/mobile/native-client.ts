@@ -3,7 +3,7 @@ import type { Attachment } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
 import type { CommanderClient, CompanionClient, CompanionSnapshot } from './companion';
 /** Presents a Mac localhost URL as a native preview; rejects with the native error string (e.g. preview_not_granted). */
-export const previewOpen = (threadId: string, url: string) => invoke<void>('preview_open', { threadId, url });
+export const previewOpen = (threadId: string, url: string, start?: boolean) => invoke<void>('preview_open', { threadId, url, start: !!start });
 const composer = <T,>(operation: string, input: unknown) => invoke<T>('companion_composer', { operation, input });
 // The Mac reports its hardware MAC/broadcast address so the phone can wake it later. Refreshed at most hourly.
 let wakeRefreshedAt = 0;
@@ -13,6 +13,8 @@ function refreshWakeInfo() {
   invoke('companion_wake_refresh').catch(e => { wakeRefreshedAt = 0; console.warn('Wake details unavailable:', e); });
 }
 export const nativeCommanderClient: CommanderClient = {
+  getCommanderSettings: () => composer('commander_settings_get', {}),
+  saveCommanderSettings: settings => composer('commander_settings_save', { settings }),
   state: () => composer('commander_state', {}),
   proposals: () => composer('commander_proposals', {}),
   respond: input => composer('commander_proposal_respond', input.prompt === undefined ? { id: input.id, approve: input.approve } : input),
@@ -24,6 +26,8 @@ export const nativeCommanderClient: CommanderClient = {
 };
 export const nativeCompanionClient: CompanionClient = {
   commander: nativeCommanderClient,
+  projectEditor: { available: () => composer<boolean>("vscode_available", {}), open: project => composer("open_project_vscode", { project }) },
+  speechConnection: (operation, input) => composer("voice_connection", { operation, input }),
   projectFolders: (operation, input) => composer(operation, input),
   addProject: path => composer("add_project", { path }),
   updateProjectOrganization: (project, name, color) => composer("update_project_organization", { project, name, color }),

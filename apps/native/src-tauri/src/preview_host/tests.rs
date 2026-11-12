@@ -254,16 +254,16 @@ fn refused_connections_reset_with_named_error() {
 fn open_enforces_grants_reachability_and_relay_then_serves() {
     let auth = |relay| RelayAuth { relay, token: "tok", key: "00" };
     // Rules fail before anything else.
-    assert_eq!(open(&auth(None), 80, "/", Some("http://localhost:80")).unwrap_err(), "preview_not_granted");
-    assert_eq!(open(&auth(None), COMPANION_PORT as u64, "/", Some("http://localhost:49744")).unwrap_err(), "preview_not_granted");
-    assert_eq!(open(&auth(None), 70_000, "/", None).unwrap_err(), "preview_not_granted");
+    assert!(open(&auth(None), 80, "/", Some("http://localhost:80")).unwrap_err().starts_with("preview_not_granted"));
+    assert!(open(&auth(None), COMPANION_PORT as u64, "/", Some("http://localhost:49744")).unwrap_err().starts_with("preview_not_granted"));
+    assert!(open(&auth(None), 70_000, "/", None).unwrap_err().starts_with("preview_not_granted"));
     let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    assert_eq!(open(&auth(None), dead as u64, "/", Some(&format!("see http://localhost:{dead}"))).unwrap_err(), "preview_port_unreachable");
+    assert!(open(&auth(None), dead as u64, "/", Some(&format!("see http://localhost:{dead}"))).unwrap_err().starts_with("preview_port_unreachable"));
     let live = runtime().block_on(http_server());
-    assert_eq!(open(&auth(None), live as u64, "/", None).unwrap_err(), "preview_not_granted", "no share and no thread URL");
-    assert_eq!(open(&auth(None), live as u64, "/", Some(&format!("run http://127.0.0.1:{live}/x"))).unwrap_err(), "preview_tunnel_unavailable", "no relay configured");
-    assert_eq!(open(&auth(Some("http://127.0.0.1:1")), live as u64, "/", Some(&format!("http://localhost:{live}"))).unwrap_err(), "preview_tunnel_unavailable", "dial refused");
-    assert_eq!(open(&auth(None), live as u64, "bad", Some(&format!("http://localhost:{live}"))).unwrap_err(), "preview_invalid_request");
+    assert!(open(&auth(None), live as u64, "/", None).unwrap_err().starts_with("preview_not_granted"), "no share and no thread URL");
+    assert!(open(&auth(None), live as u64, "/", Some(&format!("run http://127.0.0.1:{live}/x"))).unwrap_err().starts_with("preview_tunnel_unavailable"), "no relay configured");
+    assert!(open(&auth(Some("http://127.0.0.1:1")), live as u64, "/", Some(&format!("http://localhost:{live}"))).unwrap_err().starts_with("preview_tunnel_unavailable"), "dial refused");
+    assert!(open(&auth(None), live as u64, "bad", Some(&format!("http://localhost:{live}"))).unwrap_err().starts_with("preview_invalid_request"));
     // Success path through a fake relay with an explicit share (the real token/key shapes).
     grant_port(live, "test").unwrap();
     let relay = runtime().block_on(fake_relay());
@@ -282,4 +282,24 @@ fn open_enforces_grants_reachability_and_relay_then_serves() {
         assert_eq!(head.status, 200);
         assert!(String::from_utf8(body).unwrap().contains("GET /p"));
     });
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::super::parse_localhost_url as parse_url;
+    #[test]
+    fn accepts_loopback_urls() {
+        assert_eq!(parse_url("http://localhost:3000"), Ok((3000, "/".into())));
+        assert_eq!(parse_url("http://127.0.0.1:5173/app/x?a=1&b=2"), Ok((5173, "/app/x?a=1&b=2".into())));
+        assert_eq!(parse_url("https://localhost:8443/p#frag"), Ok((8443, "/p".into())));
+        assert_eq!(parse_url("  HTTP://LOCALHOST:3000/A "), Ok((3000, "/A".into())));
+        assert_eq!(parse_url("http://localhost:3000?x=1"), Ok((3000, "/?x=1".into())));
+    }
+    #[test]
+    fn rejects_everything_else() {
+        for bad in ["", "localhost:3000", "ftp://localhost:3000", "http://localhost", "http://localhost:0", "http://example.com:3000", "http://192.168.1.2:3000",
+            "http://user@localhost:3000", "http://localhost:3000@evil.com", "http://mylocalhost:3000", "http://localhost:99999", "http://[::1]:3000", "http://localhost:3000/a b", "javascript:alert(1)", "http://0.0.0.0:3000"] {
+            assert_eq!(parse_url(bad), Err("preview_invalid_url"), "{bad:?}");
+        }
+    }
 }

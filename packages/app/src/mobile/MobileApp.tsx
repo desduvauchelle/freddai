@@ -1,3 +1,7 @@
+import { SubThreads } from "../desktop/commander/SubThreads";
+import { selectionLevel } from '../desktop/model-levels';
+import { chooseAssistantSettings } from './native-home';
+import { ComposerAgentPicker } from "../desktop/ComposerAgentPicker";
 import { ModelConfigurationSettings } from "../desktop/ModelConfigurationSettings";
 import { CompanionCommandCard } from './CompanionCommandCard';
 import { ProjectBrowser } from './ProjectBrowser';
@@ -53,7 +57,6 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@freddai/ui/components/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@freddai/ui/components/sheet';
 import { ConversationUsage } from '../desktop/ConversationUsage';
-import { AgentControls } from '../desktop/AgentControls';
 import { PermissionSelect } from '../desktop/PermissionSelect';
 import { defaultSelection, type AgentSelection, type Model } from '../desktop/agent-selection';
 import { providerName } from '../desktop/types';
@@ -65,7 +68,7 @@ import { useNativeShell, setMode as setNativeModeRaw, type NativeMode, setCompos
 import { migrateLocalRead, readFromThreads } from '../read-sync';
 import { buildThreadsModel, companionThreadFaded, bumpOlderPage, createChangeSender, createThreadActionHandler, nativeRunState, createThreadEventHandlers } from './native-threads';
 import type { PickerOption } from './native-shell';
-import { assistantOptions, assistantLabel, attachmentLimitError, effortOptions, chooseModel, modelPillLabel, pickNewProject, PERMISSION_OPTIONS, permissionLabel, projectOptions, saveLastProject, savedLastProject, saveLastAssistant, lastAssistantFor, savedControls, saveControls, supportsPermissions } from './native-home';
+import { assistantOptions, assistantLabel, attachmentLimitError, chooseSelection, modelPillLabel, pickNewProject, PERMISSION_OPTIONS, permissionLabel, projectOptions, saveLastProject, savedLastProject, saveLastAssistant, lastAssistantFor, savedControls, saveControls, supportsPermissions } from './native-home';
 function savedDrafts(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem('freddai.companion.drafts') || '{}'); } catch { return {}; }
 }
@@ -301,7 +304,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const conversationAssistant = conversationProject?.assistants?.find(a => a.id === conversationAgent);
   const provider = screen === 'new' ? selectedAssistant?.provider || newProjectData?.provider : conversationAssistant?.provider || task?.provider;
   const controlKey = screen === 'new' ? `new:${newProject}:${assistant}:${provider || ''}` : selected;
-  const selection = controls[controlKey]?.selection || (screen === 'new' ? defaultSelection : { model: task?.options?.model || '', effort: task?.options?.effort || 'default' });
+  const selection = controls[controlKey]?.selection || (screen === 'new' ? defaultSelection : { model: task?.options?.model || '', effort: task?.options?.effort || 'default', speed: task?.options?.speed === 'fast' ? 'fast' : undefined });
   const permission = controls[controlKey]?.permission || (screen === 'new' ? 'bypass' : task?.options?.permission_mode || 'ask');
   const files = attachments[key] || [];
   const loadModels = useCallback(() => client.models!(screen === 'new' ? { project: newProject, assistant: assistant || undefined } : { thread: selected, assistant: conversationAgent || undefined }), [client, screen, newProject, assistant, selected, conversationAgent]);
@@ -443,7 +446,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     const requestId = requestIds.current[sentKey] ||= crypto.randomUUID();
     // Native files show in the pending bubble right away; their real ids come from the upload below.
     const sentFiles: Attachment[] = fromNative ? nativeFiles.map(file => ({ id: file.path, name: file.name, bytes: file.bytes, mime: file.mime, sha256: '' })) : files;
-    const baseOptions = { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true };
+    const baseOptions = { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, speed: selection.speed === 'fast' ? 'fast' : null, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true };
     const matching = task?.messages.filter(m => m.role === 'user' && m.text === prompt).length || 0;
     const ordinal = isNew ? 1 : Math.max(matching, ...outgoing.filter(m => m.thread === selected && m.prompt === prompt).map(m => m.ordinal)) + 1;
     const message: Outgoing = { id: requestId, thread: isNew ? '' : selected, project: isNew ? newProject : task!.project, prompt, ordinal, startsTurn: classifySend(isNew ? '' : selected, requestId, { isNew }), acknowledged: false, attachments: sentFiles, nativeFiles, assistant: assistant || undefined, options: baseOptions };
@@ -617,34 +620,29 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     try { return await pickOption({ title, options, selected }); }
     catch (e) { setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`); return null; }
   }
-  const [customModelPicker, setCustomModelPicker] = useState<{ value: string; resolve: (value: string | null) => void } | null>(null);
-  const editCustomModel = (current: string) => new Promise<string | null>(resolve => setCustomModelPicker({ value: current, resolve }));
   async function pickProject() {
     const id = await choose('Project', projectOptions(scopedData.projects, data.threadList?.projectNameUppercase), newProject);
     if (id && id !== newProject) { setNewProject(id); delete requestIds.current.new; }
   }
-  async function pickAssistant() {
-    if (screen === 'conversation') {
-      const next = await choose('Agent', assistantOptions(conversationProject), conversationAgent);
-      if (next) setControls(old => ({ ...old, [controlKey]: { permission, selection: { agent: next, model: 'freddai-level:normal', effort: 'default' } } }));
-      return;
-    }
-    const options = assistantOptions(newProjectData);
-    if (options.length < 2) return;
-    const id = await choose('Coding agent', options, assistant);
-    if (id) { rememberAssistant(newProject, id); delete requestIds.current.new; }
+  async function pickAssistant() { await pickComposerSettings(); }
+  async function pickComposerSettings() {
+    const project = screen === 'new' ? newProjectData : conversationProject;
+    const current = screen === 'new' ? assistant : conversationAgent;
+    const picked = await chooseAssistantSettings(choose, project?.assistants || [], current, false, data.modelConfiguration);
+    if (!picked) return;
+    const nextProvider = project?.assistants?.find(a => a.id === picked.agent)?.provider || provider;
+    const catalog = picked.model === '__custom' && client.models ? await client.models(screen === 'new' ? { project: newProject, assistant: picked.agent } : { thread: selected, assistant: picked.agent }) : [];
+    const result = picked.model === '__custom' ? await chooseSelection(choose, nextProvider, catalog, selection, data.modelConfiguration, true) : { model: picked.model, effort: 'default' };
+    if (!result) return;
+    const { model, effort, speed } = result;
+    const key = screen === 'new' ? `new:${newProject}:${picked.agent}:${nextProvider || ''}` : controlKey;
+    if (screen === 'new') { rememberAssistant(newProject, picked.agent); delete requestIds.current.new; }
+    setControls(old => ({ ...old, [key]: { permission, selection: { agent: picked.agent, model, effort, speed } } }));
   }
   async function pickModel() {
-    const model = await chooseModel(choose, provider, modelList, selection.model, editCustomModel);
-    if (model === null) return;
-    const efforts = effortOptions(provider, model, modelList);
-    let effort = 'default';
-    if (efforts.length > 1) {
-      const chosen = await choose('Reasoning effort', efforts, model === selection.model ? selection.effort : 'default');
-      if (chosen === null) return;
-      effort = chosen;
-    }
-    setControls(old => ({ ...old, [controlKey]: { selection: { ...selection, model, effort }, permission } }));
+    const result = await chooseSelection(choose, provider, modelList, selection, data.modelConfiguration);
+    if (!result) return;
+    setControls(old => ({ ...old, [controlKey]: { selection: { ...selection, ...result }, permission } }));
   }
   async function pickPermission() {
     const mode = await choose('Permissions', PERMISSION_OPTIONS, permission);
@@ -656,7 +654,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     {!loaded ? <ConnectionLoading down={connection.state === 'down'} /> : <MascotHero line="What should we work on today?" size={112}/> }
     {loaded && <div className="companion-pills" role="group" aria-label="New thread options">
       <Pill icon={<FolderGit2 size={14}/>} label="Project" value={projectName(newProjectData?.name) || (loaded ? 'Choose a project' : connection.state === 'down' ? 'Waiting for your Mac' : 'Loading…')} disabled={pickerBusy || !data.projects.length} onClick={() => void pickProject()}/>
-      {(provider || newProjectData?.assistants) && <Pill icon={<Bot size={14}/>} label="Coding agent" value={selectedAssistant ? assistantLabel(selectedAssistant) : provider ? providerName(provider) : 'Choose a coding agent'} disabled={pickerBusy || (newProjectData?.assistants?.length ?? 0) < 2} onClick={() => void pickAssistant()}/>}
+      {(provider || newProjectData?.assistants) && <Pill icon={<Bot size={14}/>} label="Coding agent" value={selectedAssistant ? assistantLabel(selectedAssistant) : provider ? providerName(provider) : 'Choose a coding agent'} disabled={pickerBusy || !newProjectData?.assistants?.length} onClick={() => void pickAssistant()}/>}
     </div>}
     {loaded && !newProjectData && <p className="new-thread-project-required" role="status">Choose a project above to send your message.</p>}
     {loaded && !data.projects.some(p => p.canStart) && <p className="companion-home-note">Projects must be ready to run on your Mac.</p>}
@@ -667,12 +665,12 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const projectSheetName = projectName(data.projects.find(p => p.id === projectSheet?.project)?.name) || 'Project';
   useEffect(() => {
     if (!nativeShell) return;
-    void (dashboardReviewing ? setNativeMode('callReview', { title: 'Review command', threadSheet: true }) : projectBrowserOpen || workspacesOpen || !!customModelPicker || screen === 'schedules' || officeExpanded && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
+    void (dashboardReviewing ? setNativeMode('callReview', { title: 'Review command', threadSheet: true }) : projectBrowserOpen || workspacesOpen || screen === 'schedules' || officeExpanded && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
       ? setNativeMode(isCommander ? 'commander' : 'conversation', { title: isCommander ? commanderProject!.name : nativeTitle, placeholder: busyThread ? 'Draft your next message…' : 'Message', threadSheet, ...(projectSheet?.thread ? { back: true } : {}) })
       : screen === 'project' ? setNativeMode('project', { title: projectSheetName, threadSheet: true })
       : screen === 'new' ? setNativeMode('new', { title: 'New thread', placeholder: 'What should we work on?', threadSheet })
       : screen === 'dashboard' ? setNativeMode('dashboard', { title: 'Dashboard' }) : setNativeMode('other')).catch(e => setError(`Native shell: ${e instanceof Error ? e.message : String(e)}`));
-  }, [nativeShell, screen, nativeTitle, busyThread, dashboardReviewing, dashboardCall, workspacesOpen, customModelPicker, projectBrowserOpen, officeExpanded, isCommander, threadSheet, projectSheet?.thread, projectSheetName]);
+  }, [nativeShell, screen, nativeTitle, busyThread, dashboardReviewing, dashboardCall, workspacesOpen, projectBrowserOpen, officeExpanded, isCommander, threadSheet, projectSheet?.thread, projectSheetName]);
   // Launch: native companions open on Dashboard with the drawer closed. New thread stays an explicit action.
   const launched = useRef(false);
   useEffect(() => {
@@ -723,7 +721,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     const targetThread = screen === 'conversation' ? selected : '';
     const targetProject = screen === 'new' ? newProject : task?.project || newProject;
     const targetKey = key;
-    const options = { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort,
+    const options = { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, speed: selection.speed === 'fast' ? 'fast' : null,
       permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true };
     const group = `${revision}:${targetProject}:${assistant}`;
     let newDestination = screen === 'new' ? dictationDestinations.current.get(group) : undefined;
@@ -810,32 +808,32 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     if (event.action === 'organization') { setWorkspacesOpen(true); return; }
     if (event.action === 'schedules') { openSchedules(); return; }
     if (event.action === 'commander') { openCommander(); return; }
-    if (event.action === 'agent' && connected) {
+    let pickedDashboard: { agent: string; model: string } | null = null;
+    if ((event.action === 'agent' || event.action === 'dashboard-model' || event.action === 'dashboard-effort') && connected) {
       const assistants = [...new Map(data.projects.flatMap(p => p.assistants ?? []).map(a => [a.id, a])).values()];
-      const choice = await choose('Coding agent', [{ id: '', label: 'Project defaults' }, ...assistants.map(a => ({ id: a.id, label: assistantLabel(a) }))], dashboardAssistant);
-      if (choice !== null) setDashboardAssistant(choice);
-      return;
+      pickedDashboard = await chooseAssistantSettings(choose, assistants, dashboardAssistant, true, data.modelConfiguration);
+      if (!pickedDashboard) return;
+      setDashboardAssistant(pickedDashboard.agent);
     }
-    if ((event.action === 'dashboard-model' || event.action === 'dashboard-effort') && connected) {
+    if (pickedDashboard && connected) {
+      const dashboardAssistant = pickedDashboard.agent;
       const target = data.projects.find(p => p.kind !== 'commander' && (!dashboardAssistant || p.assistants?.some(a => a.id === dashboardAssistant)));
       if (!target) return;
       const chosen = dashboardAssistantFor(target, dashboardAssistant);
       const provider = chosen?.provider || target.provider;
       if (!provider) return;
       const current = controls[dashboardControlKey(target, dashboardAssistant)]?.selection ?? defaultSelection;
-      const catalog = provider === 'codex' && client.models ? await client.models({ project: target.id, assistant: chosen?.id }) : [];
-      const model = (event.action === 'dashboard-model' || event.action === 'dashboard-effort') ? await chooseModel(choose, provider, catalog, current.model, editCustomModel) : current.model;
-      if (model === null) return;
-      const options = effortOptions(provider, model, catalog);
-      const effort = event.action === 'dashboard-effort' && options.length > 1 ? await choose('Difficulty', options, current.effort) : (event.action === 'dashboard-model' || event.action === 'dashboard-effort') ? 'default' : current.effort;
-      if (effort === null) return;
+      const catalog = pickedDashboard.model === '__custom' && provider === 'codex' && client.models ? await client.models({ project: target.id, assistant: chosen?.id }) : [];
+      const result = pickedDashboard.model === '__custom' ? await chooseSelection(choose, provider, catalog, current, data.modelConfiguration, true) : { model: pickedDashboard.model, effort: 'default' };
+      if (!result) return;
+      const { model, effort, speed } = result;
       setControls(old => {
         const next = { ...old };
         for (const project of data.projects) {
           const assistant = dashboardAssistantFor(project, dashboardAssistant);
           if ((assistant?.provider || project.provider) !== provider) continue;
           const key = dashboardControlKey(project, dashboardAssistant);
-          next[key] = { permission: old[key]?.permission ?? 'bypass', selection: { model, effort } };
+          next[key] = { permission: old[key]?.permission ?? 'bypass', selection: { model, effort, speed } };
         }
         return next;
       });
@@ -864,11 +862,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       const key = dashboardControlKey(target, chosen?.id || '');
       const current = controls[key]?.selection ?? defaultSelection;
       const catalog = provider === 'codex' && client.models ? await client.models({ project: target.id, assistant: chosen?.id }) : [];
-      const model = await chooseModel(choose, provider, catalog, current.model, editCustomModel);
-      if (model === null) return;
-      const options = effortOptions(provider, model, catalog);
-      const effort = options.length > 1 ? await choose('Reasoning effort', options, model === current.model ? current.effort : 'default') : 'default';
-      if (effort !== null) setControls(old => ({ ...old, [key]: { permission: old[key]?.permission ?? 'bypass', selection: { model, effort } } }));
+      const result = await chooseSelection(choose, provider, catalog, current, data.modelConfiguration);
+      if (result) setControls(old => ({ ...old, [key]: { permission: old[key]?.permission ?? 'bypass', selection: result } }));
       return;
     }
     if (event.action !== 'voice' || !event.path) return;
@@ -887,7 +882,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       const saved = controls[dashboardControlKey(target, chosen?.id || '')];
       const message: Outgoing = { id, thread: '', project: target.id, prompt: text, ordinal: 1, startsTurn: true, acknowledged: false, attachments: [],
         assistant: commander ? undefined : chosen?.id,
-        options: commander ? undefined : { model: saved?.selection.model.trim() || null, effort: !saved || saved.selection.effort === 'default' ? null : saved.selection.effort,
+        options: commander ? undefined : { model: saved?.selection.model.trim() || null, effort: !saved || saved.selection.effort === 'default' ? null : saved.selection.effort, speed: saved?.selection.speed === 'fast' ? 'fast' : null,
           permission_mode: provider === 'codex' || provider === 'claude' ? saved?.permission ?? 'bypass' : undefined, update_agent_controls: true } };
       enqueueDashboard(message, name);
       return;
@@ -935,8 +930,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       if (p.action === 'hangup') { window.dispatchEvent(new Event(END_CALL_EVENT)); return; }
       if (p.action === 'mute') { window.dispatchEvent(new Event(TOGGLE_MUTE_EVENT)); return; }
       if (p.action === 'call') { window.dispatchEvent(new Event(screen === 'dashboard' || dashboardCallActive ? 'freddai:start-dashboard-call' : 'freddai:start-call')); return; }
-      if (p.action === 'agent') { if (!pickerBusy) void pickAssistant(); return; }
-      if (p.action === 'model') { if (!pickerBusy && provider) void pickModel(); return; }
+      if (p.action === 'agent') { if (!pickerBusy) void pickComposerSettings(); return; }
+      if (p.action === 'model') { if (!pickerBusy && provider) void pickComposerSettings(); return; }
       if (p.action === 'permissions') { if (!pickerBusy && supportsPermissions(provider)) void pickPermission(); return; }
       if (p.action === 'pin' || p.action === 'unpin') { void threadAction(p.action); return; }
       createThreadActionHandler({ stop: () => void threadAction('stop'), archive: () => void threadAction('archive'), delete: () => void threadAction('delete'), review: reviewDecision })(p);
@@ -1207,7 +1202,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       onTouchEnd={event => { const start = backSwipe.current; backSwipe.current = null; if (start && event.changedTouches[0].clientY - start.y > 60) { event.stopPropagation(); closeThreadSheet(); } }}><span /></button>}
     {(!desktop || detail || screen === 'project') && screen !== 'schedules' && !officeExpanded && !nativeBar && !floatingHeader && <header className={`companion-header${screen === 'conversation' ? ' companion-thread-header' : ''}`}>
       {screen === 'conversation' ? <>
-        <Button variant="ghost" size="icon" aria-label={desktop ? "Toggle thread navigator" : "Back to threads"} title="Thread menu" onClick={() => desktop ? setNavigatorOpen(open => !open) : projectSheet ? backToProjectList() : setScreen('threads')}><Menu /></Button>
+        {threadSheet ? (projectSheet?.thread ? <Button variant="ghost" size="icon" aria-label="Back to project" onClick={backToProjectList}><ArrowLeft /></Button> : null) : <Button variant="ghost" size="icon" aria-label={desktop ? "Toggle thread navigator" : "Back to threads"} title="Thread menu" onClick={() => desktop ? setNavigatorOpen(open => !open) : projectSheet ? backToProjectList() : setScreen('threads')}><Menu /></Button>}
         <div className="companion-thread-title"><h1 title={task?.title}>{task?.title || 'Loading conversation…'}</h1><small>{[({ running: 'Running', waiting: 'Needs you', failed: 'Failed' } as Record<string, string>)[nativeRunState(task)], nativeProjectName].filter(Boolean).join(' · ')}</small></div>
         <div className="companion-thread-actions"><span id="companion-call-action" />
           {connectionButton}
@@ -1234,28 +1229,22 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     </header>}
     {showBanner && !(nativeDashboardContent && screen === 'dashboard') && <ConnectionBanner status={connection} client={client} onTryAgain={tryAgain} onPairAgain={onPairAgain} onDismiss={() => { setBannerDismissed(true); setDetailsOpen(false); setRecovered(false); }} onAwake={tryAgain}/>}
     {!desktop && client.scheduleCommand && (screen === 'threads' || (screen === 'dashboard' && !nativeDashboardContent)) && <Button variant="ghost" onClick={openSchedules}>Schedules</Button>}
-    <Sheet open={projectBrowserOpen} onOpenChange={setProjectBrowserOpen}><SheetContent side="bottom" className="companion-settings-sheet"><SheetHeader><SheetTitle>Add project</SheetTitle><SheetDescription>Folders on your Mac</SheetDescription></SheetHeader>
-      {projectBrowserOpen && client.projectFolders && client.addProject && <ProjectBrowser client={client} connected={connected} onAdded={async id => {
-        setData(await client.snapshot(new AbortController().signal, snapshotThread));
-        setNewProject(id); setProjectBrowserOpen(false);
-      }}/>}
-    </SheetContent></Sheet>
-    <Sheet open={!!customModelPicker} onOpenChange={open => { if (!open) { customModelPicker?.resolve(null); setCustomModelPicker(null); } }}><SheetContent side="bottom" className="companion-settings-sheet"><SheetHeader><SheetTitle>Custom model</SheetTitle><SheetDescription>Choose the exact model for this session.</SheetDescription></SheetHeader><label>Model ID<input aria-label="Custom model ID" maxLength={200} value={customModelPicker?.value || ''} onChange={e => setCustomModelPicker(old => old && ({ ...old, value: e.target.value }))}/></label><Button disabled={!customModelPicker?.value.trim()} onClick={() => { customModelPicker?.resolve(customModelPicker.value.trim()); setCustomModelPicker(null); }}>Use model</Button></SheetContent></Sheet>
-    <Sheet open={workspacesOpen} onOpenChange={setWorkspacesOpen}><SheetContent side="bottom" className="companion-settings-sheet"><div className="companion-settings-grabber" aria-hidden="true" /><SheetHeader><SheetTitle>Settings</SheetTitle><SheetDescription>Manage project sorting, names, colors, and workspaces across your devices.</SheetDescription></SheetHeader><div className="companion-workspaces">{deviceSettings}
-      <h2>Model configuration</h2><ModelConfigurationSettings configuration={data.modelConfiguration} providers={data.projects.flatMap(p => p.assistants?.map(a => a.provider) ?? (p.provider ? [p.provider] : []))} disabled={!connected || !client.saveModelConfiguration} onSave={async configuration => { if (!client.saveModelConfiguration) throw new Error('Update the companion to save model configuration.'); await client.saveModelConfiguration(configuration); setData(await client.snapshot(new AbortController().signal, snapshotThread)); }}/>
+    <Sheet open={workspacesOpen} onOpenChange={setWorkspacesOpen}><SheetContent side="bottom" className="companion-settings-sheet"><div className="companion-settings-grabber" aria-hidden="true" /><SheetHeader><SheetTitle>Settings</SheetTitle><SheetDescription>Organize your projects and customize Freddai.</SheetDescription></SheetHeader><div className="companion-workspaces">{deviceSettings && <details className="companion-settings-group"><summary>This device<span>Connection and device preferences</span></summary><div>{deviceSettings}</div></details>}
+
 
       {!connected && <p>Connect to your Mac to edit organization settings.</p>}
-      {client.addProject && <Button disabled={!connected} onClick={() => { setWorkspacesOpen(false); setProjectBrowserOpen(true); }}>＋ Project</Button>}
-      <h2>Workspaces</h2>
+      <details className="companion-settings-group" open><summary>Workspaces<span>Group projects for easy navigation</span></summary><div>
       <WorkspaceSettings projects={data.projects} workspaces={data.workspaces || []} disabled={!connected || working || !client.saveWorkspaces || !data.workspaces} onSave={async next => {
         if (!client.saveWorkspaces || working || !connected) return;
         setWorking(true); setError('');
         try { await client.saveWorkspaces(next); setData(await client.snapshot(new AbortController().signal, snapshotThread)); return true; }
-        catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
         finally { setWorking(false); }
       }}/>
-      <section className="companion-project-settings" aria-label="Project settings"><h2>Project names, colors, and sorting</h2>
-      <OrganizationSettings snapshot={data} disabled={!connected || working}
+      </div></details>
+      <details className="companion-settings-group"><summary>Projects<span>Add folders, edit names and colors, change order</span></summary><div>
+      {client.addProject && <Button disabled={!connected} onClick={() => setProjectBrowserOpen(true)}>Add project folder</Button>}
+      <OrganizationSettings projectEditor={client.projectEditor} snapshot={data} disabled={!connected || working}
         onSave={client.updateProjectOrganization ? async (id, name, color) => {
           if (working || !connected) return;
           setWorking(true); setError('');
@@ -1270,13 +1259,20 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           catch (e) { setError(e instanceof Error ? e.message : String(e)); }
           finally { setWorking(false); }
         } : undefined}/>
-      </section>
-      {client.googleCommand && <section className="companion-project-settings" aria-label="Connected accounts"><h2>Connected accounts</h2>
+      </div></details>
+      <details className="companion-settings-group"><summary>Models<span>Default models and reasoning preferences</span></summary><div><ModelConfigurationSettings configuration={data.modelConfiguration} providers={data.projects.flatMap(p => p.assistants?.map(a => a.provider) ?? (p.provider ? [p.provider] : []))} disabled={!connected || !client.saveModelConfiguration} onSave={async configuration => { if (!client.saveModelConfiguration) throw new Error('Update the companion to save model configuration.'); await client.saveModelConfiguration(configuration); setData(await client.snapshot(new AbortController().signal, snapshotThread)); }}/></div></details>
+      {client.googleCommand && <details className="companion-settings-group"><summary>Connected accounts<span>Google accounts and automatic triggers</span></summary><div>
         <p>Google accounts and the triggers that start agent work from Gmail, Calendar and Drive.</p>
         <Button variant="outline" onClick={() => setGoogleOpen(true)}>Manage connected accounts</Button>
-      </section>}
+      </div></details>}
       {error && <p role="alert">{error}</p>}
     </div></SheetContent></Sheet>
+    <Sheet open={projectBrowserOpen} onOpenChange={setProjectBrowserOpen}><SheetContent side="bottom" className="companion-settings-sheet"><SheetHeader><SheetTitle>Add project</SheetTitle><SheetDescription>Folders on your Mac</SheetDescription></SheetHeader>
+      {projectBrowserOpen && client.projectFolders && client.addProject && <ProjectBrowser client={client} connected={connected} onAdded={async id => {
+        setData(await client.snapshot(new AbortController().signal, snapshotThread));
+        setNewProject(id); setProjectBrowserOpen(false);
+      }}/>}
+    </SheetContent></Sheet>
     {client.googleCommand && <Dialog open={googleOpen} onOpenChange={setGoogleOpen}><DialogContent className="companion-schedules companion-google-dialog"><DialogHeader><DialogTitle>Connected accounts</DialogTitle><DialogDescription>Google accounts and triggers on your Mac.</DialogDescription></DialogHeader><ConnectedAccounts command={client.googleCommand} connected={connected} db={{projects:data.projects,accounts:data.projects[0]?.assistants||[]}}/></DialogContent></Dialog>}
     {error && !(nativeDashboardContent && screen === 'dashboard') && <p className="companion-error" role="alert">{error}</p>}
     {!desktop && !detail && screen !== 'dashboard' && screen !== 'project' && screen !== 'schedules' && navigation}
@@ -1311,7 +1307,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       {dashboardRetained && <div hidden={screen !== 'dashboard'} className="companion-dashboard-preserved"><CompanionDashboard outbox={pendingItems} onOfficeHeightChange={setOfficeHeight} onOfficeExpandedChange={setOfficeExpanded} nativeCards={nativeShell} nativeContent={nativeDashboardContent} read={read} globalAssistant={dashboardAssistant} onGlobalAssistantChange={setDashboardAssistant} client={client} assistantSelections={newAssistants} onAssistantChange={(project, assistant) => setNewAssistants(old => ({ ...old, [project]: assistant }))}
         controls={controls} onSelectionChange={(key, selection) => setControls(old => ({ ...old, [key]: { selection, permission: old[key]?.permission || 'bypass' } }))}
         onDictation={(project, text, assistant) => { setDrafts(old => ({ ...old, new: [old.new, text].filter(Boolean).join('\n') })); startDashboard(project, assistant); void setNativeComposerText([drafts.new, text].filter(Boolean).join('\n')); }} onOpenCommander={commanderProject ? openCommander : undefined} onSendCommander={commanderProject ? sendToCommander : undefined} snapshot={data} connected={connected} onOpen={id => { if (id.startsWith('outbox:')) { const item = pendingItems.find(m => `outbox:${m.id}` === id); if (item) startDashboard(item.project); return; } openThreadSheet(id); }} onProject={desktop ? undefined : openProjectSheet} onNew={startDashboard} /></div>}
-      {screen === 'dashboard' ? null : screen === 'project' ? (projectSheet && <ProjectThreadList key={projectSheet.project} project={projectSheet.project} snapshot={scopedData} outbox={pendingItems} read={read} connected={connected} onOpen={openProjectSheetThread} onNew={() => startDashboard(projectSheet.project)} />) : screen === 'threads' ? threadListing : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{scopedData.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{projectName(p.name)}</option>)}</select></label>{newProjectData?.assistants && <label>Coding assistant<select aria-label="Coding assistant" value={assistant} disabled={!connected || working} onChange={e => { rememberAssistant(newProject, e.target.value); delete requestIds.current.new; }}><option value="" disabled>Choose a coding assistant</option>{newProjectData.assistants.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}</select></label>}{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadLinksProvider threads={data.threads} projects={data.projects} onOpen={openLinkedThread}><PreviewContext.Provider value={task ? url => previewOpen(task.id, url) : null}><ThreadTranscript readGeneratedFile={task && client.generatedFile ? (href, offset) => client.generatedFile!(task.id, href, offset) : undefined} key={task?.id} density="compact" messages={task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript></PreviewContext.Provider></ThreadLinksProvider>}
+      {screen === 'dashboard' ? null : screen === 'project' ? (projectSheet && <ProjectThreadList key={projectSheet.project} project={projectSheet.project} snapshot={scopedData} outbox={pendingItems} read={read} connected={connected} onOpen={openProjectSheetThread} onNew={() => startDashboard(projectSheet.project)} />) : screen === 'threads' ? threadListing : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{scopedData.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{projectName(p.name)}</option>)}</select></label>{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadLinksProvider threads={data.threads} projects={data.projects} onOpen={openLinkedThread}><PreviewContext.Provider value={task ? (url, opts) => previewOpen(task.id, url, opts?.start) : null}><ThreadTranscript readGeneratedFile={task && client.generatedFile ? (href, offset) => client.generatedFile!(task.id, href, offset) : undefined} key={task?.id} density="compact" messages={task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript></PreviewContext.Provider></ThreadLinksProvider>}
+      {isCommander && <SubThreads hideEmpty threads={data.threads.filter(t => t.origin?.kind === 'commander' && t.origin.thread === task?.id)} projects={data.projects} onOpenThread={openLinkedThread} />}
       {screen === 'conversation' && <ThreadActivity thread={task} connection={connection.state}
         onStop={client.action ? () => void threadAction('stop') : undefined}
         onResume={client.resume && task?.canReply ? () => void resumeInterruptedThread() : undefined}
@@ -1330,7 +1327,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           const project = data.projects.find(p => p.id === props.draft.projectId);
           const assistant = project ? dashboardAssistantFor(project, newAssistants[project.id] || dashboardAssistant) : undefined;
           const key = project ? dashboardControlKey(project, assistant?.id || '') : '';
-          return <CompanionCommandCard {...props} client={client} selection={controls[key]?.selection || defaultSelection} onSelection={selection => setControls(old => ({ ...old, [key]: { selection, permission: old[key]?.permission || 'bypass' } }))} projects={data.projects} assistant={assistant?.id || ''} onAssistant={id => rememberAssistant(props.draft.projectId, id)}/>;
+          return <CompanionCommandCard projectNameUppercase={data.threadList?.projectNameUppercase} {...props} client={client} modelConfiguration={data.modelConfiguration} selection={controls[key]?.selection || defaultSelection} onSelection={selection => setControls(old => ({ ...old, [key]: { selection, permission: old[key]?.permission || 'bypass' } }))} projects={data.projects} assistant={assistant?.id || ''} onAssistant={id => rememberAssistant(props.draft.projectId, id)}/>;
         },
         launchDraft: async ({ projectId, instruction }) => {
           const project = data.projects.find(p => p.id === projectId);
@@ -1338,7 +1335,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           if (!connected || !project?.canStart || (project.assistants && !assistant)) throw new Error('Choose a project and coding agent that are ready on your Mac.');
           const saved = controls[dashboardControlKey(project, assistant?.id || '')];
           const provider = assistant?.provider || project.provider;
-          const options = { model: saved?.selection.model.trim() || null, effort: !saved || saved.selection.effort === 'default' ? null : saved.selection.effort,
+          const options = { model: saved?.selection.model.trim() || null, effort: !saved || saved.selection.effort === 'default' ? null : saved.selection.effort, speed: saved?.selection.speed === 'fast' ? 'fast' : null,
             permission_mode: provider === 'codex' || provider === 'claude' ? saved?.permission ?? 'bypass' : undefined, update_agent_controls: true };
           const key = `call:${JSON.stringify([projectId, assistant?.id, instruction, options])}`;
           const requestId = requestIds.current[key] ||= crypto.randomUUID();
@@ -1353,7 +1350,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
         if (!connected || !newReady) throw new Error('Choose a project and coding agent that are ready on your Mac.');
         const first = outgoing.find(m => m.id === newCallRequest.current);
         const id = crypto.randomUUID();
-        const message: Outgoing = { id, thread: first?.thread || '', replyTo: first && !first.thread ? first.id : undefined, project: newProject, assistant: assistant || undefined, prompt, ordinal: 1, startsTurn: !first, acknowledged: false, attachments: [], options: { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true } };
+        const message: Outgoing = { id, thread: first?.thread || '', replyTo: first && !first.thread ? first.id : undefined, project: newProject, assistant: assistant || undefined, prompt, ordinal: 1, startsTurn: !first, acknowledged: false, attachments: [], options: { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, speed: selection.speed === 'fast' ? 'fast' : null, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true } };
         saveOutbox([...outgoing, message]);
         if (!newCallRequest.current) newCallRequest.current = id;
         deliveryNavigation.current[id] = navigationRevision.current;
@@ -1364,7 +1361,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       const id = crypto.randomUUID();
       const matching = task.messages.filter(m => m.role === 'user' && m.text === prompt).length;
       const ordinal = Math.max(matching, ...outgoing.filter(m => m.thread === task.id && m.prompt === prompt).map(m => m.ordinal)) + 1;
-      const message: Outgoing = { id, thread: task.id, project: task.project, prompt, ordinal, startsTurn: classifySend(task.id, id), acknowledged: false, attachments: [], options: { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true } };
+      const message: Outgoing = { id, thread: task.id, project: task.project, prompt, ordinal, startsTurn: classifySend(task.id, id), acknowledged: false, attachments: [], options: { agent: selection.agent, model: selection.model.trim() || null, effort: selection.effort === 'default' ? null : selection.effort, speed: selection.speed === 'fast' ? 'fast' : null, permission_mode: provider === 'codex' || provider === 'claude' ? permission : undefined, update_agent_controls: true } };
       saveOutbox([...outgoing, message]);
       setOutgoing(old => [...old, message]); trackLive(message);
       nearBottom.current = true;
@@ -1388,7 +1385,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           <Button type="button" variant="ghost" size="icon" className="companion-attach" aria-label="Attach files" disabled={!connected || working || staging || !client.attach} onClick={() => fileInput.current?.click()}><Plus size={20}/></Button>
           {provider && <PermissionSelect provider={provider} value={permission} onChange={value => setControls(old => ({ ...old, [controlKey]: { selection, permission: value } }))} disabled={!connected || working}/>}
           <span className="companion-composer-spacer"/>
-          <select aria-label="Agent" disabled={!connected || working} value={screen === 'new' ? assistant : conversationAgent} onChange={e => { if (screen === 'new') rememberAssistant(newProject, e.target.value); else setControls(old => ({ ...old, [controlKey]: { permission, selection: { agent: e.target.value, model: 'freddai-level:normal', effort: 'default' } } })); }}>{(screen === 'new' ? newProjectData : conversationProject)?.assistants?.map(a => <option key={a.id} value={a.id}>{assistantLabel(a)}</option>)}</select><AgentControls iconOnly key={controlKey} native={!!client.models} provider={provider} loadModels={client.models ? loadModels : undefined} value={selection} onChange={value => setControls(old => ({ ...old, [controlKey]: { selection: value, permission } }))} disabled={!connected || working}/>
+          <ComposerAgentPicker options={(screen === 'new' ? newProjectData : conversationProject)?.assistants?.map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color })) || []} agent={screen === 'new' ? assistant : conversationAgent} onAgentChange={id => { if (screen === 'new') { rememberAssistant(newProject, id); delete requestIds.current.new; } else setControls(old => ({ ...old, [controlKey]: { permission, selection: { agent: id, model: 'freddai-level:normal', effort: 'default' } } })); }} native={!!client.models} provider={provider} modelConfiguration={data.modelConfiguration} loadModels={client.models ? loadModels : undefined} value={selection} onChange={value => setControls(old => ({ ...old, [controlKey]: { selection: value, permission } }))} disabled={!connected || working}/>
           {screen === 'conversation' && busyThread && <Button type="button" variant="ghost" size="icon" aria-label="Stop current turn and pause queue" disabled={actionsDisabled} onClick={() => void threadAction('stop')}><Square size={16}/></Button>}
           <Button type="submit" size="icon" className="companion-send" aria-label={screen === 'new' ? 'Start thread' : busyThread || !!task?.queued ? 'Queue message' : 'Send reply'} disabled={!canSend}><ArrowUp size={20}/></Button>
         </div>

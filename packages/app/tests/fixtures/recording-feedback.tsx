@@ -1,12 +1,9 @@
-import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { useState } from 'react';
 import { RecordingFeedback } from '../../src/RecordingFeedback';
-import { recordingGesture } from '../../src/recording-gesture';
+import '@freddai/ui/styles.css';
 function Fixture() {
-  const [point, setPoint] = useState({ x: 200, y: 400 });
-  return <div style={{ position: 'absolute', left: 12, top: 350, width: 44, height: 44 }}
-    onPointerMove={event => setPoint({ x: event.clientX, y: event.clientY })}>
-    <RecordingFeedback elapsed={12} {...recordingGesture({ x: 200, y: 400 }, point)} finger={point} onCancel={() => {}} onSend={() => {}} />
-  </div>;
+  const [corner, setCorner] = useState('top-left');
+  return <><select aria-label="Corner" value={corner} onChange={e => setCorner(e.target.value)} style={{position:'fixed', left:'40%', top:'45%'}}>{['top-left','top-right','bottom-left','bottom-right'].map(c => <option key={c}>{c}</option>)}</select><div key={corner} style={{ position:'fixed', [corner.startsWith('top') ? 'top' : 'bottom']:8, [corner.endsWith('left') ? 'left' : 'right']:8, width:32, height:32, overflow:'hidden' }}><button>Mic</button><RecordingFeedback elapsed={3} levels={Array(16).fill(.15)} send={0} cancel={0} finger={null} onCancel={() => {}} onSend={() => {}} /></div></>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+createRoot(document.getElementById('root')!).render(<Fixture/>);

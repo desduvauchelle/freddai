@@ -127,13 +127,11 @@ it("away block shows at most 3 cards and only after a >10 minute gap", async () 
   expect(screen.queryByRole("complementary", { name: "While you were away" })).toBeNull();
 });
 
-it("view pins pending proposals, shows Call disabled, and surfaces refresh errors", async () => {
+it("view pins pending proposals, offers Commander settings, and surfaces refresh errors", async () => {
   api.proposals.mockResolvedValue([proposal()]);
   render(<CommanderView projects={projects} renderConversation={() => null} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onCreateThread={vi.fn(async () => {})} />);
   expect(await screen.findByRole("article", { name: "Proposal: Start the pricing page" })).toBeTruthy();
-  const call = screen.getByRole("button", { name: "Call (coming soon)" });
-  expect((call as HTMLButtonElement).disabled).toBe(true);
-  expect(call.getAttribute("title")).toBe("Coming soon");
+  expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
   api.state.mockRejectedValue(new Error("host down"));
   await act(async () => { await new Promise(r => setTimeout(r, 3100)); });
   expect((await screen.findByRole("alert")).textContent).toContain("host down");
