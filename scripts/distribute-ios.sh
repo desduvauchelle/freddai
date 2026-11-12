@@ -18,7 +18,6 @@ if [ "$action" = archive ]; then
   fi
   destination="$PWD/output/ios-distribution/$number"
   if [ -e "$destination" ]; then echo "Archive output already exists: $destination" >&2; exit 1; fi
-  python3 scripts/provision-iphone.py >/dev/null
   pnpm --filter @freddai/native tauri ios build --ci --archive-only --export-method app-store-connect \
     --config "{\"bundle\":{\"iOS\":{\"bundleVersion\":\"$number\"}}}"
   mkdir -p "$destination"
@@ -27,7 +26,7 @@ if [ "$action" = archive ]; then
   codesign --verify --deep --strict "$destination/Freddai.xcarchive/Products/Applications/Freddai.app"
   printf '%s\n' "$destination/Freddai.xcarchive" > output/ios-distribution/latest-archive.txt
   echo "Universal release archive: $destination/Freddai.xcarchive"
-  echo 'Run pnpm ios:upload to upload this archive for internal TestFlight testing.'
+  echo 'Run pnpm ios:upload to upload this archive for TestFlight beta review.'
   exit 0
 fi
 archive="${FREDDAI_IOS_ARCHIVE:-}"
@@ -39,14 +38,14 @@ python3 scripts/verify-ios-archive.py "$archive"
 codesign --verify --deep --strict "$archive/Products/Applications/Freddai.app"
 destination="$(dirname "$archive")/upload"
 mkdir -p "$destination"
-# This build currently trusts the developer Mac. Keep it internal until generic enrollment is shipped.
+# Release builds enroll each tester's own Mac without a bundled developer identity.
 python3 - "$destination/ExportOptions.plist" <<'PY'
 import plistlib,sys
 with open(sys.argv[1], 'wb') as f:
     plistlib.dump(dict(method='app-store-connect', destination='upload', signingStyle='automatic',
                       teamID='BSH2UEDLU5', uploadSymbols=True, manageAppVersionAndBuildNumber=True,
-                      testFlightInternalTestingOnly=True), f)
+                      testFlightInternalTestingOnly=False), f)
 PY
 xcodebuild -exportArchive -archivePath "$archive" -exportPath "$destination" \
   -exportOptionsPlist "$destination/ExportOptions.plist" -allowProvisioningUpdates
-echo 'Upload completed. Apple processing and internal tester assignment are separate App Store Connect steps.'
+echo 'Upload completed. Apple processing, external beta review and public-link activation remain separate App Store Connect steps.'

@@ -30,9 +30,9 @@ if len(sys.argv) == 4 and sys.argv[2] == '--record-production-assets':
     icons = list(catalog.glob('*.png'))
     if not icons or any(f.read_bytes()[25] in (4, 6) for f in icons):
         raise SystemExit('App Store icons must not have an alpha channel.')
-    manifest.write_text(json.dumps(dict(executableSHA256=digest, fixture=False, internalTestingOnly=True, iconsOpaque=True,
+    manifest.write_text(json.dumps(dict(executableSHA256=digest, fixture=False, internalTestingOnly=False, iconsOpaque=True,
                                        assets={f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in scripts}), indent=2) + '\n')
 record = json.loads(manifest.read_text())
-if record.get('fixture') is not False or record.get('executableSHA256') != digest or not record.get('internalTestingOnly') or not record.get('iconsOpaque'):
+if record.get('fixture') is not False or record.get('executableSHA256') != digest or record.get('internalTestingOnly') is not False or not record.get('iconsOpaque'):
     raise SystemExit('Archive does not match its verified production build record.')
 print(f"Verified universal iPhone/iPad companion {info['CFBundleShortVersionString']} ({info['CFBundleVersion']}).")
