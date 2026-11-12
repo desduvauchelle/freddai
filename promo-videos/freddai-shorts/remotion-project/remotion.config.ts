@@ -1,0 +1,7 @@
+import { Config } from "@remotion/cli/config";
+Config.setVideoImageFormat("jpeg");
+Config.setJpegQuality(95);
+Config.setOverwriteOutput(true);
+Config.setConcurrency(6);
+Config.setChromiumOpenGlRenderer("angle");
+Config.setBrowserExecutable("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");

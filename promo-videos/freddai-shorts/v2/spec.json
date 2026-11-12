@@ -1,0 +1,224 @@
+[
+ {
+  "n": 11,
+  "id": "v2talk",
+  "slug": "talk",
+  "title": "You talk. It's done.",
+  "hook": [
+   "You talk.",
+   "It's done."
+  ],
+  "accent": "done",
+  "demo": 2,
+  "turn": false,
+  "lines": [
+   "You talk. It's done.",
+   "No typing out the prompt. No fiddling with settings.",
+   "In Freddai you pick a project, press the mic, and just say what you want.",
+   "Add a dark mode toggle to the settings page. Like you'd tell a person.",
+   "It becomes a thread, and the agent gets to work.",
+   "Talk, and it's done.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 12,
+  "id": "v2setforget",
+  "slug": "setforget",
+  "title": "Set it and forget it",
+  "hook": [
+   "Set it.",
+   "Forget it."
+  ],
+  "accent": "forget",
+  "demo": 3,
+  "turn": false,
+  "lines": [
+   "Set it. Forget it.",
+   "Start a task, then go do something else.",
+   "No babysitting a terminal. No watching it type.",
+   "Freddai lets every agent run on its own, and keeps every thread in one place.",
+   "Come back later and the finished ones are already sitting there, done.",
+   "Set and forget. Finally.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 13,
+  "id": "v2picker",
+  "slug": "picker",
+  "title": "Pick the account for each thread",
+  "hook": [
+   "Which account",
+   "takes this one?"
+  ],
+  "accent": "account",
+  "demo": 2,
+  "turn": true,
+  "lines": [
+   "Which account should take this one?",
+   "Your main one is nearly empty. Your other one is wide open.",
+   "In Freddai, you choose the account for every new thread.",
+   "Open the picker, tap the one with room, and send it.",
+   "Same project, different account. That's all it takes.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 14,
+  "id": "v2twoacc",
+  "slug": "twoacc",
+  "title": "One account is never enough",
+  "hook": [
+   "One account",
+   "is never enough."
+  ],
+  "accent": "never",
+  "demo": 3,
+  "turn": true,
+  "lines": [
+   "Vibe coders burn through usage. One account is never enough.",
+   "So you get a second one. Then a third.",
+   "Then you spend half your day logging in and out.",
+   "Freddai keeps all of them signed in, side by side. Claude, Codex, Gemini, Grok.",
+   "Mark one as the default, and switch whenever you want.",
+   "Accounts stop being a chore.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 15,
+  "id": "v2limit",
+  "slug": "limit",
+  "title": "Limit hit mid-flow",
+  "hook": [
+   "Limit hit.",
+   "Mid-flow."
+  ],
+  "accent": "mid-flow",
+  "demo": 3,
+  "turn": true,
+  "lines": [
+   "Limit hit. Right in the middle of a good run.",
+   "Normally, that's your evening gone.",
+   "The banner says come back in a few hours.",
+   "In Freddai, you just pick another account.",
+   "The thread keeps going. You never log out, and you never lose your place.",
+   "Same project, same thread, new account.",
+   "Limits stop being a big deal.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 16,
+  "id": "v2usage",
+  "slug": "usage",
+  "title": "Know what's left",
+  "hook": [
+   "Know what's left.",
+   "Before it runs out."
+  ],
+  "accent": "left",
+  "demo": 1,
+  "turn": false,
+  "lines": [
+   "Know what's left before it runs out.",
+   "Freddai shows every account's usage in one strip.",
+   "Percent remaining, and when it resets.",
+   "Claude, Codex, Gemini, Grok. All in the same place.",
+   "One ring turns amber. That's your cue to switch.",
+   "No more opening three apps to check.",
+   "Switch, and keep vibing.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 17,
+  "id": "v2phone",
+  "slug": "phone",
+  "title": "Vibe code from the couch",
+  "hook": [
+   "Vibe code",
+   "from the couch."
+  ],
+  "accent": "couch",
+  "demo": 1,
+  "turn": false,
+  "lines": [
+   "Vibe code from the couch.",
+   "Start the work at your desk. Then walk away.",
+   "Walk the dog. Make a coffee. Go outside.",
+   "Freddai works on your phone too. It pings you when an agent needs something.",
+   "Reply or approve, and it carries on. The Mac does the heavy lifting.",
+   "Your desk is optional.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 18,
+  "id": "v2smooth",
+  "slug": "smooth",
+  "title": "Four agents, one smooth desk",
+  "hook": [
+   "Four agents.",
+   "One smooth desk."
+  ],
+  "accent": "smooth",
+  "demo": 3,
+  "turn": false,
+  "lines": [
+   "Claude. Codex. Gemini. Grok.",
+   "Different agents, usually in different apps.",
+   "No hopping between apps to find the right one.",
+   "In Freddai it's one desk. Pick the project, pick the agent, go.",
+   "No setup rituals. No tab juggling. It just flows.",
+   "Start another thread while the first one runs.",
+   "That's the whole point. Smooth.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 19,
+  "id": "v2sleep",
+  "slug": "sleep",
+  "title": "Vibe code while you sleep",
+  "hook": [
+   "Vibe code",
+   "while you sleep."
+  ],
+  "accent": "sleep",
+  "demo": 2,
+  "turn": false,
+  "lines": [
+   "Vibe code while you sleep.",
+   "Some jobs come back every day. Update the dependencies. Triage the issues.",
+   "Give them a schedule in Freddai. Weekdays, nine a.m.",
+   "Set it once. It runs by itself, and the next run is right there on the card.",
+   "Set and forget, on a timer.",
+   "Freddai. Give all your agents a home."
+  ]
+ },
+ {
+  "n": 20,
+  "id": "v2hands",
+  "slug": "hands",
+  "title": "Your agent can use your Mac",
+  "hook": [
+   "Your agent can",
+   "use your Mac."
+  ],
+  "accent": "mac",
+  "demo": 3,
+  "turn": false,
+  "lines": [
+   "Your agent can use your Mac.",
+   "Not just write code. Actually click things.",
+   "Open an app. Press a button. Fill in a form.",
+   "Freddai gives agents computer control, with a visible cursor working in the background.",
+   "Your own windows stay yours. You keep working while it does.",
+   "Give it a job, and watch the cursor go.",
+   "Talk, and it's done. Even the clicking.",
+   "Freddai. Give all your agents a home."
+  ]
+ }
+]
