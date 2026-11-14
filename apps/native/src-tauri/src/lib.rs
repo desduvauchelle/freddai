@@ -34,6 +34,10 @@ mod desktop;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod thread_windows;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod app_windows;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+mod scout;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod git_history;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 mod git_actions;
@@ -57,6 +61,13 @@ mod mobile;
 mod preview_device;
 #[cfg(target_os = "macos")]
 mod satellite;
+/// Satellite Mac: host-side command dispatcher (`/v1/desktop`) and the satellite GUI runtime.
+#[cfg(target_os = "macos")]
+mod satellite_host;
+#[cfg(target_os = "macos")]
+mod satellite_terminals;
+#[cfg(target_os = "macos")]
+mod satellite_desktop;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -65,7 +76,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     refuse_host_cache_gui();
     #[cfg(target_os = "macos")]
-    if satellite::enabled() { mobile::run(context); return; }
+    if satellite::enabled() { satellite_desktop::run(context); return; }
     #[cfg(any(target_os = "ios", target_os = "android"))]
     mobile::run(context);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]

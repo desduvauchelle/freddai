@@ -4,6 +4,7 @@
   "windows": [
     "main",
     "thread-*",
+    "app-*",
     "bug-walk-pill"
   ],
   "permissions": [

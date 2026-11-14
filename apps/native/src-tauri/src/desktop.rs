@@ -30,7 +30,7 @@ fn running_sessions(reply: &Value) -> usize {
     })
 }
 impl Host {
-    fn new(root: PathBuf, binary: PathBuf) -> Self {
+    pub(crate) fn new(root: PathBuf, binary: PathBuf) -> Self {
         Self { root, binary, upgrade_attempt: Default::default(), upgrade_note: Default::default() }
     }
     fn retry_idle_upgrade(&self, running: usize) -> Result<bool, String> {
@@ -104,7 +104,7 @@ fn prune_host_cache(root: &std::path::Path) {
     }
     eprintln!("{}", json!({"event":"host_cache.pruned","count":pruned}));
 }
-fn host_binary(root: &std::path::Path) -> Result<PathBuf, String> {
+pub(crate) fn host_binary(root: &std::path::Path) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     cache_host_binary(&exe, root)
 }
@@ -276,7 +276,7 @@ fn ensure_host_core(host: &Host, running: Option<usize>) -> Result<(), String> {
 }
 /// Apply a pending host update now, interrupting running threads. The host stops and persists its
 /// sessions (resumable by a new message), exits, and the installed binary is started in its place.
-fn force_upgrade_host(host: &Host) -> Result<usize, String> {
+pub(crate) fn force_upgrade_host(host: &Host) -> Result<usize, String> {
     let result = (|| {
         let reply = freddai_core::host::call(&host.root, "upgrade_force", json!({})).map_err(|e| {
             if e.contains("Unknown host command") {
@@ -307,7 +307,7 @@ async fn restart_host_now(h: State<'_, Host>) -> Result<usize, String> {
 }
 /// One socket round trip per call. A hello is only needed to (re)start an unreachable host, so it
 /// runs on the error path, never per poll.
-fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, String> {
+pub(crate) fn call_with_recovery(host: &Host, method: &str, p: Value) -> Result<Value, String> {
     match freddai_core::host::call(&host.root, method, p.clone()) {
         result if method == "snapshot_since" && match &result {
             Err(e) => e.contains("Unknown host command"),
@@ -355,7 +355,7 @@ async fn open_project_vscode(h: State<'_, Host>, project: String) -> Result<(), 
 }
 /// Set when the account order changes so the next `snapshot_since` is answered with a full snapshot
 /// (an "unchanged" reply would never carry the re-sorted accounts).
-static ACCOUNT_ORDER_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(crate) static ACCOUNT_ORDER_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub(crate) async fn rpc(host: Host, method: &'static str, p: Value) -> Result<Value, String> {
     let called = std::time::Instant::now();
     tauri::async_runtime::spawn_blocking(move || {
@@ -540,6 +540,20 @@ async fn git_commit_message_start(h: State<'_, Host>, project: String, stat: Str
 async fn git_commit_message_state(h: State<'_, Host>, project: String) -> Result<Value, String> {
     rpc(h.inner().clone(), "commit_message_state", json!({"project":project})).await
 }
+#[tauri::command]
+pub(crate) async fn open_app_window(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let base = app.config().app.windows.first().cloned().ok_or("Missing window configuration")?;
+    crate::app_windows::open(app, base, id).await
+}
+
+#[tauri::command]
+pub(crate) fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window is not available")?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
 /// Each thread gets one workspace webview backed by the same host, never a new agent.
 #[tauri::command]
 async fn open_thread_window(app: tauri::AppHandle, h: State<'_, Host>, session: String) -> Result<(), String> {
@@ -884,24 +898,24 @@ async fn stage_attachments(h: State<'_, Host>, paths: Vec<String>) -> Result<Val
     .await
 }
 #[tauri::command]
-async fn generated_file(h: State<'_, Host>, thread: String, href: String, offset: u64) -> Result<Value, String> {
-    generated_chunk(h.inner().clone(), thread, href, offset).await
+async fn generated_file(h: State<'_, Host>, thread: String, href: String, offset: u64, length: Option<u64>) -> Result<Value, String> {
+    generated_chunk(h.inner().clone(), thread, href, offset, length).await
 }
 /// Opens a thread-referenced local HTML file in the browser panel: validated by the host reader, then served by `local_preview`.
 #[tauri::command]
 async fn preview_file_url(h: State<'_, Host>, thread: String, href: String) -> Result<Value, String> {
-    let part = generated_chunk(h.inner().clone(), thread, href, 0).await?;
+    let part = generated_chunk(h.inner().clone(), thread, href, 0, None).await?;
     let path = part["path"].as_str().ok_or("Restart Freddai so the background host can resolve file paths")?.to_string();
     let url = crate::local_preview::register(std::path::Path::new(&path))?;
     Ok(json!({"url":url,"path":path}))
 }
-async fn generated_chunk(h: Host, thread: String, href: String, offset: u64) -> Result<Value, String> {
-    match rpc(h.clone(), "generated_file", json!({"thread":thread,"href":href,"offset":offset})).await {
+pub(crate) async fn generated_chunk(h: Host, thread: String, href: String, offset: u64, length: Option<u64>) -> Result<Value, String> {
+    match rpc(h.clone(), "generated_file", json!({"thread":thread,"href":href,"offset":offset,"length":length})).await {
         Err(e) if e.contains("Unknown host command") => {}, // preserved older host: retain existing preview compatibility
         other => return other,
     }
     let db: freddai_core::runtime::Database = serde_json::from_value(rpc(h.clone(), "snapshot", json!({})).await?).map_err(|e|e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || freddai_core::generated_files::chunk(&db, &thread, &href, offset)).await.map_err(|e|e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || freddai_core::generated_files::chunk(&db, &thread, &href, offset, length)).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 async fn preview_attachment(h: State<'_, Host>, id: String) -> Result<String, String> {
@@ -1032,18 +1046,18 @@ async fn stop_all(h: State<'_, Host>) -> Result<Value, String> {
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_connection(h: State<'_, Host>, operation: String, input: Value) -> Result<Value, String> {
+pub(crate) async fn voice_connection(h: State<'_, Host>, operation: String, input: Value) -> Result<Value, String> {
     let root=h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::connections::call(&root,&operation,&input)).await.map_err(|e|e.to_string())?
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_status(h: State<'_, Host>) -> Result<crate::voice::VoiceStatus, String> {
+pub(crate) async fn voice_status(h: State<'_, Host>) -> Result<crate::voice::VoiceStatus, String> {
     Ok(crate::voice::status(&h.root))
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_update_settings(h: State<'_, Host>, settings: crate::voice::settings::SettingsPatch) -> Result<crate::voice::VoiceStatus, String> {
+pub(crate) async fn voice_update_settings(h: State<'_, Host>, settings: crate::voice::settings::SettingsPatch) -> Result<crate::voice::VoiceStatus, String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::update_settings(&root, settings))
         .await
@@ -1051,7 +1065,7 @@ async fn voice_update_settings(h: State<'_, Host>, settings: crate::voice::setti
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_download_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+pub(crate) async fn voice_download_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::download_model(&root, &id))
         .await
@@ -1059,7 +1073,7 @@ async fn voice_download_model(h: State<'_, Host>, id: String) -> Result<crate::v
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_cancel_download(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+pub(crate) async fn voice_cancel_download(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::cancel_download(&root, &id))
         .await
@@ -1067,7 +1081,7 @@ async fn voice_cancel_download(h: State<'_, Host>, id: String) -> Result<crate::
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_delete_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
+pub(crate) async fn voice_delete_model(h: State<'_, Host>, id: String) -> Result<crate::voice::VoiceStatus, String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::delete_model(&root, &id))
         .await
@@ -1075,7 +1089,7 @@ async fn voice_delete_model(h: State<'_, Host>, id: String) -> Result<crate::voi
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_start_recording(h: State<'_, Host>) -> Result<(), String> {
+pub(crate) async fn voice_start_recording(h: State<'_, Host>) -> Result<(), String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::start_recording(&root))
         .await
@@ -1083,7 +1097,7 @@ async fn voice_start_recording(h: State<'_, Host>) -> Result<(), String> {
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_stop_recording(h: State<'_, Host>) -> Result<crate::voice::Transcript, String> {
+pub(crate) async fn voice_stop_recording(h: State<'_, Host>) -> Result<crate::voice::Transcript, String> {
     let root = h.root.clone();
     tauri::async_runtime::spawn_blocking(move || crate::voice::stop_recording(&root))
         .await
@@ -1091,18 +1105,18 @@ async fn voice_stop_recording(h: State<'_, Host>) -> Result<crate::voice::Transc
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn voice_recording_level() -> f32 {
+pub(crate) fn voice_recording_level() -> f32 {
     crate::voice::recorder::level()
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_cancel_recording() -> Result<(), String> {
+pub(crate) async fn voice_cancel_recording() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(crate::voice::cancel_recording)
         .await
         .map_err(|e| e.to_string())
 }
 #[cfg(target_os = "macos")]
-fn voice_emitter(app: &tauri::AppHandle) -> crate::voice::call::Emit {
+pub(crate) fn voice_emitter(app: &tauri::AppHandle) -> crate::voice::call::Emit {
     let app = app.clone();
     std::sync::Arc::new(move |event: &str, payload: Value| {
         if let Err(e) = tauri::Emitter::emit(&app, event, payload) {
@@ -1112,7 +1126,7 @@ fn voice_emitter(app: &tauri::AppHandle) -> crate::voice::call::Emit {
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_call_start(app: tauri::AppHandle, h: State<'_, Host>, silence_ms: Option<u32>, min_speech_ms: Option<u32>) -> Result<(), String> {
+pub(crate) async fn voice_call_start(app: tauri::AppHandle, h: State<'_, Host>, silence_ms: Option<u32>, min_speech_ms: Option<u32>) -> Result<(), String> {
     let (root, emit) = (h.root.clone(), voice_emitter(&app));
     tauri::async_runtime::spawn_blocking(move || crate::voice::call::start(&root, emit, silence_ms, min_speech_ms))
         .await
@@ -1120,17 +1134,17 @@ async fn voice_call_start(app: tauri::AppHandle, h: State<'_, Host>, silence_ms:
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_call_stop() -> Result<(), String> {
+pub(crate) async fn voice_call_stop() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(crate::voice::call::stop).await.map_err(|e| e.to_string())?
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_call_set_listening(listening: bool) -> Result<(), String> {
+pub(crate) async fn voice_call_set_listening(listening: bool) -> Result<(), String> {
     crate::voice::call::set_listening(listening)
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_speak(app: tauri::AppHandle, text: String, voice: Option<String>, rate: Option<u32>) -> Result<(), String> {
+pub(crate) async fn voice_speak(app: tauri::AppHandle, text: String, voice: Option<String>, rate: Option<u32>) -> Result<(), String> {
     let emit = voice_emitter(&app);
     tauri::async_runtime::spawn_blocking(move || crate::voice::tts::speak(&emit, &text, voice.as_deref(), rate))
         .await
@@ -1138,17 +1152,17 @@ async fn voice_speak(app: tauri::AppHandle, text: String, voice: Option<String>,
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_stop_speaking(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn voice_stop_speaking(app: tauri::AppHandle) -> Result<(), String> {
     let emit = voice_emitter(&app);
     tauri::async_runtime::spawn_blocking(move || crate::voice::tts::stop(&emit)).await.map_err(|e| e.to_string())
 }
 #[cfg(target_os = "macos")]
 #[tauri::command]
-async fn voice_list_voices() -> Result<Vec<crate::voice::tts::Voice>, String> {
+pub(crate) async fn voice_list_voices() -> Result<Vec<crate::voice::tts::Voice>, String> {
     tauri::async_runtime::spawn_blocking(crate::voice::tts::list_voices).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
-fn startup_status() -> bool {
+pub(crate) fn startup_status() -> bool {
     #[cfg(windows)]
     return crate::windows_startup::enabled();
     #[cfg(not(windows))]
@@ -1166,7 +1180,7 @@ fn startup_status() -> bool {
 fn set_start_at_login(h: State<Host>, enabled: bool) -> Result<(), String> {
     configure_start_at_login(h.inner(), enabled)
 }
-fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
+pub(crate) fn configure_start_at_login(h: &Host, enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
     return crate::windows_startup::configure(&h.binary, &h.root, enabled);
     #[cfg(not(windows))]
@@ -1250,6 +1264,12 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             crate::writing_tools::install(&window)?;
             crate::window_state::install(window, host.root.clone());
             app.manage(host);
+            let scout_path = app.state::<Host>().root.join("scout/state.json");
+            let scout = scout_core::store::ScoutStore::load(scout_path).map_err(|e| e.to_string());
+            if let Err(error) = &scout {
+                eprintln!("{}", serde_json::json!({"event": "scout.load_failed", "error": error}));
+            }
+            app.manage(crate::scout::Scout(std::sync::Mutex::new(scout)));
             app.manage(crate::terminal::Terminals::default());
             #[cfg(target_os = "macos")]
             crate::bug_walk::init(app.handle(), &app.state::<Host>().root);
@@ -1259,7 +1279,8 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            vscode_available, open_project_vscode,
+            vscode_available, open_project_vscode, open_app_window, focus_main_window,
+            crate::scout::scout_state, crate::scout::scout_detect_connections, crate::scout::scout_detect_account_connectors, crate::scout::scout_workspace_save, crate::scout::scout_workspace_delete, crate::scout::scout_workspace_reorder, crate::scout::scout_project_save, crate::scout::scout_project_delete, crate::scout::scout_project_move, crate::scout::scout_item_save, crate::scout::scout_item_delete, crate::scout::scout_item_move, crate::scout::scout_rule_save, crate::scout::scout_rule_delete, crate::scout::scout_source_save, crate::scout::scout_source_delete, crate::scout::scout_settings_save, crate::scout::scout_import_freddai, crate::scout::scout_sample_data,
             preview_open,
             #[cfg(target_os = "macos")] crate::satellite::satellite_onboarding_needed,
             #[cfg(target_os = "macos")] crate::satellite::satellite_finish_onboarding,

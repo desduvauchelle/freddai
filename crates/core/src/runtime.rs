@@ -47,6 +47,9 @@ pub(crate) fn claude_args(s: &Session, commander: bool) -> Vec<String> {
     if let Some(resume) = &s.provider_id {
         args.extend(["--resume".into(), resume.clone()]);
     }
+    if !commander {
+        args.extend(["--append-system-prompt".into(), protocol::WORKER_FILE_GUIDANCE.into()]);
+    }
     if commander {
         args.extend([
             "--disallowedTools".into(),
@@ -1039,14 +1042,35 @@ impl Runtime {
         if !message_ids.is_empty() { value["messageIds"] = json!(message_ids); }
         (value, wait, held, sent, total)
     }
-    pub fn generated_file(&self, thread: &str, href: &str, offset: u64) -> Result<Value> {
+    /// Companion summaries and one bounded transcript, compacted before host serialization.
+    pub fn companion_snapshot(&self, thread: Option<&str>) -> Result<Value> {
+        let guard = self.0.lock().unwrap();
+        let mut db = guard.db.clone();
+        let mut page = None;
+        for session in &mut db.sessions {
+            if Some(session.id.as_str()) == thread {
+                page = Some(crate::desktop_snapshot::history_page(session, None)?);
+            }
+            session.messages.clear();
+        }
+        drop(guard);
+        let mut value = json!(db);
+        value["historyPage"] = json!(page);
+        Ok(value)
+    }
+    pub fn thread_history(&self, thread: &str, before: Option<&str>) -> Result<Value> {
+        let guard = self.0.lock().unwrap();
+        let session = guard.db.sessions.iter().find(|s| s.id == thread && !s.archived && s.deleted_at.is_none()).ok_or("Thread unavailable")?;
+        crate::desktop_snapshot::history_page(session, before)
+    }
+    pub fn generated_file(&self, thread: &str, href: &str, offset: u64, length: Option<u64>) -> Result<Value> {
         let db = {
             let guard = self.0.lock().unwrap();
             let session = guard.db.sessions.iter().find(|s| s.id == thread).ok_or("Thread unavailable")?.clone();
             let projects = guard.db.projects.iter().filter(|p| p.id == session.project).cloned().collect();
             Database { sessions: vec![session], projects, ..Default::default() }
         };
-        crate::generated_files::chunk(&db, thread, href, offset)
+        crate::generated_files::chunk(&db, thread, href, offset, length)
     }
     pub fn tool_text(&self, thread: &str, message: &str, offset: usize, hash: Option<&str>) -> Result<Value> {
         let text = {
@@ -3591,6 +3615,9 @@ impl Runtime {
                                         v["params"]["model"] = json!(model);
                                     }
                                     apply_codex_speed(&mut v, s.options.speed.as_deref());
+                                    if !p.is_commander() {
+                                        v["params"]["developerInstructions"] = json!(protocol::WORKER_FILE_GUIDANCE);
+                                    }
                                     if p.is_commander() {
                                         v["params"]["sandbox"] = json!("read-only");
                                         v["params"]["approvalPolicy"] = json!("on-request");
@@ -6508,6 +6535,33 @@ mod tests {
     }
 
     #[test]
+    fn companion_history_is_bounded_lazy_and_stable_during_appends() {
+        let (rt, root) = delta_runtime();
+        {
+            let mut guard = rt.0.lock().unwrap();
+            guard.db.sessions[0].messages = (0..125).map(|n| Message { id: format!("m{n}"), role: "tool".into(), text: "output".repeat(10000).into(), attachments: vec![] }).collect();
+        }
+        let snapshot = rt.companion_snapshot(Some("a")).unwrap();
+        assert!(snapshot["sessions"].as_array().unwrap().iter().all(|s| s["messages"] == json!([])));
+        assert_eq!(snapshot["historyPage"]["messages"].as_array().unwrap().len(), 60);
+        assert_eq!(snapshot["historyPage"]["before"], "m65");
+        assert!(snapshot.to_string().len() < 40000);
+        let tool = &snapshot["historyPage"]["messages"][0];
+        assert_eq!(tool["toolTextBytes"], 60000);
+        assert_eq!(rt.tool_text("a", "m65", 0, tool["toolTextHash"].as_str()).unwrap()["text"].as_str().unwrap().len(), 60000);
+        rt.0.lock().unwrap().db.sessions[0].messages.push(Message { id: "new".into(), role: "assistant".into(), text: "new".into(), attachments: vec![] });
+        let older = rt.thread_history("a", Some("m65")).unwrap();
+        assert_eq!(older["messages"][0]["id"], "m5");
+        assert_eq!(older["before"], "m5");
+        let oldest = rt.thread_history("a", Some("m5")).unwrap();
+        assert_eq!(oldest["messages"].as_array().unwrap().len(), 5);
+        assert!(oldest["before"].is_null());
+        assert!(rt.thread_history("a", Some("missing")).is_err());
+        assert_eq!(rt.snapshot().sessions[0].messages[0].text.len(), 60000);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn idle_housekeeping_does_not_invalidate_or_rewrite_transcripts() {
         let (rt, root) = delta_runtime();
         rt.flush().unwrap();
@@ -6791,6 +6845,7 @@ mod tests {
         let mut s: Session = serde_json::from_value(json!({"id":"t","project":"p","account":"a","title":"T","status":"starting","updated":1,"provider_id":"resume-1","messages":[],"pending":null,"error":null,"options":{"model":"m1","effort":"high"}})).unwrap();
         let normal = claude_args(&s, false);
         assert!(!normal.iter().any(|a| a == "--disallowedTools"));
+        assert!(normal.windows(2).any(|w| w == ["--append-system-prompt", protocol::WORKER_FILE_GUIDANCE]));
         assert!(normal.windows(2).any(|w| w == ["--model", "m1"]) && normal.windows(2).any(|w| w == ["--resume", "resume-1"]));
         s.options.permission_mode = Some(PermissionMode::Ask);
         let restricted = claude_args(&s, true);
@@ -6803,6 +6858,7 @@ mod tests {
             assert!(!denied.contains(&tool), "{tool}");
         }
         assert!(restricted.windows(2).any(|w| w == ["--allowedTools", "mcp__freddai"]));
+        assert!(!restricted.iter().any(|a| a == "--append-system-prompt"));
         assert!(restricted.windows(2).any(|w| w == ["--permission-mode", "default"]));
     }
 }

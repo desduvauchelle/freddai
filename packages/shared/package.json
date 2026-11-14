@@ -1,0 +1,34 @@
+{
+  "name": "@freddai/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./apps/AppSwitcher": "./src/apps/AppSwitcher.tsx",
+    "./apps/*": "./src/apps/*.ts",
+    "./agent/*": "./src/agent/*.ts",
+    "./voice/VoiceControls": "./src/voice/VoiceControls.tsx",
+    "./voice/RecordingFeedback": "./src/voice/RecordingFeedback.tsx",
+    "./voice/*": "./src/voice/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@freddai/ui": "workspace:*",
+    "@tauri-apps/api": "^2.12.4",
+    "lucide-react": "^1.66.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^30.1.3",
+    "vitest": "^5.1.0"
+  }
+}

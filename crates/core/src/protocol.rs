@@ -1,6 +1,8 @@
 use crate::runtime::PermissionMode;
 use serde_json::{json, Value};
 
+/// System-level guidance appended for worker (non-commander) threads on Claude and Codex.
+pub const WORKER_FILE_GUIDANCE: &str = "When you create or locate a file for the user (images, videos, audio, PDFs, documents), reference it in your reply with Markdown using its absolute path, e.g. `![Hero image](/Users/name/Desktop/hero.png)` or `[Clip](/Users/name/Movies/clip.mov)`. Freddai renders such references inline (with a lightbox/player) on the user's Mac and phone; bare paths or URLs are not rendered. For hosted images use the same Markdown image syntax with the https URL.";
 pub fn codex_start(cwd: &str, resume: Option<&str>, mode: PermissionMode) -> Value {
     let mut params = json!({"cwd":cwd,"approvalPolicy":"on-request","sandbox":"workspace-write"});
     if mode == PermissionMode::Bypass {

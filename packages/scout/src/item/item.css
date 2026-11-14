@@ -1,0 +1,56 @@
+/* Item thread right sheet (Figma 55:800 / 55:1492). Tokens from scout.css. */
+.sc-item {
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  background: var(--scout-bg, #f6f4f1); padding: 16px 24px 16px;
+}
+.sc-item__crumbs { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.sc-item__path { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sc-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+.sc-item__header { display: flex; align-items: flex-start; gap: 10px; padding: 18px 0 12px; border-bottom: 1px solid var(--scout-border, #e9e6e2); }
+.sc-item__tile {
+  display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; flex: none; margin-top: 2px;
+  background: var(--scout-card, #fff); border: 1px solid var(--scout-border, #e9e6e2);
+}
+.sc-item__tile--email { color: #3b6cf6; }
+.sc-item__tile--meeting { color: #e09a1a; }
+.sc-item__tile--note { color: var(--scout-accent, #7c5cff); }
+.sc-item__tile--contact { color: #1a9b6c; }
+.sc-item__heading { flex: 1; min-width: 0; }
+.sc-item__title { margin: 0; font-size: 18px; font-weight: 600; line-height: 26px; overflow-wrap: anywhere; }
+.sc-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 4px; font-size: 12px; color: var(--scout-text, #1a1a1a); }
+.sc-item__meta svg { vertical-align: -2px; color: var(--scout-muted, #8a8a8a); }
+.sc-item__agent { display: inline-flex; align-items: center; gap: 5px; }
+.sc-item__chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: var(--scout-card, #fff); border: 1px solid var(--scout-border, #e9e6e2); }
+.sc-item__tools { display: flex; align-items: center; gap: 6px; }
+.sc-item__working { font-size: 12px; color: var(--scout-brand, #f0582c); }
+.sc-item__info {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 10px 0 0 34px; padding: 12px 14px;
+  font-size: 12px; background: var(--scout-card, #fff); border: 1px solid var(--scout-border, #e9e6e2); border-radius: 12px;
+}
+.sc-item__info dt { color: var(--scout-muted, #8a8a8a); }
+.sc-item__info dd { margin: 0; }
+.sc-item__strip { display: flex; align-items: center; gap: 8px; padding: 10px 0; }
+.sc-spacer { flex: 1; }
+.sc-done-mark { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--scout-ready, #2fb344); }
+.sc-done-mark__check { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; background: var(--scout-ready, #2fb344); color: #fff; }
+.sc-item__body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; }
+.sc-item__empty { font-size: 13px; color: var(--scout-muted, #8a8a8a); }
+.sc-item__footer { padding-top: 10px; }
+.sc-draft {
+  margin: 8px 0 8px 32px; max-width: 600px; padding: 16px; display: grid; gap: 10px;
+  background: var(--scout-card, #fff); border: 1px solid var(--scout-border, #e9e6e2); border-radius: var(--scout-radius-card, 14px);
+}
+.sc-draft p { margin: 0; }
+.sc-draft__to { font-size: 12px; }
+.sc-draft__subject { font-weight: 600; font-size: 14px; }
+.sc-draft__body { white-space: pre-wrap; font-size: 14px; line-height: 22px; }
+.sc-draft__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sc-draft__note { margin-left: auto; font-size: 11px; color: var(--scout-muted, #8a8a8a); }
+
+.sc-item__strip:empty { display: none; }
+.sc-icon-btn--on[aria-pressed="true"] { background: color-mix(in srgb, var(--scout-accent, #7c5cff) 16%, transparent); color: var(--scout-accent, #7c5cff); }
+.sc-icon-btn--on[aria-pressed="true"]:hover { background: color-mix(in srgb, var(--scout-accent, #7c5cff) 26%, transparent); }
+.sc-item__check { cursor: pointer; padding: 0; color: var(--scout-muted, #8a8a8a); }
+.sc-item__check:hover { border-color: var(--scout-accent, #7c5cff); color: var(--scout-accent, #7c5cff); }
+.sc-item__check:focus-visible { outline: 2px solid var(--scout-accent, #7c5cff); outline-offset: 2px; }
+.sc-item__check--on { color: var(--scout-accent, #7c5cff); border-color: var(--scout-accent, #7c5cff); }

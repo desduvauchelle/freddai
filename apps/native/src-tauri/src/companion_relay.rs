@@ -54,12 +54,15 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
     let expires=value["expires"].as_u64().ok_or("Missing expiry")?;
     if expires<crypto::now() || expires>crypto::now()+120 || value["id"].as_str()!=Some(id) {return Err("Request expired".into());}
     let route=value["route"].as_str().ok_or("Missing route")?;
-    if !["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake"].contains(&route) {return Err("Unknown companion operation".into());}
+    if !["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake","/v1/desktop"].contains(&route) {return Err("Unknown companion operation".into());}
     let guard=gate.lock().map_err(|_|"Companion busy")?;
-    let preview=route=="/v1/composer" && value["body"]["operation"]=="preview_open";
+    // preview_open and /v1/desktop commands may be slow; neither holds the global gate while dispatching.
+    let preview=(route=="/v1/composer" && value["body"]["operation"]=="preview_open") || route=="/v1/desktop";
+    // Polled read-only desktop commands (snapshot_since, terminal_poll...) need no exactly-once receipt.
+    let read_only_desktop=route=="/v1/desktop" && value["body"]["command"].as_str().is_some_and(crate::satellite_host::is_read_only);
     // Recheck revocation immediately before dispatch, including queued messages.
     if !pairing::edit(root,|r|Ok(r.devices.iter().any(|d|d.id==device.id && d.key==device.key)))? {return Err("Device revoked".into());}
-    if route!="/v1/snapshot" {
+    if route!="/v1/snapshot" && !read_only_desktop {
         // Claim before dispatch: after a crash, never replay a mutation with an uncertain outcome.
         let dir=root.join("companion/relay-receipts");fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
         for entry in fs::read_dir(&dir).map_err(|e|e.to_string())?.flatten() {
@@ -173,6 +176,29 @@ fn process(root:&Path,gate:&Mutex<()>,device:&pairing::Device,id:&str,request:&V
             assert_eq!(decoded["result"]["threads"][73]["messages"],if selected.is_some(){expected.clone()}else{json!([])});
         }
         host.join().unwrap();fs::remove_dir_all(root).unwrap();
+    }
+    fn desktop_request(device:&pairing::Device,id:&str,body:Value)->Value {
+        json!({"envelope":crypto::seal(&device.key,&format!("request:{}:{id}",device.id),&json!({"id":id,"route":"/v1/desktop","expires":crypto::now()+90,"body":body})).unwrap()})
+    }
+    fn receipts(root:&Path)->usize {fs::read_dir(root.join("companion/relay-receipts")).map(|d|d.count()).unwrap_or(0)}
+    #[test] fn desktop_route_is_accepted_and_only_mutations_claim_receipts() {
+        let (root,d)=fixture();let gate=Mutex::new(());
+        // Read-only commands are polled continuously: dispatched every time, never receipted.
+        for _ in 0..2 {
+            let id=crypto::random();
+            assert_eq!(process(&root,&gate,&d,&id,&desktop_request(&d,&id,json!({"command":"vscode_available","args":null}))).unwrap(),json!(false));
+        }
+        assert_eq!(receipts(&root),0);
+        // Mutating commands claim a receipt before dispatch, so a replay is refused.
+        let id=crypto::random();let req=desktop_request(&d,&id,json!({"command":"google_config_get","args":null}));
+        assert!(process(&root,&gate,&d,&id,&req).unwrap_err().contains("original Mac"));
+        assert_eq!(receipts(&root),1);
+        assert!(process(&root,&gate,&d,&id,&req).unwrap_err().contains("already received"));
+        // The desktop route must not hold the global gate while dispatching.
+        let held=gate.lock().unwrap();
+        let id=crypto::random();
+        assert!(process(&root,&Mutex::new(()),&d,&id,&desktop_request(&d,&id,json!({"command":"nope"}))).unwrap_err().contains("Unknown desktop command"));
+        drop(held);fs::remove_dir_all(root).unwrap();
     }
     #[test] fn stale_unknown_revoked_and_replayed_requests_fail_closed() {
         let (root,d)=fixture();let id=crypto::random();let gate=Mutex::new(());

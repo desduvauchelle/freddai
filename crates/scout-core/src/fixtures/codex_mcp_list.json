@@ -1,0 +1,16 @@
+[
+  {
+    "name": "global-lucy",
+    "enabled": true,
+    "disabled_reason": null,
+    "transport": {
+      "type": "streamable_http",
+      "url": "https://growth-stack.recursive-solutions.com/api/mcp/agency/mcp_agency_x",
+      "bearer_token_env_var": null,
+      "http_headers": null
+    },
+    "startup_timeout_sec": null,
+    "tool_timeout_sec": null,
+    "auth_status": "unknown"
+  }
+]

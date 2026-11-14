@@ -45,6 +45,31 @@ pub fn session_value(mut session: Session, loaded: bool) -> Value {
     value
 }
 
+/// Stable message-ID cursors keep older pages intact while new messages arrive.
+pub fn history_page(session: &Session, before: Option<&str>) -> Result<Value, String> {
+    let end = match before {
+        Some(id) => session.messages.iter().position(|m| m.id == id).ok_or("History cursor is no longer available. Reopen the thread.")?,
+        None => session.messages.len(),
+    };
+    let start = end.saturating_sub(60);
+    let mut messages = Vec::new();
+    for message in &session.messages[start..end] {
+        let mut copy = message.clone();
+        let details = if copy.role == "tool" {
+            let details = (copy.text.len(), text_hash(&copy.text));
+            copy.text = preview(&copy.text).into();
+            Some(details)
+        } else { None };
+        let mut value = json!(copy);
+        if let Some((bytes, hash)) = details {
+            value["toolTextBytes"] = json!(bytes);
+            value["toolTextHash"] = json!(hash);
+        }
+        messages.push(value);
+    }
+    Ok(json!({"messages":messages,"before":if start > 0 {Some(&session.messages[start].id)} else {None}}))
+}
+
 fn compact_message(message: &mut Value) {
     if message.get("toolTextBytes").is_none() && message["role"] == "tool" && message["text"].as_str().is_some_and(|text| text.len() > INLINE_TOOL_BYTES) {
         let Value::String(text) = message["text"].take() else { return };

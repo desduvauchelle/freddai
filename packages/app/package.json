@@ -12,7 +12,11 @@
     "./mobile-client": "./src/mobile/native-client.ts",
     "./mobile-fixture": "./src/mobile/fixture-client.ts",
     "./app-update": "./src/desktop/use-app-update.ts",
-    "./update-state": "./src/desktop/app-update.ts"
+    "./update-state": "./src/desktop/app-update.ts",
+    "./desktop/use-theme": "./src/desktop/use-theme.ts",
+    "./conversation/ThreadTranscript": "./src/conversation/ThreadTranscript.tsx",
+    "./conversation/MessageComposer": "./src/conversation/MessageComposer.tsx",
+    "./desktop/AgentRequest": "./src/desktop/AgentRequest.tsx"
   },
   "scripts": {
     "typecheck": "tsc",
@@ -22,6 +26,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@freddai/shared": "workspace:*",
     "@freddai/ui": "workspace:*",
     "@rive-app/canvas": "2.48.0",
     "@rive-app/react-canvas": "4.38.0",

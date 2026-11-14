@@ -1,0 +1,12 @@
+Checking MCP server health…
+
+claude.ai Claude Docs: https://api.anthropic.com/v1/pages/mcp - ✔ Connected
+claude.ai Zoom for Claude: https://mcp.zoom.us/mcp/zoom/streamable - ✔ Connected
+claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ✔ Connected
+claude.ai Google Calendar: https://calendarmcp.googleapis.com/mcp/v1 - ✔ Connected
+claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ✔ Connected
+claude.ai LiveCase Prod: https://www.livecase.com/api/v2/mcp - ! Needs authentication
+plugin:design:slack: https://mcp.slack.com/mcp (HTTP) - ! Needs authentication
+plugin:design:asana: https://mcp.asana.com/v2/mcp (HTTP) - ✘ Failed to connect — Incompatible auth server: does not support dynamic client registr
+plugin:design:google calendar:  (HTTP) - - Not configured
+plugin:design:gmail:  (HTTP) - - Not configured

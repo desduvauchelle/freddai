@@ -42,6 +42,11 @@ fn companion_product_usage(root: &Path, db: &Database) -> Value {
 
 const PORT: u16 = 49744;
 const LIMIT: u64 = 128 * 1024;
+/// `/v1/composer` carries base64 upload chunks (256 KiB raw => ~350 KiB JSON); every other route stays small.
+const COMPOSER_LIMIT: u64 = 512 * 1024;
+fn body_limit(route: &str) -> u64 { if route == "/v1/composer" || route == "/v1/desktop" { COMPOSER_LIMIT } else { LIMIT } }
+/// Max `generated_file` chunk over the companion/relay path: 2 MiB raw => ~2.8 MiB base64 JSON => ~5.6 MiB hex ciphertext, well under the 16 MiB relay cap.
+const COMPANION_FILE_CHUNK: u64 = 2 * 1024 * 1024;
 
 // The first provider turn may not have published its session ID yet. Its follow-ups
 // can already enter the host FIFO, which waits for the active turn to finish.
@@ -52,6 +57,12 @@ fn can_queue_reply(has_provider_session: bool, status: &str) -> bool {
 #[cfg(test)]
 mod reply_readiness_tests {
     use super::*;
+    #[test]
+    fn composer_route_allows_upload_chunks_but_others_stay_small() {
+        assert_eq!(body_limit("/v1/composer"), 512*1024);
+        for r in ["/v1/snapshot","/v1/reply","/v1/start","/v1/read"] { assert_eq!(body_limit(r), 128*1024); }
+        assert!(body_limit("/v1/composer") > 256*1024/3*4 + 4096);
+    }
     #[test]
     fn active_first_turn_accepts_queued_followups_before_provider_session_exists() {
         for status in ["starting", "running", "waiting"] { assert!(can_queue_reply(false, status)); }
@@ -88,6 +99,7 @@ fn project_snapshot_selection(db: &Database, thread: Option<&str>, scoped: bool)
         }
         json!({"id":s.id,"project":s.project,"origin":s.origin,"title":s.title,"status":s.status,"pinned":s.pinned,"scheduled":s.schedule_id.is_some() || s.options.scheduled,
             "updated":s.updated,"read_at":s.read_at,"last_user_message_at":s.last_user_message_at,"messages":if include_history { json!(s.messages) } else { json!([]) },
+            "deliveredRequests":s.requests.iter().filter(|id|id.starts_with("phone:")).collect::<Vec<_>>(),
             "tasks":if include_history { json!(s.tasks) } else { json!([]) },"messagesLoaded":include_history,"error":s.error,
             "canReply":s.pending.is_none() && (s.provider_id.is_some() || !s.agent_history.is_empty()) && db.accounts.iter().any(|a| a.id==s.account),
             "agent":s.account,"usage":s.usage,"pending":s.pending,"provider":db.accounts.iter().find(|a|a.id==s.account).map(|a|a.provider.as_str()),
@@ -244,7 +256,7 @@ fn composer(root: &Path, db: &Database, p: &Value) -> Result<Value,String> {
             if workspaces.iter().any(|w| !ids.insert(&w.id)) { return Err("Duplicate workspace id".into()); }
             host::call(root,"save_preferences",json!({"patch":{"workspaces":workspaces}}))
         }
-        "generated_file" => freddai_core::generated_files::chunk(db, text(input,"thread")?, text(input,"href")?, input["offset"].as_u64().unwrap_or(0)),
+        "generated_file" => freddai_core::generated_files::chunk(db, text(input,"thread")?, text(input,"href")?, input["offset"].as_u64().unwrap_or(0), Some(input["length"].as_u64().filter(|n|*n>0).unwrap_or(192*1024).min(COMPANION_FILE_CHUNK))),
         "models" => {
             let account = if let Some(s)=session { input["assistant"].as_str().unwrap_or(&s.account).to_string() } else {
                 let project=db.projects.iter().find(|x|Some(x.id.as_str())==input["project"].as_str()).ok_or("Project not found")?;
@@ -418,12 +430,58 @@ fn guard_schedule_save(root: &Path, mut input: Value) -> Result<Value,String> {
     target.remove("run_now");
     Ok(input)
 }
+/// `/v1/desktop`: `{"command": <tauri command name>, "args": <webview args or null>}` run on this host.
+fn desktop_command(root: &Path, p: &Value) -> Result<Value,String> {
+    let command=p["command"].as_str().filter(|c|!c.is_empty()).ok_or("Missing desktop command")?;
+    crate::satellite_host::dispatch(root, command, &p["args"])
+}
 pub(crate) fn dispatch_for_device(root: &Path, device: &crate::companion_pairing::Device, route: &str, p: Value) -> Result<Value,String> {
+    if route == "/v1/desktop" { return desktop_command(root, &p); }
     if route == "/v1/composer" && p["operation"] == "preview_open" { return preview_open(root, device, &p["input"]); }
     dispatch(root, route, p)
 }
+// Active background hosts upgrade only when idle. Keep their projected metadata intact
+// and never reconstruct tool bodies while serving the new paged companion protocol.
+fn paged_host_snapshot(root: &Path, thread: Option<&str>) -> Result<Value, String> {
+    match host::call(root, "companion_snapshot", json!({"thread":thread})) {
+        Err(error) if error == "Unknown host command: companion_snapshot" => {
+            let mut value = host::call(root, "snapshot_since", json!({"revision":0,"openThreads":thread.into_iter().collect::<Vec<_>>()}))?;
+            let mut page = Value::Null;
+            if let Some(sessions) = value["sessions"].as_array_mut() {
+                for session in sessions {
+                    if session["id"].as_str() == thread { page = legacy_history_page(session, None)?; }
+                    session["messages"] = json!([]);
+                }
+            }
+            value["historyPage"] = page;
+            Ok(value)
+        }
+        result => result,
+    }
+}
+fn legacy_history_page(session: &Value, before: Option<&str>) -> Result<Value, String> {
+    let messages = session["messages"].as_array().ok_or("History unavailable")?;
+    let end = match before {
+        Some(id) => messages.iter().position(|m| m["id"] == id).ok_or("History cursor is no longer available. Reopen the thread.")?,
+        None => messages.len(),
+    };
+    let start = end.saturating_sub(60);
+    Ok(json!({"messages":&messages[start..end],"before":if start > 0 {messages[start]["id"].clone()} else {Value::Null}}))
+}
+fn companion_history(root: &Path, input: Value) -> Result<Value, String> {
+    match host::call(root, "thread_history", input.clone()) {
+        Err(error) if error == "Unknown host command: thread_history" => {
+            let thread = text(&input,"thread")?;
+            let value = host::call(root,"snapshot_since",json!({"revision":0,"openThreads":[thread]}))?;
+            let session = value["sessions"].as_array().and_then(|sessions| sessions.iter().find(|s| s["id"] == thread && s["archived"] != true && s["deleted_at"].is_null())).ok_or("Thread unavailable")?;
+            legacy_history_page(session, input["before"].as_str())
+        }
+        result => result,
+    }
+}
 pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,String> {
-    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("commander_settings_get"|"commander_settings_save"|"generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
+    if route == "/v1/composer" && p["operation"] == "thread_history" { return companion_history(root, p["input"].clone()); }
+    if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("tool_text"|"commander_settings_get"|"commander_settings_save"|"generated_file"|"day_summary"|"summarize_day"|"save_schedule"|"schedule_action"|"google_capability"|"google_accounts"|"google_disconnect"|"google_triggers"|"google_trigger_save"|"google_trigger_delete"|"commander_state"|"commander_proposals"|"commander_proposal_respond"|"commander_todos"|"commander_todo_save"|"commander_notes"|"commander_note_read"|"commander_note_write"|"commander_profile"|"commander_profile_save"|"commander_revision_restore")) {
         let operation = text(&p,"operation")?;
         if operation == "google_capability" { return Ok(crate::companion_operations::google_capability(&host::call(root, "hello", json!({}))?)); }
         let mut input = p["input"].clone();
@@ -434,19 +492,35 @@ pub(crate) fn dispatch(root: &Path, route: &str, p: Value) -> Result<Value,Strin
         return Ok(result);
     }
     if route == "/v1/composer" && p["operation"] == "upload" { return upload(root, &p["input"]); }
+    #[cfg(target_os = "macos")]
+    if route == "/v1/composer" { if let Some(op) = p["operation"].as_str().filter(|o| o.starts_with("bug_walk_")) { return crate::bug_walk::companion::call(root, op, &p["input"]); } }
     if route == "/v1/composer" && p["operation"] == "voice_connection" { return crate::voice::connections::call(root, p["input"]["operation"].as_str().unwrap_or(""), &p["input"]["input"]); }
     if route == "/v1/composer" && matches!(p["operation"].as_str(), Some("voice"|"transcribe")) { return voice_composer(root, &p); }
     // Network details only (hardware MACs, IPs, broadcast); no thread, account or project data.
     if route == "/v1/wake" { return crate::wake::mac::collect().map(|w| json!(w)); }
     let scoped = route != "/v1/snapshot" || p["scoped"].as_bool().unwrap_or(false);
     let thread = if route == "/v1/snapshot" {p["thread"].as_str()} else {None};
-    let (db, supports_workspaces, supports_pins) = snapshot(root, scoped, thread)?;
+    let paged = route == "/v1/snapshot" && p["paged"].as_bool().unwrap_or(false);
+    let mut history_page = Value::Null;
+    let (db, supports_workspaces, supports_pins) = if paged {
+        let mut value = paged_host_snapshot(root, thread)?;
+        history_page = value["historyPage"].take();
+        let mut db: Database = serde_json::from_value(value).map_err(|e|e.to_string())?;
+        apply_account_order(root, &mut db);
+        (db, true, true)
+    } else { snapshot(root, scoped, thread)? };
     if route == "/v1/composer" {
         if p["operation"] == "save_workspaces" && !supports_workspaces { return Err("The background host needs an update before editing workspaces. Let active work finish and reopen Freddai on your Mac.".into()); }
         return composer(root, &db, &p);
     }
     if route == "/v1/snapshot" {
         let mut result = project_snapshot_selection(&db,p["thread"].as_str(),p["scoped"].as_bool().unwrap_or(false));
+        if paged {
+            if let Some(row) = result["threads"].as_array_mut().and_then(|rows| rows.iter_mut().find(|row| row["id"].as_str() == thread)) {
+                row["messages"] = history_page["messages"].take();
+                row["historyBefore"] = history_page["before"].take();
+            }
+        }
         if !supports_workspaces { result.as_object_mut().unwrap().remove("workspaces"); }
         if !supports_pins {
             for thread in result["threads"].as_array_mut().unwrap() { thread.as_object_mut().unwrap().remove("pinned"); }
@@ -553,16 +627,17 @@ pub fn start(root: PathBuf) -> Result<bool,String> {
             let started=Instant::now();
             let mut reason=String::new();
             let pairing=["/v1/pair/request","/v1/pair/claim"].contains(&route.as_str());
-            let (mut status,result)=if req.method()!=&Method::Post || !(pairing || ["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake"].contains(&route.as_str())) {reason="unknown route or method".into();(404,Err("Unknown companion operation".into()))}
+            let (mut status,result)=if req.method()!=&Method::Post || !(pairing || ["/v1/snapshot","/v1/start","/v1/reply","/v1/respond","/v1/action","/v1/composer","/v1/read","/v1/wake","/v1/desktop"].contains(&route.as_str())) {reason="unknown route or method".into();(404,Err("Unknown companion operation".into()))}
             else if !pairing && crate::companion_pairing::device(&root,&auth).ok().flatten().is_none() {reason="auth failure: no paired device matches the bearer token".into();(401,Err("Device is not authorized. Pair this iPhone in Mac settings.".into()))}
             else {
                 let mut body=Vec::new();
-                let result=req.as_reader().take(LIMIT+1).read_to_end(&mut body);
-                if result.is_err() || body.len() as u64>LIMIT {reason="request body unreadable or over limit".into();(413,Err("Request is too large".into()))}
+                let result=req.as_reader().take(body_limit(&route)+1).read_to_end(&mut body);
+                if result.is_err() || body.len() as u64>body_limit(&route) {reason="request body unreadable or over limit".into();(413,Err("Request is too large".into()))}
                 else {
                     // preview_open may spend seconds dialing the relay, so it must not hold the global gate; it only reads state.
                     let preview=route=="/v1/composer" && serde_json::from_slice::<Value>(&body).is_ok_and(|p|p["operation"]=="preview_open");
-                    let _lock=(!preview).then(||gate.lock().unwrap());
+                    // /v1/desktop commands (git push, terminal polls...) may be slow and must not stall snapshot polls.
+                    let _lock=(!preview && route!="/v1/desktop").then(||gate.lock().unwrap());
                     let caught=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||serde_json::from_slice(&body).map_err(|_|"Invalid request".to_string()).and_then(|p|match route.as_str() {
                         "/v1/pair/request"=>crate::companion_pairing::request(&root,&p),
                         "/v1/pair/claim"=>crate::companion_pairing::claim(&root,&p),
@@ -1195,6 +1270,43 @@ mod scoped_host_transport_tests {
     use super::*;
     use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
     #[test]
+    fn paged_compatibility_keeps_tools_lazy_and_exposes_older_cursor() {
+        let root=std::env::temp_dir().join(format!("fr-page-{}",&crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket=UnixListener::bind(root.join("host.sock")).unwrap();
+        let worker=std::thread::spawn(move || {
+            for step in 0..4 {
+                let (mut connection,_)=socket.accept().unwrap();
+                let mut line=String::new();
+                BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+                let request:Value=serde_json::from_str(&line).unwrap();
+                let reply = if step == 0 || step == 2 {
+                    let method = if step == 0 {"companion_snapshot"} else {"thread_history"};
+                    assert_eq!(request["method"], method);
+                    json!({"error":format!("Unknown host command: {method}")})
+                } else {
+                    assert_eq!(request["method"], "snapshot_since");
+                    let mut db=serde_json::to_value(Database::default()).unwrap();
+                    db["sessions"]=json!([{"id":"open","project":"p","account":"none","title":"Open","status":"done","updated":1,
+                        "messages":(0..125).map(|n|json!({"id":format!("m{n}"),"role":"tool","text":"{}","toolTextBytes":900000,"toolTextHash":"hash"})).collect::<Vec<_>>()}]);
+                    json!({"result":db})
+                };
+                writeln!(connection,"{reply}").unwrap();
+            }
+        });
+        let result=dispatch(&root,"/v1/snapshot",json!({"scoped":true,"paged":true,"thread":"open"})).unwrap();
+        let row=&result["threads"][0];
+        assert_eq!(row["messages"].as_array().unwrap().len(),60);
+        assert_eq!(row["historyBefore"],"m65");
+        assert_eq!(row["messages"][0]["toolTextBytes"],900000);
+        assert_eq!(row["messages"][0]["text"],"{}");
+        crate::companion_operations::validate("thread_history").unwrap();
+        crate::companion_operations::validate("tool_text").unwrap();
+        let older=dispatch(&root,"/v1/composer",json!({"operation":"thread_history","input":{"thread":"open","before":"m65"}})).unwrap();
+        assert_eq!(older["before"],"m5");
+        worker.join().unwrap();fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn scoped_connection_restores_open_tool_history_without_loading_closed_history() {
         let root=std::env::temp_dir().join(format!("fr-tool-{}",&crate::companion_crypto::random()[..12]));
         fs::create_dir_all(&root).unwrap();
@@ -1267,5 +1379,43 @@ mod scheduled_indicator_tests {
                 assert_eq!(project_snapshot_selection(&db, None, scoped)["threads"][0]["scheduled"], expected);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod desktop_route_tests {
+    use super::*;
+    use std::{io::{BufRead, BufReader, Write}, os::unix::net::UnixListener};
+    fn device() -> crate::companion_pairing::Device {
+        crate::companion_pairing::Device{id:crate::companion_crypto::random(),name:"Synthetic".into(),key:crate::companion_crypto::random(),mailbox:crate::companion_crypto::random(),paired_at:0}
+    }
+    #[test]
+    fn desktop_route_has_composer_sized_body_limit() {
+        assert_eq!(body_limit("/v1/desktop"), COMPOSER_LIMIT);
+        assert_eq!(body_limit("/v1/snapshot"), LIMIT);
+    }
+    #[test]
+    fn desktop_route_reaches_the_host_and_rejects_bad_requests() {
+        let root = std::env::temp_dir().join(format!("fr-desktop-route-{}", &crate::companion_crypto::random()[..12]));
+        fs::create_dir_all(&root).unwrap();
+        let socket = UnixListener::bind(root.join("host.sock")).unwrap();
+        let host = std::thread::spawn(move || {
+            let (mut connection, _) = socket.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(connection.try_clone().unwrap()).read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "respond");
+            assert_eq!(request["params"], json!({"session":"s","requestId":"r","allow":true,"answers":{}}));
+            writeln!(connection, "{}", json!({"result":{"done":true}})).unwrap();
+        });
+        let d = device();
+        let out = dispatch_for_device(&root, &d, "/v1/desktop", json!({"command":"respond","args":{"session":"s","requestId":"r","allow":true,"answers":{}}})).unwrap();
+        assert_eq!(out, json!({"done":true}));
+        host.join().unwrap();
+        // Blocked and unknown commands fail loudly and never reach a host (there is no socket left).
+        assert!(dispatch_for_device(&root, &d, "/v1/desktop", json!({"command":"google_config_get","args":null})).unwrap_err().contains("original Mac"));
+        assert_eq!(dispatch_for_device(&root, &d, "/v1/desktop", json!({"command":"nope"})).unwrap_err(), "Unknown desktop command: nope");
+        assert_eq!(dispatch_for_device(&root, &d, "/v1/desktop", json!({"args":{}})).unwrap_err(), "Missing desktop command");
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@freddai/app": "workspace:*",
+    "@freddai/scout": "workspace:*",
+    "@freddai/shared": "workspace:*",
     "@freddai/ui": "workspace:*",
     "@tauri-apps/api": "^2.12.4",
     "react": "^19.2.0",

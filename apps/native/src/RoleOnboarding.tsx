@@ -1,3 +1,4 @@
+import './satellite.css';
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@freddai/ui/components/button';

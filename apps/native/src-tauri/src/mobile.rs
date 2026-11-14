@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "macos", allow(dead_code))] // macOS only borrows the pairing/transport half (satellite_desktop); the phone runtime is unused there.
 use crate::companion_crypto::{self as crypto, Envelope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,11 +9,11 @@ use crate::companion_enrollment::Provision;
 #[derive(Clone)]
 struct Connection { provision:Provision, local:reqwest::Client }
 #[derive(Clone,Serialize,Deserialize)]
-struct Device {id:String,key:String,mailbox:String}
+pub(crate) struct Device {id:String,key:String,mailbox:String}
 #[derive(Clone,Serialize,Deserialize)]
-struct Credential {#[serde(default)] provision:Option<Provision>,device:Device,relay:Option<String>,#[serde(default)] wake:Option<crate::wake::WakeInfo>}
+pub(crate) struct Credential {#[serde(default)] provision:Option<Provision>,device:Device,relay:Option<String>,#[serde(default)] wake:Option<crate::wake::WakeInfo>}
 struct Pending {id:String,claim:String,connection:Connection}
-struct Companion {#[cfg(target_os = "android")] app:tauri::AppHandle,internet:reqwest::Client,connection:Mutex<Option<Connection>>,credential:Mutex<Option<Credential>>,pending:Mutex<Option<Pending>>,storage_error:Option<String>,relay_active:AtomicBool}
+pub(crate) struct Companion {#[cfg(target_os = "android")] app:tauri::AppHandle,internet:reqwest::Client,connection:Mutex<Option<Connection>>,credential:Mutex<Option<Credential>>,pending:Mutex<Option<Pending>>,storage_error:Option<String>,relay_active:AtomicBool}
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 #[cfg(target_os = "ios")]
 const SERVICE:&str="com.freddai.companion.pairing.v1";
@@ -26,12 +27,12 @@ fn save(h:&Companion,c:Credential)->Result<(),String> {
     tauri_plugin_native_shell::write_credential(&h.app, std::str::from_utf8(&data).map_err(|_|"Invalid credential encoding")?)?;
     *h.credential.lock().map_err(|_|"Device storage busy")?=Some(c);Ok(())
 }
-fn credential(h:&Companion)->Result<Credential,String> {
+pub(crate) fn credential(h:&Companion)->Result<Credential,String> {
     if let Some(error)=&h.storage_error{return Err(error.clone());}
     h.credential.lock().map_err(|_|"Device storage busy")?.clone().ok_or_else(||"Pair this phone in Freddai settings on your Mac.".into())
 }
 #[tauri::command] fn platform()->&'static str { std::env::consts::OS }
-#[tauri::command] fn companion_pairing_status(h:State<'_,Companion>)->Result<bool,String> {
+#[tauri::command] pub(crate) fn companion_pairing_status(h:State<'_,Companion>)->Result<bool,String> {
     if let Some(error)=&h.storage_error{return Err(error.clone());}
     Ok(h.credential.lock().map_err(|_|"Device storage busy")?.is_some())
 }
@@ -42,7 +43,7 @@ async fn pairing_call(connection:&Connection,route:&str,body:Value)->Result<Valu
     decode(read_json(response,route,&host_of(&connection.provision.endpoint),started,8).await?)
 }
 #[tauri::command]
-async fn companion_pair(h:State<'_,Companion>,code:String,name:String,setup:Option<String>)->Result<(),String> {
+pub(crate) async fn companion_pair(h:State<'_,Companion>,code:String,name:String,setup:Option<String>)->Result<(),String> {
     let provision=match setup.filter(|s|!s.trim().is_empty()) {
         Some(text)=>Provision::parse(&text)?,
         None=>saved_provision(&h)?.ok_or("Paste the Mac setup from Freddai settings")?,
@@ -55,7 +56,7 @@ async fn companion_pair(h:State<'_,Companion>,code:String,name:String,setup:Opti
     *h.pending.lock().map_err(|_|"Pairing busy")?=Some(Pending{id,claim,connection});Ok(())
 }
 #[tauri::command]
-async fn companion_pair_claim(h:State<'_,Companion>)->Result<bool,String> {
+pub(crate) async fn companion_pair_claim(h:State<'_,Companion>)->Result<bool,String> {
     let (body,connection)={let p=h.pending.lock().map_err(|_|"Pairing busy")?;let p=p.as_ref().ok_or("Enter a new code from your Mac")?;(json!({"id":p.id,"claim":p.claim}),p.connection.clone())};
     let result=pairing_call(&connection,"/v1/pair/claim",body).await?;
     if result["waiting"]==true{return Ok(false);}
@@ -119,9 +120,9 @@ async fn remote_inner(h:&Companion,c:&Credential,route:&str,body:Value,polls:u32
     }
     Err("Your Mac did not respond through the relay in time. The connection may be interrupted. Keep Freddai running on your Mac; reconnection is automatic.".into())
 }
-async fn call(h:&Companion,route:&str,body:Value)->Result<Value,String> {call_slow(h,route,body,None,40).await}
+pub(crate) async fn call(h:&Companion,route:&str,body:Value)->Result<Value,String> {call_slow(h,route,body,None,40).await}
 /// Like `call`, with a longer local-network timeout and more relay polls for operations the Mac takes seconds to answer (dictation).
-async fn call_slow(h:&Companion,route:&str,body:Value,local_timeout:Option<Duration>,polls:u32)->Result<Value,String> {
+pub(crate) async fn call_slow(h:&Companion,route:&str,body:Value,local_timeout:Option<Duration>,polls:u32)->Result<Value,String> {
     let c=credential(h)?;
     if route!="/v1/snapshot" && h.relay_active.load(Ordering::Relaxed) {return remote(h,&c,route,body,polls).await;}
     let provision=c.provision.clone().or(legacy_provision()).ok_or("Pair this phone again using Mac setup")?;
@@ -170,9 +171,9 @@ async fn call_slow(h:&Companion,route:&str,body:Value,local_timeout:Option<Durat
     }
 }
 #[tauri::command]
-async fn companion_snapshot(h:State<'_,Companion>,thread:Option<String>)->Result<Value,String> {
+pub(crate) async fn companion_snapshot(h:State<'_,Companion>,thread:Option<String>)->Result<Value,String> {
     // A bounded read-only refresh: relay polling must not leave initial sync spinning for minutes.
-    tokio::time::timeout(Duration::from_secs(20),call(&h,"/v1/snapshot",json!({"scoped":true,"thread":thread})))
+    tokio::time::timeout(Duration::from_secs(20),call(&h,"/v1/snapshot",json!({"scoped":true,"paged":true,"thread":thread})))
         .await.map_err(|_|"Connection check timed out. Retrying your Mac connection.".to_string())?
 }
 #[tauri::command]
@@ -180,7 +181,7 @@ async fn companion_start(h:State<'_,Companion>,project:String,prompt:String,requ
 #[tauri::command]
 async fn companion_reply(h:State<'_,Companion>,thread:String,prompt:String,request_id:String,options:Option<Value>)->Result<Value,String> {call(&h,"/v1/reply",json!({"thread":thread,"prompt":prompt,"requestId":request_id,"options":options})).await}
 #[tauri::command]
-async fn companion_composer(h:State<'_,Companion>,operation:String,input:Value)->Result<Value,String> {
+pub(crate) async fn companion_composer(h:State<'_,Companion>,operation:String,input:Value)->Result<Value,String> {
     crate::companion_operations::validate(&operation)?;
     if operation=="transcribe" {return call_slow(&h,"/v1/composer",json!({"operation":operation,"input":input}),Some(Duration::from_secs(150)),150).await;}
     call(&h,"/v1/composer",json!({"operation":operation,"input":input})).await
@@ -189,7 +190,7 @@ const UPLOAD_LIMIT:u64=25*1024*1024;
 /// Uploads a file the native composer copied into `<tmp>/freddai-attachments`, using the same begin/chunk/finish flow as the web picker.
 /// Only the path crosses the WebView bridge; the bytes are read here so large photos never pass through JS.
 #[tauri::command]
-async fn companion_upload_path(h:State<'_,Companion>,path:String,name:String,mime:Option<String>)->Result<Value,String> {
+pub(crate) async fn companion_upload_path(h:State<'_,Companion>,path:String,name:String,mime:Option<String>)->Result<Value,String> {
     let _=mime; // The Mac derives the MIME type from the finished upload.
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     let cache=std::env::temp_dir();
@@ -198,10 +199,14 @@ async fn companion_upload_path(h:State<'_,Companion>,path:String,name:String,mim
     let root=std::fs::canonicalize(cache.join("freddai-attachments")).map_err(|_|"Attachment is no longer available. Remove it and attach it again.")?;
     let file=std::fs::canonicalize(&path).map_err(|_|"Attachment is no longer available. Remove it and attach it again.")?;
     if !file.starts_with(&root){return Err("Attachment must come from the Freddai attachment folder.".into());}
-    let size=std::fs::metadata(&file).map_err(|_|"Cannot read attachment")?.len();
+    upload_file(&h,&file,&name).await
+}
+/// Uploads any readable local file (<=25 MB) through the begin/chunk/finish flow; the Mac imports it as an attachment.
+pub(crate) async fn upload_file(h:&Companion,file:&std::path::Path,name:&str)->Result<Value,String> {
+    let size=std::fs::metadata(file).map_err(|_|"Cannot read attachment")?.len();
     if size>UPLOAD_LIMIT{return Err("Each attachment must be 25 MB or smaller".into());}
-    let bytes=tokio::fs::read(&file).await.map_err(|_|"Cannot read attachment")?;
-    let upload=|input:Value|call(&h,"/v1/composer",json!({"operation":"upload","input":input}));
+    let bytes=tokio::fs::read(file).await.map_err(|_|"Cannot read attachment")?;
+    let upload=|input:Value|call(h,"/v1/composer",json!({"operation":"upload","input":input}));
     let id=upload(json!({"action":"begin","name":name})).await?;
     for (index,chunk) in bytes.chunks(24*1024).enumerate() {
         upload(json!({"action":"chunk","id":id,"offset":index*24*1024,"data":hex::encode(chunk)})).await?;
@@ -238,9 +243,61 @@ async fn transcribe_file_upload(h:&Companion,file:&std::path::Path)->Result<Valu
     }
     call_slow(h,"/v1/composer",json!({"operation":"transcribe","input":{"id":id,"size":bytes.len()}}),Some(Duration::from_secs(150)),150).await
 }
+const BUG_WALK_LIMIT:u64=400*1024*1024;
+/// Raw bytes per `bug_walk_chunk`. Direct LAN requests allow up to 256 KiB raw; the relay caps hex-encoded ciphertext at 300 KiB, so it gets smaller chunks.
+const BUG_WALK_CHUNK_DIRECT:usize=192*1024;
+const BUG_WALK_CHUNK_RELAY:usize=80*1024;
+/// Streams a screen recording the native layer wrote to `<cache>/freddai-bugwalk` to the Mac (begin -> chunk... -> finish).
+/// The file is read chunk by chunk, never whole. Progress is emitted as `bug-walk://upload` `{sent,total}`.
+#[tauri::command]
+pub(crate) async fn companion_bug_walk_send(app:tauri::AppHandle,h:State<'_,Companion>,path:String,name:String,device:String,opts:Value)->Result<Value,String> {
+    use tauri::Emitter;
+    use base64::Engine;
+    use tokio::io::AsyncReadExt;
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    let cache=std::env::temp_dir();
+    #[cfg(target_os = "android")]
+    let cache={use tauri::Manager; app.path().app_cache_dir().map_err(|_|"Cannot locate recording folder")?};
+    let gone="The screen recording is no longer available. Record or choose it again.";
+    let file=std::fs::canonicalize(&path).map_err(|_|gone)?;
+    let allowed=["freddai-bugwalk","freddai-attachments"].iter().filter_map(|d|std::fs::canonicalize(cache.join(d)).ok()).any(|root|file.starts_with(&root)&&file!=root);
+    if !allowed {return Err("Screen recording must come from the Freddai recording folder.".into());}
+    let total=std::fs::metadata(&file).map_err(|_|"Cannot read the screen recording")?.len();
+    if total==0 {return Err("The screen recording is empty".into());}
+    if total>BUG_WALK_LIMIT {return Err("Screen recording is too large (max 400 MB)".into());}
+    let device=if device.trim().is_empty() {"iPhone".to_string()} else {device};
+    let op=|operation:&'static str,input:Value|call(&h,"/v1/composer",json!({"operation":operation,"input":input}));
+    let progress=|sent:u64|{let _=app.emit("bug-walk://upload",json!({"sent":sent,"total":total}));};
+    progress(0);
+    let begun=op("bug_walk_begin",json!({"name":name,"device":device,"opts":opts})).await?;
+    let id=begun.get("id").cloned().ok_or("The Mac did not accept the screen recording")?;
+    let mut reader=tokio::fs::File::open(&file).await.map_err(|_|gone)?;
+    let mut buffer=vec![0u8;BUG_WALK_CHUNK_DIRECT];
+    let mut offset:u64=0;
+    while offset<total {
+        // The transport can flip to the relay mid-upload; size each chunk for the path it will take.
+        let chunk=if h.relay_active.load(Ordering::Relaxed) {BUG_WALK_CHUNK_RELAY} else {BUG_WALK_CHUNK_DIRECT};
+        let want=std::cmp::min(chunk as u64,total-offset) as usize;
+        reader.read_exact(&mut buffer[..want]).await.map_err(|_|"Cannot read the screen recording")?;
+        let data=base64::engine::general_purpose::STANDARD.encode(&buffer[..want]);
+        let input=json!({"id":id,"offset":offset,"data":data});
+        // The Mac treats an exact retry of the last chunk as idempotent, so one retry is safe.
+        if let Err(first)=op("bug_walk_chunk",input.clone()).await {
+            eprintln!("companion.bug_walk.chunk_retry offset={offset} error={first}");
+            op("bug_walk_chunk",input).await?;
+        }
+        offset+=want as u64;
+        progress(offset);
+    }
+    op("bug_walk_finish",json!({"id":id,"size":total})).await
+}
+#[tauri::command]
+pub(crate) async fn companion_bug_walk_status(h:State<'_,Companion>,id:String)->Result<Value,String> {
+    call(&h,"/v1/composer",json!({"operation":"bug_walk_status","input":{"id":id}})).await
+}
 /// Opens a Mac `localhost:<port>` page through the preview tunnel (docs/preview-tunnel.md). Errors are named `preview_*` strings.
 #[tauri::command]
-async fn preview_open(app:tauri::AppHandle,h:State<'_,Companion>,thread_id:String,url:String,start:Option<bool>)->Result<Value,String> {
+pub(crate) async fn preview_open(app:tauri::AppHandle,h:State<'_,Companion>,thread_id:String,url:String,start:Option<bool>)->Result<Value,String> {
     let auth=||{let c=credential(&h)?;Ok(crate::preview_device::TunnelAuth{relay:c.relay.clone(),token:c.device.mailbox.clone(),key:c.device.key.clone()})};
     let start=start.unwrap_or(false);
     let rpc=|mut input:Value|{input["start"]=json!(start);call(&h,"/v1/composer",json!({"operation":"preview_open","input":input}))};
@@ -256,17 +313,17 @@ async fn companion_merge_read(h:State<'_,Companion>,cursors:Value)->Result<Value
 async fn companion_respond(h:State<'_,Companion>,thread:String,request_id:String,allow:bool,answers:Value)->Result<Value,String> {call(&h,"/v1/respond",json!({"thread":thread,"requestId":request_id,"allow":allow,"answers":answers})).await}
 /// Asks the Mac for its hardware MAC/broadcast details and keeps them (with the credential) for Wake Mac.
 #[tauri::command]
-async fn companion_wake_refresh(h:State<'_,Companion>)->Result<crate::wake::WakeInfo,String> {
+pub(crate) async fn companion_wake_refresh(h:State<'_,Companion>)->Result<crate::wake::WakeInfo,String> {
     let info=crate::wake::parse_wake_info(&call(&h,"/v1/wake",json!({})).await?)?;
     let mut c=credential(&h)?;
     if c.wake.as_ref()!=Some(&info){c.wake=Some(info.clone());save(&h,c)?;}
     Ok(info)
 }
 #[tauri::command]
-fn companion_wake_info(h:State<'_,Companion>)->Result<Option<crate::wake::WakeInfo>,String> {Ok(credential(&h)?.wake)}
+pub(crate) fn companion_wake_info(h:State<'_,Companion>)->Result<Option<crate::wake::WakeInfo>,String> {Ok(credential(&h)?.wake)}
 /// Sends Wake-on-LAN magic packets on the local network. Returns how many datagrams were sent.
 #[tauri::command]
-fn companion_wake(h:State<'_,Companion>)->Result<usize,String> {
+pub(crate) fn companion_wake(h:State<'_,Companion>)->Result<usize,String> {
     let info=credential(&h)?.wake.ok_or("No wake details saved for your Mac yet. Connect to it once on its Wi-Fi or Ethernet network.")?;
     crate::wake::send(&info)
 }
@@ -279,7 +336,8 @@ fn legacy_provision()->Option<Provision> {
 fn saved_provision(h:&Companion)->Result<Option<Provision>,String> {
     Ok(h.credential.lock().map_err(|_|"Device storage busy")?.as_ref().and_then(|c|c.provision.clone()).or(legacy_provision()))
 }
-pub fn run(context: tauri::Context<tauri::Wry>) {
+/// Builds the pairing/transport state. Shared by the phone runtime and the satellite Mac runtime.
+pub(crate) fn build_companion(app:&tauri::AppHandle)->Companion {
     let internet=reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none()).build().expect("Cannot create relay client");
     #[cfg(any(target_os = "ios", target_os = "macos"))]
     let (credential,storage_error)=match security_framework::passwords::get_generic_password(SERVICE,"device") {
@@ -287,19 +345,25 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
         Err(e) if e.code()==-25300=>(None,None),
         Err(_)=>(None,Some("Unlock your iPhone to read its pairing credentials".into())),
     };
+    #[cfg(target_os = "android")]
+    let (credential,storage_error)=match tauri_plugin_native_shell::read_credential(app) {
+        Ok(Some(data)) => match serde_json::from_str(&data) { Ok(c)=>(Some(c),None), Err(_)=>(None,Some("Cannot read saved pairing credentials".into())) },
+        Ok(None)=>(None,None), Err(error)=>(None,Some(error)),
+    };
+    #[cfg(not(target_os = "android"))]
+    let _=app;
+    Companion{#[cfg(target_os = "android")] app:app.clone(),internet,connection:Mutex::new(None),credential:Mutex::new(credential),pending:Mutex::new(None),storage_error,relay_active:AtomicBool::new(false)}
+}
+pub fn run(context: tauri::Context<tauri::Wry>) {
     let builder=tauri::Builder::default().plugin(tauri_plugin_opener::init());
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let builder=builder.plugin(tauri_plugin_native_shell::init());
     #[cfg(target_os = "macos")]
     let builder=builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_notification::init());
-    builder.setup(move |app| {
+    builder.setup(|app| {
         use tauri::Manager;
-        #[cfg(target_os = "android")]
-        let (credential,storage_error)=match tauri_plugin_native_shell::read_credential(app.handle()) {
-            Ok(Some(data)) => match serde_json::from_str(&data) { Ok(c)=>(Some(c),None), Err(_)=>(None,Some("Cannot read saved pairing credentials".into())) },
-            Ok(None)=>(None,None), Err(error)=>(None,Some(error)),
-        };
-        app.manage(Companion{#[cfg(target_os = "android")] app:app.handle().clone(),internet,connection:Mutex::new(None),credential:Mutex::new(credential),pending:Mutex::new(None),storage_error,relay_active:AtomicBool::new(false)});
+        let companion=build_companion(app.handle());
+        app.manage(companion);
         #[cfg(target_os = "macos")]
         {
             let config=app.config().app.windows.first().cloned().ok_or("Missing window configuration")?;
@@ -318,6 +382,6 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             #[cfg(target_os = "macos")] crate::updater::install_update,
             #[cfg(target_os = "macos")] crate::updater::restart_app,
             #[cfg(target_os = "macos")] crate::updater::open_release_page,
-            platform,companion_wake_refresh,companion_wake_info,companion_wake,companion_pairing_status,companion_pair,companion_pair_claim,companion_snapshot,companion_start,companion_reply,companion_composer,companion_upload_path,companion_transcribe_path,companion_respond,preview_open,companion_action,companion_mark_read,companion_merge_read])
+            platform,companion_wake_refresh,companion_wake_info,companion_wake,companion_pairing_status,companion_pair,companion_pair_claim,companion_snapshot,companion_start,companion_reply,companion_composer,companion_upload_path,companion_transcribe_path,companion_bug_walk_send,companion_bug_walk_status,companion_respond,preview_open,companion_action,companion_mark_read,companion_merge_read])
         .run(context).expect("Cannot run mobile companion");
 }

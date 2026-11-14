@@ -153,7 +153,9 @@ pub fn dispatch(rt: &Runtime, method: &str, p: Value) -> Result<Value, String> {
             );
             value
         }
-        "generated_file" => rt.generated_file(&text(&p, "thread")?, &text(&p, "href")?, p["offset"].as_u64().unwrap_or(0))?,
+        "companion_snapshot" => rt.companion_snapshot(p["thread"].as_str())?,
+        "thread_history" => rt.thread_history(&text(&p, "thread")?, p["before"].as_str())?,
+        "generated_file" => rt.generated_file(&text(&p, "thread")?, &text(&p, "href")?, p["offset"].as_u64().unwrap_or(0), p["length"].as_u64())?,
         "tool_text" => rt.tool_text(&text(&p, "thread")?, &text(&p, "message")?, p["offset"].as_u64().unwrap_or(0) as usize, p["hash"].as_str())?,
         "detect_agents" => json!(crate::runtime::detect_agents()),
         "detect_existing_sign_ins" => json!(crate::runtime::detect_existing_sign_ins()),

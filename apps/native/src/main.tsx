@@ -21,6 +21,11 @@ async function boot() {
     createRoot(document.getElementById("root")!).render(<RecordingPill />);
     return;
   }
+  if (new URLSearchParams(window.location.search).get("app") === "scout") {
+    const { ScoutApp } = await import("@freddai/scout");
+    createRoot(document.getElementById("root")!).render(<StrictMode><ScoutApp /></StrictMode>);
+    return;
+  }
   const platform = isTauri() ? await invoke<string>("platform") : "browser";
   const satellite = isTauri() && await invoke<boolean>("satellite_mode").catch(() => false);
   const onboarding = platform === "macos" && !satellite && await invoke<boolean>("satellite_onboarding_needed");
