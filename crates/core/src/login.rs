@@ -246,7 +246,7 @@ mod tests {
         let m = LoginManager::default();
         m.start("a".into(), cmd("echo 'navigate to this URL:'; echo 'https://auth.example.com/oauth?x=1'; sleep 30"), || Ok(true)).unwrap();
         let mut url = None;
-        for _ in 0..100 {
+        for _ in 0..500 {
             url = m.state("a").and_then(|s| s.url);
             if url.is_some() { break; }
             std::thread::sleep(Duration::from_millis(20));

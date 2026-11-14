@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "freddai-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "freddai-native"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4236,7 +4236,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scout-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "serde",

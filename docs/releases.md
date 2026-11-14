@@ -166,3 +166,17 @@ Earlier satellite builds lack the updater runtime. On those Macs, use the existi
 
 - Distribution: package workflow https://github.com/desduvauchelle/freddai/actions/runs/42896923186 passed on every job. The universal Mac app contains x86_64 and arm64, reports 1.0.1, passes strict/deep Developer ID verification, stapled-ticket validation and Gatekeeper as Notarized Developer ID (team BSH2UEDLU5). Apple accepted notarization `98acfd26-3c51-4b19-a47a-6a6ecf48e313`. Updater archive signature verifies against the embedded public key; the mounted DMG executable matches the updater archive, SHA-256 `1a5b871b75bd8032db58608d89ab46d2636c69867c9088600a931fcff7da5f76`. The DMG checksum also passed. Windows remains an unsigned beta installer with manual updates.
 - Publication: https://github.com/desduvauchelle/freddai/releases/tag/v1.0.1 is published as latest stable. All eleven assets were downloaded anonymously and matched staged files by SHA-256. The actual `https://github.com/desduvauchelle/freddai/releases/latest/download/latest.json` returns 1.0.1, with matching signed Mac Intel/Apple Silicon and Linux x64 entries. Windows installer and SHA256SUMS were added before publication. No published assets were overwritten.
+
+## Freddai 1.0.2 — dashboard, Scout, conversation polish (November 14, 2026)
+
+Source/tag: pending `v1.0.2`.
+
+- Dashboard: command center with wake-word voice commands, project and new-thread sheets, "Sending…" thread rows, project thread ordering and companion paging across platforms.
+- Core and desktop: Copilot harness, model levels and agent handoff, auth-expired detection with Reconnect, account picker and reorder, model-level settings.
+- Conversation: shared composer, failed-turn recovery and inline media.
+- Scout app and satellite desktop shell, with shared code extracted into `@freddai/shared`.
+- Bug walk: macOS screen-recording bug reports with transcript analysis, app-window capture, iOS recorder and companion intake.
+- Reliability: Commander auto-wake throttling, queue delete and voice-call fixes, a nil webview URL panic fix, and a Windows CI fix that extends the login test's sign-in URL polling from 2 s to 10 s (the PowerShell login command was slow to start on the runner).
+- Also added: virtual office version switcher and campus view, mobile and native shell updates, and TestFlight preparation for universal iOS releases.
+
+Build, draft and publication verification: recorded below once the tag workflow completes.
