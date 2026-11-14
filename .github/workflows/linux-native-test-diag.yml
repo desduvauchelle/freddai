@@ -1,0 +1,45 @@
+name: Linux native test diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'cargo test filter'
+        type: string
+        default: 'shared_command_is_started_then_listening'
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build -p freddai-native --tests
+      - name: Run test with tracing
+        shell: bash
+        run: |
+          echo "SHELL=$SHELL HOME=$HOME"; id; ps -o pid,ppid,pgid,sid,comm -p $$
+          ls -la ~ | grep -E 'profile|bashrc|zshrc' || true
+          ( while true; do echo "MEM $(date -u +%T) $(free -m | awk '/Mem/{print $3"/"$2}')MB top=$(ps -eo pid,pgid,rss,comm --sort=-rss | sed -n '2,4p' | tr -s ' ' | tr '\n' '|')"; sleep 1; done ) &
+          MON=$!
+          set +e
+          RUST_BACKTRACE=1 timeout 120 cargo test -p freddai-native --lib '${{ inputs.filter }}' -- --nocapture --test-threads=1
+          echo "EXIT=$?"
+          kill $MON
+      - name: Post-mortem
+        if: always()
+        shell: bash
+        run: |
+          echo "=== dmesg tail"; sudo dmesg | tail -60 || true
+          echo "=== leftover processes"; ps -eo pid,ppid,pgid,etime,rss,args | grep -E 'python|sleep|freddai|cargo' | grep -v grep || true
+          echo "=== registries"; for f in /tmp/freddai-preview-open-*/companion/preview-servers.json; do echo "$f"; cat "$f"; echo; done 2>/dev/null || true
+          echo "=== preview logs"; for f in /tmp/freddai-preview-open-*/companion/preview-*.log; do echo "$f"; cat "$f"; echo; done 2>/dev/null || true
