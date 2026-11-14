@@ -975,6 +975,11 @@ class NativeShellPlugin(private var host: Activity) : Plugin(host) {
     @Command fun discardFiles(invoke: Invoke) = ui(invoke) {
         val paths = invoke.getArgs().getJSONArray("paths"); for (i in 0 until paths.length()) discard(paths.getString(i))
     }
+    @Command fun bugWalkRecordingAvailable(invoke: Invoke) { invoke.resolve(JSObject().put("available", false)) }
+    @Command fun startBugWalkRecording(invoke: Invoke) { invoke.reject("Screen recording for bug walks isn't supported on Android") }
+    @Command fun stopBugWalkRecording(invoke: Invoke) { invoke.reject("Screen recording for bug walks isn't supported on Android") }
+    @Command fun cancelBugWalkRecording(invoke: Invoke) { invoke.reject("Screen recording for bug walks isn't supported on Android") }
+    @Command fun pickBugWalkVideo(invoke: Invoke) { invoke.reject("Screen recording for bug walks isn't supported on Android") }
     @Command fun pickOption(invoke: Invoke) {
         host.runOnUiThread {
             val args = invoke.getArgs()

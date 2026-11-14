@@ -6,7 +6,10 @@ import { listen } from "@tauri-apps/api/event";
 import type { PermissionMode } from "../types";
 
 export type BugWalkPhase = "selecting" | "recording" | "stopped" | "transcribing" | "analyzing" | "framing" | "launching" | "done" | "cancelled" | "error";
-export type BugWalkRegion = { x: number; y: number; width: number; height: number; scale: number };
+/** "zone": drag a region of the screen (a plain click = whole display). "app": click an app window to record just it. */
+export type BugWalkMode = "zone" | "app";
+/** What was recorded. `kind` is absent for walks made before window mode (= region). */
+export type BugWalkRegion = { x: number; y: number; width: number; height: number; scale: number; kind?: "region" | "window"; window_id?: number; bundle_id?: string; app_name?: string; title?: string };
 export type BugWalkOrigin = { project?: string; thread?: string };
 export type BugWalkSplit = "single" | "per_item";
 export type BugWalkSendOpts = { project: string; account: string; model?: string | null; effort?: string | null; speed?: string | null; permission_mode: PermissionMode; reply_to_thread?: string | null; /** "per_item" starts one thread per bug; ignored by Rust when replying in a thread. */ split?: BugWalkSplit };
@@ -14,11 +17,11 @@ export type BugWalkStateEvent = {
   id: string; phase: BugWalkPhase; region?: BugWalkRegion; elapsed_s?: number; level?: number; session_id?: string; session_ids?: string[]; /** `launching` progress when starting one thread per bug. */ launched?: number; total?: number; error?: string; transcript?: string; reason?: string;
 };
 export type BugWalkOrphan = { id: string; started_at: number; duration_s: number };
-export type BugWalkSettings = { shortcut: string; enabled: boolean; last_split?: BugWalkSplit };
+export type BugWalkSettings = { shortcut: string; enabled: boolean; last_split?: BugWalkSplit; /** Rust saves it on every start; the hotkey reuses it. */ last_mode?: BugWalkMode };
 /** What `bug_walk_settings_get` returns: `error` is set when the saved shortcut could not be registered at startup. */
 export type BugWalkSettingsView = BugWalkSettings & { error?: string };
 export type BugWalk = {
-  id: string; phase: BugWalkPhase; region?: BugWalkRegion;
+  id: string; phase: BugWalkPhase; region?: BugWalkRegion; /** Target mode chosen at start (drives the selecting hint). */ mode?: BugWalkMode;
   /** Last elapsed seconds reported by Rust (or the final duration once stopped). */
   elapsed: number;
   /** Epoch ms when recording began; the pill derives a live clock from it. */
@@ -36,6 +39,15 @@ export type Listen = (event: string, handler: (event: { payload: unknown }) => v
 export const DEFAULT_SHORTCUT = "CommandOrControl+Shift+R";
 export const PIPELINE_PHASES: BugWalkPhase[] = ["transcribing", "analyzing", "framing", "launching"];
 export const isPipelinePhase = (phase: BugWalkPhase) => PIPELINE_PHASES.includes(phase);
+export const isBugWalkMode = (v: unknown): v is BugWalkMode => v === "zone" || v === "app";
+/** "App: Safari — Inbox" or "Zone 1280×720". */
+export function targetLabel(region: BugWalkRegion): string {
+  if (region.kind === "window") {
+    const app = region.app_name || "App window";
+    return `App: ${region.title ? `${app} — ${region.title}` : app}`;
+  }
+  return `Zone ${Math.round(region.width)}×${Math.round(region.height)}`;
+}
 export const PHASE_LABELS: Record<string, string> = { transcribing: "Transcribing", analyzing: "Analyzing", framing: "Grabbing frames", launching: "Starting thread" };
 
 export type PermissionProblem = { kind: "screen-recording" | "microphone"; hint: string };
@@ -57,7 +69,9 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createBugWalk(call: Invoke = invoke as Invoke, subscribe: Listen = listen as unknown as Listen, now: () => number = Date.now) {
   let snap: BugWalkSnapshot = { walk: null, orphans: [], startError: null, pillError: null };
   const listeners = new Set<() => void>();
-  let pendingOrigin: BugWalkOrigin | undefined, starting = false;
+  let pendingOrigin: BugWalkOrigin | undefined, pendingMode: BugWalkMode | undefined, starting = false;
+  /** Seeded from settings by the host; updated on every start. The hotkey uses it. */
+  let lastMode: BugWalkMode = "zone";
   /** Walks the user cancelled: late events (level ticks) for them must not resurrect a walk. */
   const discarded = new Set<string>();
   function set(patch: Partial<BugWalkSnapshot>) { snap = { ...snap, ...patch }; listeners.forEach(l => l()); }
@@ -77,7 +91,7 @@ export function createBugWalk(call: Invoke = invoke as Invoke, subscribe: Listen
       if (cur.phase !== "done" && cur.phase !== "cancelled") return;
     }
     if (ev.phase === "cancelled") { if (!cur || cur.id === ev.id) set({ walk: null }); return; }
-    const base: BugWalk = cur && cur.id === ev.id ? cur : { id: ev.id, phase: ev.phase, elapsed: 0, startedAt: null, level: 0, origin: pendingOrigin };
+    const base: BugWalk = cur && cur.id === ev.id ? cur : { id: ev.id, phase: ev.phase, elapsed: 0, startedAt: null, level: 0, origin: pendingOrigin, mode: pendingMode };
     const next: BugWalk = { ...base, phase: ev.phase };
     if (ev.region) next.region = ev.region;
     if (typeof ev.elapsed_s === "number") next.elapsed = ev.elapsed_s;
@@ -97,22 +111,23 @@ export function createBugWalk(call: Invoke = invoke as Invoke, subscribe: Listen
     set({ walk: next });
   }
 
-  async function start(origin?: BugWalkOrigin): Promise<boolean> {
+  async function start(origin?: BugWalkOrigin, mode: BugWalkMode = lastMode): Promise<boolean> {
     if (starting || (snap.walk && snap.walk.phase !== "done" && snap.walk.phase !== "cancelled")) return false;
-    starting = true; pendingOrigin = origin;
+    starting = true; pendingOrigin = origin; pendingMode = mode; lastMode = mode;
     set({ startError: null, pillError: null, walk: null });
     try {
-      const { id, cancelled } = await call<{ id: string; cancelled?: boolean }>("bug_walk_start", { origin: origin ?? null });
+      // Rust persists `mode` as settings.last_mode.
+      const { id, cancelled } = await call<{ id: string; cancelled?: boolean }>("bug_walk_start", { origin: origin ?? null, mode });
       // Esc during region selection: no walk, no pill. The `cancelled` event usually cleared it already.
       if (cancelled) { discarded.add(id); set({ walk: null }); return false; }
       // Events may have created the walk already; keep their phase, only ensure origin and id.
-      if (!snap.walk || snap.walk.id !== id) set({ walk: { id, phase: "selecting", elapsed: 0, startedAt: null, level: 0, origin } });
-      else patchWalk({ origin });
+      if (!snap.walk || snap.walk.id !== id) set({ walk: { id, phase: "selecting", elapsed: 0, startedAt: null, level: 0, origin, mode } });
+      else patchWalk({ origin, mode });
       return true;
     } catch (e) {
       set({ walk: null, startError: fail("start failed", e) });
       return false;
-    } finally { starting = false; pendingOrigin = undefined; }
+    } finally { starting = false; pendingOrigin = undefined; pendingMode = undefined; }
   }
   async function stop() {
     const walk = snap.walk; if (!walk || walk.phase !== "recording") return;
@@ -161,10 +176,12 @@ export function createBugWalk(call: Invoke = invoke as Invoke, subscribe: Listen
     set({ orphans: snap.orphans.filter(o => o.id !== id) });
     try { await call<void>("bug_walk_cancel", { id }); } catch (e) { set({ startError: `Couldn't discard the unfinished walk: ${fail("discard orphan failed", e)}` }); }
   }
-  /** Global shortcut: start when idle, stop while recording, ignore otherwise (including an error card that still holds a transcript). */
+  function setLastMode(mode: BugWalkMode) { lastMode = mode; }
+  function getLastMode() { return lastMode; }
+  /** Global shortcut (last used mode): start when idle, stop while recording, ignore otherwise (including an error card that still holds a transcript). */
   function onHotkey() {
     const w = snap.walk;
-    if (!w || w.phase === "done" || w.phase === "cancelled") void start();
+    if (!w || w.phase === "done" || w.phase === "cancelled") void start(undefined, lastMode);
     else if (w.phase === "recording") void stop();
   }
   /** Seeds a walk in another window (the recording pill) from its URL params. */
@@ -180,7 +197,7 @@ export function createBugWalk(call: Invoke = invoke as Invoke, subscribe: Listen
   return {
     subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     getSnapshot: () => snap,
-    start, stop, cancel, send, sendTranscript, dismiss, clearStartError, setPillError, loadOrphans, openOrphan, discardOrphan, onHotkey, applyState, seed, attach,
+    start, stop, cancel, send, sendTranscript, dismiss, clearStartError, setPillError, loadOrphans, openOrphan, discardOrphan, onHotkey, applyState, seed, attach, setLastMode, getLastMode,
     settings: {
       get: () => call<BugWalkSettingsView>("bug_walk_settings_get"),
       set: (settings: BugWalkSettings) => call<void>("bug_walk_settings_set", { settings }),

@@ -1,8 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import type { BugWalkSendOpts, BugWalkStatus, BugWalkVideo } from './bugWalk';
 import type { Attachment } from '../desktop/types';
 import type { Model } from '../desktop/agent-selection';
 import type { CommanderClient, CompanionClient, CompanionSnapshot } from './companion';
 /** Presents a Mac localhost URL as a native preview; rejects with the native error string (e.g. preview_not_granted). */
+/** Streams a screen recording to the Mac. Rust emits `bug-walk://upload` {sent,total} after every chunk. */
+export async function bugWalkSend(video: BugWalkVideo, device: string, opts: BugWalkSendOpts, onProgress?: (sent: number, total: number) => void): Promise<{ id: string }> {
+  const unlisten = onProgress ? await listen<{ sent: number; total: number }>('bug-walk://upload', e => onProgress(e.payload.sent, e.payload.total)) : undefined;
+  try {
+    return await invoke<{ id: string }>('companion_bug_walk_send', { path: video.path, name: video.name, device, opts });
+  } finally { unlisten?.(); }
+}
+export const bugWalkStatus = (id: string) => invoke<BugWalkStatus>('companion_bug_walk_status', { id });
 export const previewOpen = (threadId: string, url: string, start?: boolean) => invoke<void>('preview_open', { threadId, url, start: !!start });
 const composer = <T,>(operation: string, input: unknown) => invoke<T>('companion_composer', { operation, input });
 // The Mac reports its hardware MAC/broadcast address so the phone can wake it later. Refreshed at most hourly.
@@ -34,7 +44,9 @@ export const nativeCompanionClient: CompanionClient = {
   moveProject: (project, target, after) => composer("move_project", { project, target, after }),
   saveModelConfiguration: configuration => composer("save_model_configuration", { configuration }),
   saveWorkspaces: workspaces => composer("save_workspaces", { workspaces }),
-  generatedFile: (thread, href, offset) => composer("generated_file", { thread, href, offset }),
+  history: (thread, before) => composer("thread_history", { thread, before }),
+  toolText: (thread, message, offset, hash) => composer("tool_text", { thread, message, offset, hash }),
+  generatedFile: (thread, href, offset, length) => composer("generated_file", { thread, href, offset, length }),
   async snapshot(signal, thread) {
     const value = await invoke<CompanionSnapshot>('companion_snapshot', { thread: thread || null });
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -73,6 +85,8 @@ export const nativeCompanionClient: CompanionClient = {
     }
     return composer<Attachment>('upload', { action: 'finish', id, size: file.size });
   },
+  bugWalkSend,
+  bugWalkStatus,
   attachPath: file => invoke<Attachment>('companion_upload_path', { path: file.path, name: file.name, mime: file.mime }),
   action: input => invoke<void>('companion_action', input),
   markRead: input => invoke<void>('companion_mark_read', { thread: input.thread, at: input.at }),

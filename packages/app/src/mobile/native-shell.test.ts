@@ -63,3 +63,73 @@ it('drives the native mic button and appends dictated text through the plugin', 
   expect(invoke).toHaveBeenNthCalledWith(2, 'plugin:native-shell|set_voice', { enabled: false, state: null });
   expect(invoke).toHaveBeenNthCalledWith(3, 'plugin:native-shell|append_composer_text', { text: 'hello', submit: false });
 });
+
+async function nativeShell() {
+  tauri();
+  invoke.mockImplementation(async (cmd: string) => (cmd === 'plugin:native-shell|ping' ? { installed: true } : undefined));
+  return import('./native-shell');
+}
+const video = { path: '/c/a.mp4', name: 'a.mp4', mime: 'video/mp4', bytes: 10, durationS: 3 };
+
+it('bug walk bindings are inert outside the native shell', async () => {
+  const shell = await import('./native-shell');
+  expect(await shell.bugWalkRecordingAvailable()).toBe(false);
+  await expect(shell.startBugWalkRecording({ microphone: true })).rejects.toThrow("isn't available");
+  await expect(shell.pickBugWalkVideo()).rejects.toThrow("isn't available");
+  await expect(shell.cancelBugWalkRecording()).resolves.toBeUndefined();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('invokes the bug walk commands and unwraps results', async () => {
+  const shell = await nativeShell();
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd.endsWith('|ping')) return { installed: true };
+    if (cmd.endsWith('|bug_walk_recording_available')) return { available: true };
+    if (cmd.endsWith('|stop_bug_walk_recording')) return video;
+    if (cmd.endsWith('|pick_bug_walk_video')) return { picked: true, video };
+  });
+  expect(await shell.bugWalkRecordingAvailable()).toBe(true);
+  await shell.startBugWalkRecording({ microphone: false });
+  expect(invoke).toHaveBeenCalledWith('plugin:native-shell|start_bug_walk_recording', { microphone: false });
+  expect(await shell.stopBugWalkRecording()).toEqual(video);
+  expect(await shell.pickBugWalkVideo()).toEqual(video);
+  await shell.cancelBugWalkRecording();
+  expect(invoke).toHaveBeenCalledWith('plugin:native-shell|cancel_bug_walk_recording', undefined);
+});
+
+it('resolves null when the picker is cancelled and surfaces native error messages', async () => {
+  const shell = await nativeShell();
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd.endsWith('|ping')) return { installed: true };
+    if (cmd.endsWith('|pick_bug_walk_video')) return { picked: false };
+    throw 'Screen recording permission was denied';
+  });
+  expect(await shell.pickBugWalkVideo()).toBeNull();
+  await expect(shell.startBugWalkRecording({ microphone: true })).rejects.toThrow('Screen recording permission was denied');
+});
+
+it('subscribes to recording state and unsubscribes, even before registration finishes', async () => {
+  const shell = await nativeShell();
+  const unregister = vi.fn();
+  let handler: ((p: unknown) => void) | undefined;
+  const core = await import('@tauri-apps/api/core');
+  vi.mocked(core.addPluginListener).mockImplementation((async (_p: string, event: string, h: (p: unknown) => void) => {
+    expect(event).toBe('bug-walk-recording-state');
+    handler = h;
+    return { unregister };
+  }) as never);
+  const seen: unknown[] = [];
+  const off = shell.onBugWalkRecordingState(s => seen.push(s));
+  await new Promise(r => setTimeout(r, 0));
+  handler?.({ state: 'recording', elapsedS: 4 });
+  handler?.({ state: 'bogus' });
+  expect(seen).toEqual([{ state: 'recording', elapsedS: 4 }, { state: 'idle', elapsedS: 0 }]);
+  off();
+  expect(unregister).toHaveBeenCalled();
+  const early = shell.onBugWalkRecordingState(() => {});
+  early();
+  await new Promise(r => setTimeout(r, 0));
+  // Unsubscribing before registration finishes never registers a listener at all.
+  expect(core.addPluginListener).toHaveBeenCalledTimes(1);
+  expect(unregister).toHaveBeenCalledTimes(1);
+});

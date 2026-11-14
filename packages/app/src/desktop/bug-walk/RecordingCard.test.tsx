@@ -44,3 +44,13 @@ it("shows the region hint while selecting", () => {
   render(<RecordingCard walk={store.getSnapshot().walk!} store={store} />);
   expect(screen.getByText(/Drag a region on screen/)).toBeTruthy();
 });
+it("shows the app hint while selecting in app mode, and what is being recorded", () => {
+  const store = createBugWalk(vi.fn() as never, vi.fn() as never);
+  store.applyState({ id: "w1", phase: "selecting" });
+  render(<RecordingCard walk={{ ...store.getSnapshot().walk!, mode: "app" }} store={store} />);
+  expect(screen.getByText(/Click a window to record/)).toBeTruthy();
+  cleanup();
+  store.applyState({ id: "w1", phase: "recording", region: { x: 0, y: 0, width: 900, height: 600, scale: 2, kind: "window", window_id: 7, app_name: "Safari", title: "Inbox" } });
+  render(<RecordingCard walk={store.getSnapshot().walk!} store={store} />);
+  expect(screen.getByText("App: Safari — Inbox")).toBeTruthy();
+});

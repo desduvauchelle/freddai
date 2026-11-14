@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 
 pub const MIC_HINT: &str = "Grant Freddai Microphone permission in System Settings > Privacy & Security > Microphone, then quit and reopen Freddai.";
 const RELATIVE: &str = "Resources/bug-walk/Freddai Bug Walk.app/Contents/MacOS/bugwalk-helper";
+pub const WINDOW_GONE_HINT: &str = "The window you picked was closed before recording started. Start the bug walk again and pick another window.";
 pub const MISSING: &str = "bugwalk-helper-missing: run scripts/build-bug-walk.sh";
 
 /// Same rule as `computer_use::bundled_helper`: the executable must live in `<app>/Contents/MacOS`.
@@ -47,6 +48,8 @@ pub fn error_from_stderr(stderr: &str, fallback: &str) -> String {
         let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { continue };
         let Some(code) = v["error"].as_str() else { continue };
         if let Some(e) = permission_error(code) { return e; }
+        // `record --window-id`: the picked window closed (or its app quit) between selection and recording.
+        if code == "window-gone" { return format!("window-gone: {WINDOW_GONE_HINT}"); }
         return match v["detail"].as_str().filter(|d| !d.is_empty()) {
             Some(d) => format!("{code}: {d}"),
             None => code.to_string(),
@@ -90,9 +93,48 @@ pub fn frames(helper: &Path, video: &Path, out: &Path, times: &[f64]) -> Result<
     Ok(paths)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AudioInfo {
+    pub duration_s: f64,
+    pub width: f64,
+    pub height: f64,
+    pub audio: bool,
+}
+
+/// Blocking. Extracts `video`'s audio to a 16 kHz mono pcm16 WAV at `out` (header only when there is no audio track).
+pub fn audio(helper: &Path, video: &Path, out: &Path) -> Result<AudioInfo, String> {
+    let o = Command::new(helper)
+        .arg("audio").arg("--video").arg(video).arg("--out").arg(out)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Could not run bugwalk-helper: {e}"))?;
+    if !o.status.success() {
+        return Err(error_from_stderr(&String::from_utf8_lossy(&o.stderr), "audio extraction failed"));
+    }
+    parse_audio_info(&String::from_utf8_lossy(&o.stdout))
+}
+
+fn parse_audio_info(stdout: &str) -> Result<AudioInfo, String> {
+    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{')).ok_or("bugwalk-helper audio printed no JSON")?;
+    let v: Value = serde_json::from_str(line).map_err(|e| format!("bugwalk-helper audio output was not JSON: {e}"))?;
+    Ok(AudioInfo {
+        duration_s: v["duration_s"].as_f64().ok_or("bugwalk-helper audio output has no `duration_s`")?,
+        width: v["width"].as_f64().ok_or("bugwalk-helper audio output has no `width`")?,
+        height: v["height"].as_f64().ok_or("bugwalk-helper audio output has no `height`")?,
+        audio: v["audio"].as_bool().unwrap_or(false),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_info_parses_helper_line() {
+        let i = parse_audio_info("noise\n{\"audio\":true,\"duration_s\":3.5,\"height\":2532,\"width\":1170}\n").unwrap();
+        assert_eq!(i, AudioInfo { duration_s: 3.5, width: 1170.0, height: 2532.0, audio: true });
+        assert!(parse_audio_info("").is_err());
+    }
 
     #[test]
     fn bundle_location_mirrors_computer_use() {
@@ -106,6 +148,7 @@ mod tests {
         assert!(error_from_stderr("{\"error\":\"screen-recording-permission\"}\n", "x").starts_with("screen-recording-permission: Grant Freddai Screen Recording"));
         assert!(error_from_stderr("noise\n{\"error\":\"microphone-permission\"}", "x").starts_with("microphone-permission: Grant Freddai Microphone"));
         assert_eq!(error_from_stderr("{\"error\":\"disk\",\"detail\":\"full\"}", "x"), "disk: full");
+        assert!(error_from_stderr("{\"error\":\"window-gone\",\"detail\":\"window 7\"}", "x").starts_with("window-gone: The window you picked was closed"));
         assert_eq!(error_from_stderr("", "boom"), "boom");
         assert_eq!(error_from_stderr("weird", "boom"), "boom: weird");
     }
@@ -119,7 +162,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bugwalk-smoke-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let video = dir.join("selftest.mp4");
+        let video = dir.join("selftest.mov");
         let o = Command::new(&helper).arg("--selftest").arg(&video).output().unwrap();
         assert!(o.status.success(), "selftest failed: {}", String::from_utf8_lossy(&o.stderr));
         let frames = frames(&helper, &video, &dir.join("frames"), &[0.2, 1.0, 1.8]).unwrap();

@@ -44,7 +44,7 @@ export function buildDashboardModel(snapshot: CompanionSnapshot, connected: bool
     model: modelPillLabel(provider, { ...selection, effort: 'default', speed: undefined }, []),
     difficulty: modelPillLabel(provider, selection, []),
     hasControls: !!provider,
-    workspace: null as string | null, summaries: [] as NativeSummary[], schedules: false, message: '',
+    workspace: null as string | null, summaries: [] as NativeSummary[], schedules: false, bugWalk: false, message: '',
     connected, busy, expanded, workspaceHeight: 240, agent: controlAssistant ? assistantLabel(controlAssistant) : 'Choose provider',
     commander: commanderModel(snapshot),
     /** Waiting threads across all non-commander projects, newest first; rendered under the commander cluster and hidden when empty. */

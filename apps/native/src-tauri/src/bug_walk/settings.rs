@@ -12,6 +12,13 @@ pub struct BugWalkSettings {
     /// Last chosen send-sheet split: "single" or "per_item".
     #[serde(default = "default_split")]
     pub last_split: String,
+    /// Last chosen bug walk target: "zone" (drag a region) or "app" (pick a window). The hotkey reuses it.
+    #[serde(default = "default_mode")]
+    pub last_mode: String,
+}
+
+pub fn default_mode() -> String {
+    "zone".into()
 }
 
 fn default_split() -> String {
@@ -20,7 +27,7 @@ fn default_split() -> String {
 
 impl Default for BugWalkSettings {
     fn default() -> Self {
-        Self { shortcut: DEFAULT_SHORTCUT.into(), enabled: true, last_split: default_split() }
+        Self { shortcut: DEFAULT_SHORTCUT.into(), enabled: true, last_split: default_split(), last_mode: default_mode() }
     }
 }
 
@@ -58,19 +65,21 @@ mod tests {
     fn defaults_roundtrip_and_validation() {
         let root = std::env::temp_dir().join(format!("bugwalk-settings-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        assert_eq!(load(&root).unwrap(), BugWalkSettings { shortcut: "CommandOrControl+Shift+R".into(), enabled: true, last_split: "single".into() });
-        save(&root, &BugWalkSettings { shortcut: "CommandOrControl+Alt+B".into(), enabled: false, last_split: "per_item".into() }).unwrap();
+        assert_eq!(load(&root).unwrap(), BugWalkSettings { shortcut: "CommandOrControl+Shift+R".into(), enabled: true, last_split: "single".into(), last_mode: "zone".into() });
+        save(&root, &BugWalkSettings { shortcut: "CommandOrControl+Alt+B".into(), enabled: false, last_split: "per_item".into(), last_mode: "app".into() }).unwrap();
         assert_eq!(load(&root).unwrap().shortcut, "CommandOrControl+Alt+B");
         assert_eq!(load(&root).unwrap().last_split, "per_item");
-        assert!(save(&root, &BugWalkSettings { shortcut: "NotAKey++".into(), enabled: true, last_split: "single".into() }).is_err());
+        assert_eq!(load(&root).unwrap().last_mode, "app");
+        assert!(save(&root, &BugWalkSettings { shortcut: "NotAKey++".into(), enabled: true, ..BugWalkSettings::default() }).is_err());
         fs::write(path(&root), b"{").unwrap();
         assert!(load(&root).unwrap_err().contains("corrupt"));
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn last_split_defaults_to_single_when_absent() {
+    fn last_split_and_mode_default_when_absent() {
         let s: BugWalkSettings = serde_json::from_str(r#"{"shortcut":"CommandOrControl+Shift+R","enabled":true}"#).unwrap();
         assert_eq!(s.last_split, "single");
+        assert_eq!(s.last_mode, "zone");
     }
 }

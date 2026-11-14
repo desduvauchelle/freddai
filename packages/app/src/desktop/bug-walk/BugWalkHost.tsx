@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { CircleAlert, X } from "lucide-react";
 import { Button } from "@freddai/ui/components/button";
 import type { Database, PermissionMode } from "../types";
-import { bugWalk, formatClock, isPipelinePhase, permissionProblem, useBugWalk, type BugWalkStore } from "./bugWalk";
+import { bugWalk, formatClock, isBugWalkMode, isPipelinePhase, permissionProblem, useBugWalk, type BugWalkStore } from "./bugWalk";
 import { closePill, openPill } from "./pillWindow";
 import { RecordingCard } from "./RecordingCard";
 import { ProgressCard } from "./ProgressCard";
@@ -23,6 +23,8 @@ export function BugWalkHost({ enabled, db, defaultPermission, sheetOpen = true, 
     let off = () => {}, gone = false;
     store.attach().then(unlisten => { if (gone) unlisten(); else off = unlisten; }).catch(e => console.error("[bug-walk] listen failed", e));
     void store.loadOrphans();
+    // The hotkey starts in the last used mode (Zone or App), which Rust keeps in settings.last_mode.
+    store.settings.get().then(s => { const mode = s?.last_mode; if (!gone && isBugWalkMode(mode)) store.setLastMode(mode); }).catch(e => console.error("[bug-walk] settings load failed", e));
     return () => { gone = true; off(); };
   }, [enabled, store]);
   const recording = walk?.phase === "recording" && !!walk.region;

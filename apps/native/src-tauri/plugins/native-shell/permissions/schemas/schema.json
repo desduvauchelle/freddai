@@ -307,6 +307,18 @@
           "markdownDescription": "Denies the append_composer_text command without any pre-configured scope."
         },
         {
+          "description": "Enables the bug_walk_recording_available command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-bug-walk-recording-available",
+          "markdownDescription": "Enables the bug_walk_recording_available command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bug_walk_recording_available command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-bug-walk-recording-available",
+          "markdownDescription": "Denies the bug_walk_recording_available command without any pre-configured scope."
+        },
+        {
           "description": "Enables the call_control command without any pre-configured scope.",
           "type": "string",
           "const": "allow-call-control",
@@ -319,6 +331,18 @@
           "markdownDescription": "Denies the call_control command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-bug-walk-recording",
+          "markdownDescription": "Enables the cancel_bug_walk_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-bug-walk-recording",
+          "markdownDescription": "Denies the cancel_bug_walk_recording command without any pre-configured scope."
+        },
+        {
           "description": "Enables the discard_files command without any pre-configured scope.",
           "type": "string",
           "const": "allow-discard-files",
@@ -329,6 +353,18 @@
           "type": "string",
           "const": "deny-discard-files",
           "markdownDescription": "Denies the discard_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_bug_walk_video command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pick-bug-walk-video",
+          "markdownDescription": "Enables the pick_bug_walk_video command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_bug_walk_video command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pick-bug-walk-video",
+          "markdownDescription": "Denies the pick_bug_walk_video command without any pre-configured scope."
         },
         {
           "description": "Enables the pick_option command without any pre-configured scope.",
@@ -463,10 +499,34 @@
           "markdownDescription": "Denies the set_voice command without any pre-configured scope."
         },
         {
-          "description": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-call-control`\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-dashboard`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Enables the start_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-bug-walk-recording",
+          "markdownDescription": "Enables the start_bug_walk_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-bug-walk-recording",
+          "markdownDescription": "Denies the start_bug_walk_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-bug-walk-recording",
+          "markdownDescription": "Enables the stop_bug_walk_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_bug_walk_recording command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-bug-walk-recording",
+          "markdownDescription": "Denies the stop_bug_walk_recording command without any pre-configured scope."
+        },
+        {
+          "description": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-call-control`\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-dashboard`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-bug-walk-recording-available`\n- `allow-start-bug-walk-recording`\n- `allow-stop-bug-walk-recording`\n- `allow-cancel-bug-walk-recording`\n- `allow-pick-bug-walk-video`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-call-control`\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-dashboard`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Allows the Freddai webview to drive the native iPhone shell.\n#### This default permission set includes:\n\n- `allow-call-control`\n- `allow-ping`\n- `allow-set-mode`\n- `allow-set-connection`\n- `allow-set-composer-text`\n- `allow-discard-files`\n- `allow-pick-option`\n- `allow-set-threads`\n- `allow-set-dashboard`\n- `allow-set-thread-meta`\n- `allow-set-voice`\n- `allow-append-composer-text`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-bug-walk-recording-available`\n- `allow-start-bug-walk-recording`\n- `allow-stop-bug-walk-recording`\n- `allow-cancel-bug-walk-recording`\n- `allow-pick-bug-walk-video`"
         }
       ]
     }

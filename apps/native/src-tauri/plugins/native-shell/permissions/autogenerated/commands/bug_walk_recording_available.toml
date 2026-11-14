@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-bug-walk-recording-available"
+description = "Enables the bug_walk_recording_available command without any pre-configured scope."
+commands.allow = ["bug_walk_recording_available"]
+
+[[permission]]
+identifier = "deny-bug-walk-recording-available"
+description = "Denies the bug_walk_recording_available command without any pre-configured scope."
+commands.deny = ["bug_walk_recording_available"]

@@ -20,7 +20,7 @@ export function BugWalkSettings({ native, store = bugWalk }: { native: boolean; 
   const [error, setError] = useState("");
   useEffect(() => {
     if (!native) return;
-    store.settings.get().then(s => { if (!s) return; setSettings({ shortcut: s.shortcut, enabled: s.enabled, last_split: s.last_split ?? "single" }); setDraft(s.shortcut); if (s.error) setError(s.error); }).catch(e => { console.error("[bug-walk] settings load failed", e); setError(String(e)); });
+    store.settings.get().then(s => { if (!s) return; setSettings({ shortcut: s.shortcut, enabled: s.enabled, last_split: s.last_split ?? "single", last_mode: s.last_mode ?? "zone" }); setDraft(s.shortcut); if (s.error) setError(s.error); }).catch(e => { console.error("[bug-walk] settings load failed", e); setError(String(e)); });
   }, [native, store]);
   if (!native) return null;
   const save = async (next: Settings) => {

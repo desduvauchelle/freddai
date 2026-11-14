@@ -3,8 +3,11 @@
 //! directory (`<app_data>/bug-walks/<id>/`) is deleted as soon as the fix thread exists. macOS only.
 
 pub mod analysis;
+pub mod companion;
 pub mod helper;
+pub mod intake;
 pub mod settings;
+pub mod tray;
 
 use crate::desktop::{rpc, Host};
 use analysis::{FrameKind, Item, PlannedFrame};
@@ -26,8 +29,21 @@ const STATE_EVENT: &str = "bug-walk://state";
 const HOTKEY_EVENT: &str = "bug-walk://hotkey";
 const ANALYSIS_TIMEOUT: Duration = Duration::from_secs(180);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// What `select` picked. Walks written before window mode have no `kind`: they are regions.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TargetKind {
+    #[default]
+    Region,
+    Window,
+}
+
+/// The recorded target: a display region (`kind: region`) or an app window (`kind: window`, plus the window fields).
+/// For windows `x`/`y`/`width`/`height` are the window frame at selection time (the recording size stays fixed).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Region {
+    #[serde(default)]
+    pub kind: TargetKind,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -40,11 +56,67 @@ pub struct Region {
     pub global_x: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 impl Region {
     /// What the UI sees: global x/y (local when the helper predates global coordinates), no display id.
     fn public(&self) -> Region {
         Region { x: self.global_x.unwrap_or(self.x), y: self.global_y.unwrap_or(self.y), display_id: None, global_x: None, global_y: None, ..self.clone() }
+    }
+
+    /// `record` arguments for this target (after `record`, before `--out`).
+    fn record_args(&self) -> Vec<String> {
+        let display = self.display_id.unwrap_or(0).to_string();
+        match (self.kind, self.window_id) {
+            (TargetKind::Window, Some(w)) => vec!["--window-id".into(), w.to_string(), "--display-id".into(), display],
+            _ => vec!["--display-id".into(), display, "--x".into(), self.x.to_string(), "--y".into(), self.y.to_string(), "--width".into(), self.width.to_string(), "--height".into(), self.height.to_string()],
+        }
+    }
+}
+
+/// Parses the last JSON line `select` printed. Missing `kind` (older helper) is a region.
+fn parse_selection(stdout: &str) -> Result<Region, String> {
+    let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{')).ok_or("bugwalk-helper select returned no region")?;
+    let v: Value = serde_json::from_str(line).map_err(|e| format!("bugwalk-helper select output was not JSON: {e}"))?;
+    if !v["display_id"].is_number() { return Err("bugwalk-helper select returned no region".into()); }
+    let kind = match v["kind"].as_str() {
+        None | Some("region") => TargetKind::Region,
+        Some("window") => TargetKind::Window,
+        Some(other) => return Err(format!("bugwalk-helper select returned unknown kind \"{other}\"")),
+    };
+    let window_id = v["window_id"].as_u64().and_then(|n| u32::try_from(n).ok());
+    if kind == TargetKind::Window && window_id.is_none() { return Err("bugwalk-helper select returned a window without window_id".into()); }
+    let text = |k: &str| v[k].as_str().map(str::to_owned);
+    Ok(Region {
+        kind,
+        x: v["x"].as_f64().unwrap_or(0.0),
+        y: v["y"].as_f64().unwrap_or(0.0),
+        width: v["width"].as_f64().unwrap_or(0.0),
+        height: v["height"].as_f64().unwrap_or(0.0),
+        scale: v["scale"].as_f64().unwrap_or(1.0),
+        display_id: v["display_id"].as_u64(),
+        global_x: v["global_x"].as_f64(),
+        global_y: v["global_y"].as_f64(),
+        window_id,
+        bundle_id: text("bundle_id"),
+        app_name: text("app_name"),
+        title: text("title"),
+    })
+}
+
+/// `bug_walk_start` mode: "zone" (drag a region, the default) or "app" (pick a window).
+fn select_mode_arg(mode: &str) -> Result<&'static str, String> {
+    match mode {
+        "zone" => Ok("region"),
+        "app" => Ok("window"),
+        other => Err(format!("Unknown bug walk mode \"{other}\" (expected zone or app)")),
     }
 }
 
@@ -70,9 +142,16 @@ pub struct Walk {
     /// Why the walk left `recording` without a clean stop (recorder died, app exited, stop timed out).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Where the recording came from: None for the Mac recorder, "companion" for a video uploaded from an iPhone/iPad.
+    /// Companion walks keep their dir after the pipeline finishes so the phone can poll the outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Thread ids launched by the pipeline (set on `done`; companion walks only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendOpts {
     pub project: String,
     #[serde(default)]
@@ -138,6 +217,7 @@ struct StatePayload {
 fn emit(app: &AppHandle, p: StatePayload) {
     // Phase names only: transcripts and paths are never logged.
     eprintln!("{}", json!({"event":"bug_walk.state","id":p.id,"phase":p.phase,"error":p.error}));
+    tray::sync(app, p.phase, &p.id, p.elapsed_s);
     let _ = app.emit(STATE_EVENT, p);
 }
 
@@ -176,7 +256,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 // ---- walk directory -------------------------------------------------------------------------------------------
 
-fn walks_root(root: &Path) -> PathBuf {
+pub(crate) fn walks_root(root: &Path) -> PathBuf {
     root.join("bug-walks")
 }
 
@@ -184,24 +264,24 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-fn walk_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn walk_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_id(id) {
         return Err("Invalid bug walk id".into());
     }
     Ok(walks_root(root).join(id))
 }
 
-fn now_s() -> u64 {
+pub(crate) fn now_s() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-fn write_walk(dir: &Path, walk: &Walk) -> Result<(), String> {
+pub(crate) fn write_walk(dir: &Path, walk: &Walk) -> Result<(), String> {
     let tmp = dir.join("walk.json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(walk).unwrap()).map_err(|e| e.to_string())?;
     fs::rename(&tmp, dir.join("walk.json")).map_err(|e| e.to_string())
 }
 
-fn read_walk(dir: &Path) -> Result<Walk, String> {
+pub(crate) fn read_walk(dir: &Path) -> Result<Walk, String> {
     let b = fs::read(dir.join("walk.json")).map_err(|_| "Bug walk not found (it may already have been sent or discarded)".to_string())?;
     serde_json::from_slice(&b).map_err(|e| format!("walk.json is corrupt: {e}"))
 }
@@ -263,7 +343,7 @@ fn terminate(pid: i32, grace: Duration) {
     if pid_alive(pid) { eprintln!("{}", json!({"event":"bug_walk.helper_sigkill","pid":pid})); kill(pid); }
 }
 
-/// App exit (`RunEvent::Exit`): ask a running recorder to stop so recording.mp4 and audio.wav are finalized, then make
+/// App exit (`RunEvent::Exit`): ask a running recorder to stop so recording.mov and audio.wav are finalized, then make
 /// sure walk.json does not stay `recording`.
 pub fn shutdown(app: &AppHandle) {
     let Some(walks) = app.try_state::<BugWalks>() else { return };
@@ -285,6 +365,7 @@ fn scan_orphans(root: &Path, live: &HashSet<String>, alive: impl Fn(i32) -> bool
         .filter_map(|e| {
             let dir = e.path();
             let walk = read_walk(&dir).ok()?;
+            if walk.source.as_deref() == Some("companion") { return None; } // owned by bug_walk::intake
             let id = e.file_name().to_string_lossy().to_string();
             if live.contains(&id) || !matches!(walk.phase.as_str(), "recording" | "stopped") || walk.pid.is_some_and(&alive) {
                 return None;
@@ -320,7 +401,7 @@ fn local_label(unix: u64) -> String {
 
 // ---- recording ------------------------------------------------------------------------------------------------
 
-fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin) -> Result<Value, String> {
+fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin, mode: &'static str) -> Result<Value, String> {
     let walks = app.state::<BugWalks>();
     {
         let mut active = lock(&walks.active);
@@ -340,7 +421,7 @@ fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin) -> 
     };
     lock(&walks.live).insert(id.clone());
     emit(&app, state(&id, "selecting"));
-    let mut select = match Command::new(&helper).arg("select").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+    let mut select = match Command::new(&helper).args(["select", "--mode", mode]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c,
         Err(e) => return fail(format!("Could not run bugwalk-helper: {e}")),
     };
@@ -362,19 +443,11 @@ fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin) -> 
     if code != Some(0) {
         return fail(helper::error_from_stderr(&stderr, "region selection failed"));
     }
-    let region: Region = match out.lines().rev().find(|l| l.trim_start().starts_with('{')).map(serde_json::from_str::<Value>) {
-        Some(Ok(v)) if v["display_id"].is_number() => Region {
-            x: v["x"].as_f64().unwrap_or(0.0),
-            y: v["y"].as_f64().unwrap_or(0.0),
-            width: v["width"].as_f64().unwrap_or(0.0),
-            height: v["height"].as_f64().unwrap_or(0.0),
-            scale: v["scale"].as_f64().unwrap_or(1.0),
-            display_id: v["display_id"].as_u64(),
-            global_x: v["global_x"].as_f64(),
-            global_y: v["global_y"].as_f64(),
-        },
-        _ => return fail("bugwalk-helper select returned no region".into()),
+    let region = match parse_selection(&out) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
     };
+    eprintln!("{}", json!({"event":"bug_walk.selected","id":id,"kind":region.kind,"window_id":region.window_id,"bundle_id":region.bundle_id,"width":region.width,"height":region.height}));
     if region.global_x.is_none() || region.global_y.is_none() {
         eprintln!("{}", json!({"event":"bug_walk.warning","detail":"select output has no global_x/global_y (old helper build); using display-local coordinates"}));
     }
@@ -384,12 +457,11 @@ fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin) -> 
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     }
-    let mut walk = Walk { id: id.clone(), started_at: now_s(), origin, region: region.clone(), duration_s: None, phase: "recording".into(), pid: None, reason: None };
+    let mut walk = Walk { id: id.clone(), started_at: now_s(), origin, region: region.clone(), duration_s: None, phase: "recording".into(), pid: None, reason: None, source: None, sessions: None };
     if let Err(e) = write_walk(&dir, &walk) { remove_dir(&dir); return fail(e); }
     let mut rec = match Command::new(&helper)
         .arg("record")
-        .args(["--display-id", &region.display_id.unwrap_or(0).to_string()])
-        .args(["--x", &region.x.to_string(), "--y", &region.y.to_string(), "--width", &region.width.to_string(), "--height", &region.height.to_string()])
+        .args(region.record_args())
         .arg("--out").arg(&dir)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn()
@@ -479,6 +551,7 @@ fn start_blocking(app: AppHandle, root: PathBuf, id: String, origin: Origin) -> 
 
 /// Level events arrive every 200 ms: skip the log line, keep the event.
 fn emit_quiet(app: &AppHandle, p: StatePayload) {
+    tray::sync(app, p.phase, &p.id, p.elapsed_s);
     let _ = app.emit(STATE_EVENT, p);
 }
 
@@ -557,11 +630,16 @@ fn set_phase(app: &AppHandle, dir: &Path, id: &str, phase: &'static str) -> R<()
     Ok(())
 }
 
-fn validate_opts(o: &SendOpts) -> Result<(), String> {
+pub(crate) fn validate_opts(o: &SendOpts) -> Result<(), String> {
     if o.project.trim().is_empty() { return Err("Choose a project".into()); }
     if !matches!(o.permission_mode.as_str(), "ask" | "bypass") { return Err(format!("Unknown permission mode \"{}\"", o.permission_mode)); }
     if !matches!(o.split.as_str(), "single" | "per_item") { return Err(format!("Unknown split \"{}\"", o.split)); }
     Ok(())
+}
+
+/// `audio.wav` exists but carries no samples (header only).
+pub(crate) fn wav_is_empty(dir: &Path) -> bool {
+    fs::metadata(dir.join("audio.wav")).is_ok_and(|m| m.len() <= 44)
 }
 
 async fn transcript_for(app: &AppHandle, root: &Path, dir: &Path, id: &str) -> R<String> {
@@ -569,6 +647,8 @@ async fn transcript_for(app: &AppHandle, root: &Path, dir: &Path, id: &str) -> R
     if let Ok(t) = fs::read_to_string(&cached) {
         if !t.trim().is_empty() { return Ok(t); }
     }
+    // A companion video without an audio track: nothing to transcribe, and the voice model must not be required.
+    if wav_is_empty(dir) { return Ok(String::new()); }
     set_phase(app, dir, id, "transcribing")?;
     let (root, audio) = (root.to_path_buf(), dir.join("audio.wav"));
     let t = blocking(move || crate::voice::transcribe_file(&root, &audio)).await??;
@@ -611,7 +691,9 @@ async fn poll_hidden(app: &AppHandle, host: &Host, id: &str, hid: &str) -> R<Str
 /// Extracts the planned frames into `<dir>/stage/NN.png` (numbered in plan order).
 async fn grab_frames(app: &AppHandle, dir: &Path, id: &str, plan: &[PlannedFrame]) -> R<Vec<PathBuf>> {
     let helper = helper::locate()?;
-    let (video, out, times) = (dir.join("recording.mp4"), dir.join("frames"), plan.iter().map(|p| p.time).collect::<Vec<_>>());
+    let mov = dir.join("recording.mov");
+    let video = if mov.exists() { mov } else { dir.join("recording.mp4") }; // walks recorded before the .mov switch
+    let (out, times) = ( dir.join("frames"), plan.iter().map(|p| p.time).collect::<Vec<_>>());
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let raw = blocking(move || helper::frames(&helper, &video, &out, &times)).await??;
     check_cancelled(app, id)?;
@@ -643,6 +725,8 @@ async fn pipeline(app: &AppHandle, host: &Host, id: &str, opts: &SendOpts, mode:
     let duration = duration_of(&dir, &walk);
     let lines = transcript_for(app, &root, &dir, id).await?;
     *transcript_out = Some(lines.clone());
+    // No speech to analyse (silent companion video): skip the analysis and send evenly spaced frames instead.
+    let mode = if lines.is_empty() { Mode::RawTranscript } else { mode };
     let (items, plan) = if mode == Mode::Analysis {
         set_phase(app, &dir, id, "analyzing")?;
         let items = run_analysis(app, host, id, opts, analysis::analysis_prompt(&lines, &walk.region, duration)).await?;
@@ -694,13 +778,21 @@ fn spawn_pipeline(app: AppHandle, host: Host, id: String, opts: SendOpts, mode: 
         let walks = app.state::<BugWalks>();
         match result {
             Ok(session_ids) => {
-                if let Ok(dir) = walk_dir(&host.root, &id) { remove_dir(&dir); }
+                if let Ok(dir) = walk_dir(&host.root, &id) {
+                    if read_walk(&dir).is_ok_and(|w| w.source.as_deref() == Some("companion")) {
+                        // The phone polls the outcome: keep walk.json, drop the heavy artifacts.
+                        update_walk(&dir, |w| { w.phase = "done".into(); w.sessions = Some(session_ids.clone()); });
+                        intake::strip_artifacts(&dir);
+                    } else {
+                        remove_dir(&dir);
+                    }
+                }
                 lock(&walks.live).remove(&id);
                 emit(&app, StatePayload { session_id: session_ids.first().cloned(), session_ids: Some(session_ids), ..state(&id, "done") });
             }
             Err(Stop::Cancelled) => {}
             Err(Stop::Failed(error)) => {
-                if let Ok(dir) = walk_dir(&host.root, &id) { update_walk(&dir, |w| w.phase = "error".into()); }
+                if let Ok(dir) = walk_dir(&host.root, &id) { update_walk(&dir, |w| { w.phase = "error".into(); if w.source.as_deref() == Some("companion") { w.reason = Some(error.clone()); } }); }
                 emit(&app, StatePayload { error: Some(error), transcript, ..state(&id, "error") });
             }
         }
@@ -731,10 +823,23 @@ fn begin_send(app: &AppHandle, host: &Host, id: &str, opts: &SendOpts) -> Result
 // ---- commands -------------------------------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn bug_walk_start(app: AppHandle, h: State<'_, Host>, origin: Option<Origin>) -> Result<Value, String> {
+pub async fn bug_walk_start(app: AppHandle, h: State<'_, Host>, origin: Option<Origin>, mode: Option<String>) -> Result<Value, String> {
+    let mode = mode.unwrap_or_else(settings::default_mode);
+    let select = select_mode_arg(&mode)?;
+    remember_mode(&h.root, &mode);
     let id = hex::encode(rand::random::<[u8; 8]>());
     let (root, origin) = (h.root.clone(), origin.unwrap_or_default());
-    tauri::async_runtime::spawn_blocking(move || start_blocking(app, root, id, origin)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || start_blocking(app, root, id, origin, select)).await.map_err(|e| e.to_string())?
+}
+
+/// Persists the chosen target mode so the hotkey reuses it. Logged, never fatal (same rule as `remember_split`).
+fn remember_mode(root: &Path, mode: &str) {
+    let result = settings::load(root).and_then(|mut s| {
+        if s.last_mode == mode { return Ok(()); }
+        s.last_mode = mode.to_string();
+        settings::save(root, &s)
+    });
+    if let Err(e) = result { eprintln!("{}", json!({"event":"bug_walk.remember_mode_failed","error":e})); }
 }
 
 #[tauri::command]
@@ -870,6 +975,7 @@ fn register(app: &AppHandle, s: &BugWalkSettings) -> Result<(), String> {
 /// `bug_walk_settings_get` and emitted as an error state event.
 pub fn init(app: &AppHandle, root: &Path) {
     app.manage(BugWalks::default());
+    if let Some(host) = app.try_state::<Host>() { intake::start(app.clone(), host.inner().clone()); }
     let result = settings::load(root).map_err(|e| format!("shortcut-unavailable: {e}")).and_then(|s| register(app, &s));
     if let Err(e) = result {
         eprintln!("{}", json!({"event":"bug_walk.shortcut_failed","error":e}));
@@ -887,8 +993,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         write_walk(&dir, &Walk {
             id: id.into(), started_at: started, origin: Origin::default(),
-            region: Region { x: 0.0, y: 0.0, width: 10.0, height: 10.0, scale: 1.0, display_id: Some(1), global_x: None, global_y: None },
-            duration_s: None, phase: phase.into(), pid, reason: None,
+            region: Region { width: 10.0, height: 10.0, scale: 1.0, display_id: Some(1), ..Default::default() },
+            duration_s: None, phase: phase.into(), pid, reason: None, source: None, sessions: None,
         }).unwrap();
         fs::write(dir.join("audio.wav"), vec![0u8; wav_bytes]).unwrap();
     }
@@ -937,8 +1043,37 @@ mod tests {
 
     #[test]
     fn state_payload_shape() {
-        let v = serde_json::to_value(StatePayload { region: Some(Region { x: 1.0, y: 2.0, width: 3.0, height: 4.0, scale: 2.0, display_id: Some(9), global_x: Some(101.0), global_y: Some(202.0) }.public()), elapsed_s: Some(1.5), ..state("w", "recording") }).unwrap();
-        assert_eq!(v, json!({"id":"w","phase":"recording","region":{"x":101.0,"y":202.0,"width":3.0,"height":4.0,"scale":2.0},"elapsed_s":1.5}));
+        let v = serde_json::to_value(StatePayload { region: Some(Region { x: 1.0, y: 2.0, width: 3.0, height: 4.0, scale: 2.0, display_id: Some(9), global_x: Some(101.0), global_y: Some(202.0), ..Default::default() }.public()), elapsed_s: Some(1.5), ..state("w", "recording") }).unwrap();
+        assert_eq!(v, json!({"id":"w","phase":"recording","region":{"kind":"region","x":101.0,"y":202.0,"width":3.0,"height":4.0,"scale":2.0},"elapsed_s":1.5}));
+    }
+
+    #[test]
+    fn selection_json_region_window_and_legacy() {
+        let legacy = parse_selection(r#"{"display_id":1,"global_x":10,"global_y":20,"x":10,"y":20,"width":300,"height":200,"scale":2}"#).unwrap();
+        assert_eq!((legacy.kind, legacy.window_id, legacy.global_x), (TargetKind::Region, None, Some(10.0)));
+        assert_eq!(legacy.record_args(), ["--display-id", "1", "--x", "10", "--y", "20", "--width", "300", "--height", "200"]);
+        let region = parse_selection("noise\n{\"kind\":\"region\",\"display_id\":2,\"x\":0,\"y\":0,\"width\":1512,\"height\":982,\"scale\":2}\n").unwrap();
+        assert_eq!((region.kind, region.display_id, region.width), (TargetKind::Region, Some(2), 1512.0));
+        let win = parse_selection(r#"{"kind":"window","window_id":4242,"bundle_id":"com.apple.Safari","app_name":"Safari","title":"Docs","display_id":1,"global_x":100,"global_y":50,"x":100,"y":50,"width":1280,"height":720,"scale":2}"#).unwrap();
+        assert_eq!((win.kind, win.window_id, win.app_name.as_deref(), win.title.as_deref()), (TargetKind::Window, Some(4242), Some("Safari"), Some("Docs")));
+        assert_eq!(win.record_args(), ["--window-id", "4242", "--display-id", "1"]);
+        assert_eq!(serde_json::to_value(win.public()).unwrap(), json!({"kind":"window","x":100.0,"y":50.0,"width":1280.0,"height":720.0,"scale":2.0,"window_id":4242,"bundle_id":"com.apple.Safari","app_name":"Safari","title":"Docs"}));
+        assert!(parse_selection(r#"{"kind":"window","display_id":1,"width":1,"height":1}"#).unwrap_err().contains("window_id"));
+        assert!(parse_selection(r#"{"kind":"tab","display_id":1}"#).unwrap_err().contains("unknown kind"));
+        assert!(parse_selection("").is_err());
+    }
+
+    #[test]
+    fn legacy_walk_json_without_kind_is_a_region() {
+        let w: Walk = serde_json::from_str(r#"{"id":"a","started_at":1,"origin":{},"region":{"x":1,"y":2,"width":3,"height":4,"scale":2,"display_id":1},"phase":"stopped"}"#).unwrap();
+        assert_eq!((w.region.kind, w.region.window_id), (TargetKind::Region, None));
+    }
+
+    #[test]
+    fn start_modes() {
+        assert_eq!(select_mode_arg("zone"), Ok("region"));
+        assert_eq!(select_mode_arg("app"), Ok("window"));
+        assert!(select_mode_arg("screen").is_err());
     }
 
     #[test]

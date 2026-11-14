@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Square } from "lucide-react";
 import { Button } from "@freddai/ui/components/button";
-import { bugWalk, elapsedSeconds, formatClock, type BugWalk, type BugWalkStore } from "./bugWalk";
+import { bugWalk, elapsedSeconds, formatClock, targetLabel, type BugWalk, type BugWalkStore } from "./bugWalk";
 import "./bug-walk.css";
 
 /** Always-visible recording controls in the main window's dock, independent of the floating pill window. */
@@ -17,12 +17,13 @@ export function RecordingCard({ walk, store = bugWalk }: { walk: BugWalk; store?
   }, [recording]);
   if (!recording) {
     return <section className="bug-walk-card" data-state="selecting" role="status" aria-label="Bug walk region selection">
-      <header><strong>Drag a region on screen… (Esc to cancel)</strong></header>
+      <header><strong>{walk.mode === "app" ? "Click a window to record… (Esc to cancel)" : "Drag a region on screen… (Esc to cancel)"}</strong></header>
     </section>;
   }
   const level = Math.min(1, Math.max(0, walk.level));
   return <section className="bug-walk-card" data-state="recording" role="status" aria-label="Bug walk recording">
     <header><span className="bug-walk-dot" aria-hidden="true" /><strong>Recording bug walk</strong></header>
+    {walk.region && <p className="bug-walk-target" title={targetLabel(walk.region)}>{targetLabel(walk.region)}</p>}
     {walk.error && <p className="bug-walk-error" role="alert">{walk.error}</p>}
     <div className="bug-walk-rec-row">
       <time className="bug-walk-clock">{formatClock(elapsedSeconds(walk, now))}</time>

@@ -160,6 +160,7 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
   private var preview: PreviewViewController?
 
   @objc public override func load(webview: WKWebView) {
+    DispatchQueue.global(qos: .utility).async { BugWalkFiles.cleanupOld() }
     DispatchQueue.main.async { [weak self] in self?.install(webview) }
   }
 
@@ -406,6 +407,60 @@ class NativeShellPlugin: Plugin, UISheetPresentationControllerDelegate {
       guard let shell = self?.shell else { invoke.reject("The native shell is not ready."); return }
       shell.presentPicker(title: args.title, options: args.options, selected: args.selected) { id in
         invoke.resolve(["picked": id != nil, "id": id ?? ""])
+      }
+    }
+  }
+
+  // MARK: Bug walk (screen recording / Photos video)
+
+  private lazy var bugWalk: BugWalkRecorder = {
+    let recorder = BugWalkRecorder()
+    recorder.emit = { [weak self] payload in try? self?.trigger("bug-walk-recording-state", data: payload) }
+    recorder.presenter = { [weak self] in self?.manager.viewController }
+    return recorder
+  }()
+
+  @objc func bugWalkRecordingAvailable(_ invoke: Invoke) throws {
+    DispatchQueue.main.async { invoke.resolve(BugWalkAvailability(available: BugWalkRecorder.available)) }
+  }
+
+  @objc func startBugWalkRecording(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(StartBugWalkArgs.self)
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { invoke.reject("The native shell is not ready."); return }
+      self.bugWalk.start(microphone: args.microphone ?? false) { error in
+        if let error { invoke.reject(error.message) } else { invoke.resolve() }
+      }
+    }
+  }
+
+  @objc func stopBugWalkRecording(_ invoke: Invoke) throws {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { invoke.reject("The native shell is not ready."); return }
+      self.bugWalk.stop { result in
+        switch result {
+        case .success(let video): invoke.resolve(video)
+        case .failure(let error): invoke.reject(error.message)
+        }
+      }
+    }
+  }
+
+  @objc func cancelBugWalkRecording(_ invoke: Invoke) throws {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { invoke.resolve(); return }
+      self.bugWalk.cancel { invoke.resolve() }
+    }
+  }
+
+  @objc func pickBugWalkVideo(_ invoke: Invoke) throws {
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { invoke.reject("The native shell is not ready."); return }
+      self.bugWalk.pick { result in
+        switch result {
+        case .success(let video): invoke.resolve(BugWalkPickResult(picked: video != nil, video: video))
+        case .failure(let error): invoke.reject(error.message)
+        }
       }
     }
   }

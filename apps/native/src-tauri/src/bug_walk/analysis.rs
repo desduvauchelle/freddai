@@ -61,11 +61,20 @@ pub fn transcript_lines(segments: &[Segment], full_text: &str) -> String {
     lines.join("\n")
 }
 
+/// "1280x800 px region", or for a device recording (region carries a title, e.g. "Screen recording from iPhone") "Screen recording from iPhone, 1170x2532 px".
+fn recording_desc(region: &Region) -> String {
+    let size = format!("{:.0}x{:.0} px", region.width, region.height);
+    match region.title.as_deref().filter(|t| !t.is_empty()) {
+        Some(t) if region.kind != super::TargetKind::Window => format!("{t}, {size}"),
+        _ => format!("{size} region"),
+    }
+}
+
 pub fn analysis_prompt(transcript: &str, region: &Region, duration_s: f64) -> String {
     format!(
         "You are analysing a screen recording of someone walking through an app and describing bugs out loud. \
 You cannot see the video, only the timestamped transcript of their voice. Turn it into a list of distinct bugs.\n\n\
-Recording: {w:.0}x{h:.0} px region, {dur} long.\n\n\
+Recording: {what}, {dur} long.\n\n\
 Rules:\n\
 - Split one long rant into several items when it describes several problems.\n\
 - Merge repeats of the same problem into one item.\n\
@@ -79,8 +88,7 @@ Rules:\n\
 Reply with JSON only, no prose, no code fences, in exactly this shape:\n\
 {{\"items\":[{{\"start\":41.8,\"end\":49.2,\"frame_at\":44.1,\"title\":\"Save button does nothing\",\"expected\":\"Loading state then a success toast\",\"actual\":\"Nothing happens on click\",\"quote\":\"When I click save here nothing happens\",\"severity\":\"high\"}}]}}\n\n\
 Transcript:\n{transcript}\n",
-        w = region.width,
-        h = region.height,
+        what = recording_desc(region),
         dur = short_timestamp(duration_s),
     )
 }
@@ -182,14 +190,26 @@ pub fn frame_name(number: usize) -> String {
 
 const FIX_INSTRUCTIONS: &str = "Work through every item in order. For each one, find the component in the screenshot, make the fix, and reply with a checklist: item number, what you changed, file:line. Ask only if an item is genuinely ambiguous.";
 
+/// "region 1280×800" or, for an app window, "window Safari — Title 1280×800".
 fn region_label(region: &Region) -> String {
-    format!("{:.0}×{:.0}", region.width, region.height)
+    let size = format!("{:.0}×{:.0}", region.width, region.height);
+    if region.kind != super::TargetKind::Window {
+        return match region.title.as_deref().filter(|t| !t.is_empty()) {
+            Some(t) => format!("{t} {size}"),
+            None => format!("region {size}"),
+        };
+    }
+    let app = region.app_name.as_deref().filter(|s| !s.is_empty()).unwrap_or("app");
+    match region.title.as_deref().filter(|s| !s.is_empty()) {
+        Some(t) => format!("window {app} — {t} {size}"),
+        None => format!("window {app} {size}"),
+    }
 }
 
 /// `when` is a pre-formatted local "YYYY-MM-DD HH:MM". Frame number N is `frames[N-1]` (attachment `NN.png`).
 pub fn render_report(when: &str, region: &Region, items: &[Item], frames: &[PlannedFrame], transcript: &str) -> String {
     let mut out = format!(
-        "# Bug walk — {when} — region {}\n\n{} {}. Each item has a screenshot with the cursor showing where I was pointing.\n",
+        "# Bug walk — {when} — {}\n\n{} {}. Each item has a screenshot with the cursor showing where I was pointing.\n",
         region_label(region),
         items.len(),
         if items.len() == 1 { "item" } else { "items" },
@@ -253,7 +273,7 @@ pub fn render_item_report(index: usize, total: usize, item: &Item, frame_kinds: 
 /// Report for the loud "send transcript as is" fallback: no analysis, one frame every 10 s.
 pub fn render_transcript_report(when: &str, region: &Region, frames: &[PlannedFrame], transcript: &str) -> String {
     let mut out = format!(
-        "# Bug walk (raw transcript) — {when} — region {}\n\nAutomatic analysis was unavailable, so this is my full voice transcript with a screenshot every few seconds (cursor visible). Find every bug I describe and fix them.\n\n## Screenshots\n",
+        "# Bug walk (raw transcript) — {when} — {}\n\nAutomatic analysis was unavailable, so this is my full voice transcript with a screenshot every few seconds (cursor visible). Find every bug I describe and fix them.\n\n## Screenshots\n",
         region_label(region)
     );
     for (n, f) in frames.iter().enumerate() {
@@ -268,7 +288,7 @@ mod tests {
     use super::*;
 
     fn region() -> Region {
-        Region { x: 0.0, y: 0.0, width: 1280.0, height: 800.0, scale: 2.0, display_id: None, global_x: None, global_y: None }
+        Region { width: 1280.0, height: 800.0, scale: 2.0, ..Default::default() }
     }
     fn item(start: f64, end: f64, frame_at: f64, title: &str) -> Item {
         Item { start, end, frame_at, title: title.into(), expected: String::new(), actual: String::new(), quote: String::new(), severity: "medium".into() }
@@ -408,6 +428,13 @@ Fix this one bug: find the component in the screenshot, make the fix, and reply 
         let report = render_transcript_report("2026-11-11 14:32", &region(), &frames, "[00:01.0] hi");
         assert!(report.contains("00:10 ![frame at 00:10](attachment:02.png)"));
         assert!(report.ends_with("## Transcript\n[00:01.0] hi\n"));
+    }
+
+    #[test]
+    fn report_heading_names_the_window() {
+        let win = Region { kind: crate::bug_walk::TargetKind::Window, app_name: Some("Safari".into()), title: Some("Docs".into()), ..region() };
+        assert!(render_transcript_report("2026-11-11 14:32", &win, &[], "[00:01.0] hi").starts_with("# Bug walk (raw transcript) — 2026-11-11 14:32 — window Safari — Docs 1280×800\n"));
+        assert_eq!(region_label(&Region { title: None, ..win }), "window Safari 1280×800");
     }
 
     #[test]

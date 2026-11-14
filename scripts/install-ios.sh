@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Non-login shells may lack cargo, which `tauri ios build` needs for `cargo metadata`.
+export PATH="$HOME/.cargo/bin:$PATH"
 # Uses the existing Xcode account and development team. No credentials in this repo.
 python3 scripts/provision-iphone.py >/dev/null
 pnpm native:install

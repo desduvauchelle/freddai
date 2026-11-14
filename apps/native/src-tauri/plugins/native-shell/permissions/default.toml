@@ -2,4 +2,4 @@
 
 [default]
 description = "Allows the Freddai webview to drive the native iPhone shell."
-permissions = ["allow-call-control", "allow-ping", "allow-set-mode", "allow-set-connection", "allow-set-composer-text", "allow-discard-files", "allow-pick-option", "allow-set-threads", "allow-set-dashboard", "allow-set-thread-meta", "allow-set-voice", "allow-append-composer-text", "allow-register-listener", "allow-remove-listener"]
+permissions = ["allow-call-control", "allow-ping", "allow-set-mode", "allow-set-connection", "allow-set-composer-text", "allow-discard-files", "allow-pick-option", "allow-set-threads", "allow-set-dashboard", "allow-set-thread-meta", "allow-set-voice", "allow-append-composer-text", "allow-register-listener", "allow-remove-listener", "allow-bug-walk-recording-available", "allow-start-bug-walk-recording", "allow-stop-bug-walk-recording", "allow-cancel-bug-walk-recording", "allow-pick-bug-walk-video"]

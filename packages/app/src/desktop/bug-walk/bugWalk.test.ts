@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-import { createBugWalk, elapsedSeconds, formatClock, permissionProblem, prettyShortcut, type BugWalkStateEvent } from "./bugWalk";
+import { createBugWalk, elapsedSeconds, formatClock, permissionProblem, prettyShortcut, targetLabel, type BugWalkStateEvent } from "./bugWalk";
 
 const region = { x: 10, y: 20, width: 640, height: 400, scale: 2 };
 function setup() {
@@ -20,7 +20,7 @@ it("walks through the state events and computes elapsed client-side", async () =
   call.mockResolvedValueOnce({ id: "w1" });
   await store.attach();
   expect(await store.start({ thread: "t1" })).toBe(true);
-  expect(call).toHaveBeenCalledWith("bug_walk_start", { origin: { thread: "t1" } });
+  expect(call).toHaveBeenCalledWith("bug_walk_start", { origin: { thread: "t1" }, mode: "zone" });
   expect(store.getSnapshot().walk).toMatchObject({ id: "w1", phase: "selecting", origin: { thread: "t1" } });
   emit({ id: "w1", phase: "recording", region });
   const w = store.getSnapshot().walk!;
@@ -130,4 +130,27 @@ it("carries launched/total and session_ids through state events", () => {
   expect(store.getSnapshot().walk).toMatchObject({ phase: "launching", launched: 1, total: 3 });
   store.applyState({ id: "w1", phase: "done", session_id: "s1", session_ids: ["s1", "s2", "s3"] });
   expect(store.getSnapshot().walk).toMatchObject({ phase: "done", sessionId: "s1", sessionIds: ["s1", "s2", "s3"] });
+});
+it("starts in the chosen mode and the hotkey reuses the last one", async () => {
+  const { call, store, emit, handlers } = setup();
+  await store.attach();
+  call.mockResolvedValueOnce({ id: "w1" });
+  await store.start(undefined, "app");
+  expect(call).toHaveBeenLastCalledWith("bug_walk_start", { origin: null, mode: "app" });
+  expect(store.getSnapshot().walk).toMatchObject({ id: "w1", mode: "app" });
+  expect(store.getLastMode()).toBe("app");
+  emit({ id: "w1", phase: "cancelled" });
+  call.mockResolvedValueOnce({ id: "w2" });
+  handlers["bug-walk://hotkey"]({ payload: null });
+  await vi.waitFor(() => expect(call).toHaveBeenLastCalledWith("bug_walk_start", { origin: null, mode: "app" }));
+  emit({ id: "w2", phase: "cancelled" });
+  store.setLastMode("zone");
+  call.mockResolvedValueOnce({ id: "w3" });
+  handlers["bug-walk://hotkey"]({ payload: null });
+  await vi.waitFor(() => expect(call).toHaveBeenLastCalledWith("bug_walk_start", { origin: null, mode: "zone" }));
+});
+it("labels what was recorded", () => {
+  expect(targetLabel({ x: 0, y: 0, width: 1280, height: 720, scale: 2 })).toBe("Zone 1280×720");
+  expect(targetLabel({ x: 0, y: 0, width: 800, height: 600, scale: 2, kind: "window", app_name: "Safari", title: "Inbox" })).toBe("App: Safari — Inbox");
+  expect(targetLabel({ x: 0, y: 0, width: 800, height: 600, scale: 2, kind: "window", app_name: "Finder", title: "" })).toBe("App: Finder");
 });

@@ -65,3 +65,9 @@ html[data-freddai-appearance="light"] .bug-walk-error { color: #c12b36; }
 .bug-walk-stop-lg { height: 34px; padding: 0 16px; font-size: 13px; font-weight: 600; margin-left: auto; }
 .bug-walk-confirm { display: flex; align-items: center; gap: 8px; }
 .bug-walk-confirm span { margin-right: auto; }
+
+/* Zone / App choice under the Bug walk button. */
+.bug-walk-mode-text { display: flex; flex-direction: column; gap: 1px; }
+.bug-walk-mode-text > strong { font-weight: 500; }
+.bug-walk-mode-text > span { font-size: 11px; color: var(--adaptive-muted, #92939f); }
+.bug-walk-target { margin: 0; font-size: 12px; color: var(--adaptive-muted, #92939f); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

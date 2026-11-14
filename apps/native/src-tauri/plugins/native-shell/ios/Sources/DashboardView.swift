@@ -36,9 +36,10 @@ struct DashboardModel: Decodable {
   var difficulty: String?
   var hasControls: Bool?
   var workspaceName: String?
-  private enum CodingKeys: String, CodingKey { case model, difficulty, hasControls, projectGroups, commander, needsYou, summaries, schedules, message, expanded, workspaceHeight, connected, busy, agent, projects; case workspaceName = "workspace" }
+  private enum CodingKeys: String, CodingKey { case model, difficulty, hasControls, projectGroups, commander, needsYou, summaries, schedules, bugWalk, message, expanded, workspaceHeight, connected, busy, agent, projects; case workspaceName = "workspace" }
   var summaries: [Summary]?
   var schedules: Bool?
+  var bugWalk: Bool?
   var message: String?
   var workspaceHeight: Double?
   var expanded: Bool?
@@ -466,6 +467,9 @@ final class DashboardView: UIScrollView {
 
     if model.schedules == true {
       stack.addArrangedSubview(button("Schedules", symbol: "calendar") { [weak self] in self?.onAction?(DashboardActionPayload(action: "schedules")) })
+    }
+    if model.bugWalk == true {
+      stack.addArrangedSubview(button("Bug walk", symbol: "record.circle") { [weak self] in self?.onAction?(DashboardActionPayload(action: "bugwalk")) })
     }
     if !voiceReady {
       let note = UILabel(); note.text = "Enable voice dictation and prepare its model on your Mac to use the microphone."; note.numberOfLines = 0; note.font = .preferredFont(forTextStyle: .caption1); note.textColor = .secondaryLabel

@@ -154,3 +154,55 @@ export function setDashboard(model: import('./native-dashboard').NativeDashboard
   return invoke<void>(`plugin:${PLUGIN}|set_dashboard`, { model });
 }
 export const onDashboardAction = (handler: (payload: import('./native-dashboard').DashboardAction) => void) => listen<import('./native-dashboard').DashboardAction>('dashboardAction', handler);
+
+/** A compressed bug-walk video in the app cache dir. JS only sees its path; Rust reads and uploads it. */
+export type BugWalkVideo = { path: string; name: string; mime: string; bytes: number; durationS: number };
+export type BugWalkRecordingState = { state: 'idle' | 'recording' | 'processing'; elapsedS: number };
+
+function toError(error: unknown, fallback: string): Error {
+  if (error instanceof Error) return error;
+  const message = typeof error === 'string' ? error : (error as { message?: unknown } | null)?.message;
+  return new Error(typeof message === 'string' && message ? message : fallback);
+}
+async function bugWalkInvoke<T>(command: string, args: Record<string, unknown> | undefined, fallback: string): Promise<T> {
+  if (!(await probeNativeShell())) throw new Error("Screen recording isn't available on this device");
+  try { return await invoke<T>(`plugin:${PLUGIN}|${command}`, args); } catch (error) { throw toError(error, fallback); }
+}
+function toBugWalkVideo(value: unknown): BugWalkVideo {
+  const v = value as Partial<BugWalkVideo> | null;
+  if (!v || typeof v.path !== 'string' || !v.path) throw new Error('The recording could not be saved');
+  return { path: v.path, name: typeof v.name === 'string' ? v.name : 'bug-walk.mp4', mime: typeof v.mime === 'string' ? v.mime : 'video/mp4', bytes: Number(v.bytes) || 0, durationS: Number(v.durationS) || 0 };
+}
+
+/** False off-device (non-iOS) or when ReplayKit reports screen recording as unavailable. */
+export async function bugWalkRecordingAvailable(): Promise<boolean> {
+  if (!(await probeNativeShell())) return false;
+  try { return (await invoke<{ available?: boolean }>(`plugin:${PLUGIN}|bug_walk_recording_available`))?.available === true; } catch { return false; }
+}
+/** Starts recording the Freddai companion itself (iOS only captures this app). */
+export async function startBugWalkRecording(opts: { microphone: boolean }): Promise<void> {
+  await bugWalkInvoke<void>('start_bug_walk_recording', { microphone: opts.microphone }, 'Could not start screen recording');
+}
+/** Stops recording and resolves once the video has been compressed. */
+export async function stopBugWalkRecording(): Promise<BugWalkVideo> {
+  return toBugWalkVideo(await bugWalkInvoke<unknown>('stop_bug_walk_recording', undefined, 'Could not finish screen recording'));
+}
+export async function cancelBugWalkRecording(): Promise<void> {
+  if (!(await probeNativeShell())) return;
+  await bugWalkInvoke<void>('cancel_bug_walk_recording', undefined, 'Could not cancel screen recording');
+}
+/** Opens the Photos video picker. Resolves to null when the user cancels. */
+export async function pickBugWalkVideo(): Promise<BugWalkVideo | null> {
+  const result = await bugWalkInvoke<{ picked?: boolean; video?: unknown }>('pick_bug_walk_video', undefined, 'Could not read that video');
+  return result?.picked && result.video ? toBugWalkVideo(result.video) : null;
+}
+/** Subscribes to recording state ticks. Returns an unsubscribe function immediately (safe to call before the listener is registered). */
+export function onBugWalkRecordingState(cb: (s: BugWalkRecordingState) => void): () => void {
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  void probeNativeShell().then(() => cancelled ? () => {} : listen<{ state?: unknown; elapsedS?: unknown }>('bug-walk-recording-state', payload => {
+    const state = payload?.state === 'recording' || payload?.state === 'processing' ? payload.state : 'idle';
+    cb({ state, elapsedS: Number(payload?.elapsedS) || 0 });
+  })).then(unlisten => { if (cancelled) unlisten(); else off = unlisten; }, () => {});
+  return () => { cancelled = true; off?.(); off = null; };
+}

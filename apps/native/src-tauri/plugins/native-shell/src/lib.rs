@@ -98,6 +98,29 @@ async fn pick_option<R: Runtime>(app: AppHandle<R>, title: String, options: serd
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
+async fn bug_walk_recording_available<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("bugWalkRecordingAvailable", Empty {}).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn start_bug_walk_recording<R: Runtime>(app: AppHandle<R>, microphone: Option<bool>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0
+        .run_mobile_plugin("startBugWalkRecording", serde_json::json!({"microphone": microphone.unwrap_or(false)}))
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn stop_bug_walk_recording<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("stopBugWalkRecording", Empty {}).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn cancel_bug_walk_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("cancelBugWalkRecording", Empty {}).map_err(|e| e.to_string())
+}
+/// Photos video picker; resolves `{picked, video?}`.
+#[tauri::command]
+async fn pick_bug_walk_video<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    app.state::<NativeShell<R>>().0.run_mobile_plugin("pickBugWalkVideo", Empty {}).map_err(|e| e.to_string())
+}
+#[tauri::command]
 async fn register_listener<R: Runtime>(app: AppHandle<R>, event: String, handler: Channel<serde_json::Value>) -> Result<(), String> {
     app.state::<NativeShell<R>>().0
         .run_mobile_plugin("registerListener", RegisterListener { event, handler })
@@ -112,7 +135,7 @@ async fn remove_listener<R: Runtime>(app: AppHandle<R>, event: String, channel_i
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("native-shell")
-        .invoke_handler(tauri::generate_handler![call_control, ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_dashboard, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener])
+        .invoke_handler(tauri::generate_handler![call_control, ping, set_mode, set_connection, set_composer_text, discard_files, pick_option, set_threads, set_dashboard, set_thread_meta, set_voice, append_composer_text, register_listener, remove_listener, bug_walk_recording_available, start_bug_walk_recording, stop_bug_walk_recording, cancel_bug_walk_recording, pick_bug_walk_video])
         .setup(|app, api| {
             #[cfg(target_os = "ios")]
             {

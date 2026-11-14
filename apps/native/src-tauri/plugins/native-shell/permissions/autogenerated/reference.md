@@ -18,6 +18,11 @@ Allows the Freddai webview to drive the native iPhone shell.
 - `allow-append-composer-text`
 - `allow-register-listener`
 - `allow-remove-listener`
+- `allow-bug-walk-recording-available`
+- `allow-start-bug-walk-recording`
+- `allow-stop-bug-walk-recording`
+- `allow-cancel-bug-walk-recording`
+- `allow-pick-bug-walk-video`
 
 ## Permission Table
 
@@ -57,6 +62,32 @@ Denies the append_composer_text command without any pre-configured scope.
 <tr>
 <td>
 
+`native-shell:allow-bug-walk-recording-available`
+
+</td>
+<td>
+
+Enables the bug_walk_recording_available command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-bug-walk-recording-available`
+
+</td>
+<td>
+
+Denies the bug_walk_recording_available command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `native-shell:allow-call-control`
 
 </td>
@@ -83,6 +114,32 @@ Denies the call_control command without any pre-configured scope.
 <tr>
 <td>
 
+`native-shell:allow-cancel-bug-walk-recording`
+
+</td>
+<td>
+
+Enables the cancel_bug_walk_recording command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-cancel-bug-walk-recording`
+
+</td>
+<td>
+
+Denies the cancel_bug_walk_recording command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `native-shell:allow-discard-files`
 
 </td>
@@ -102,6 +159,32 @@ Enables the discard_files command without any pre-configured scope.
 <td>
 
 Denies the discard_files command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-pick-bug-walk-video`
+
+</td>
+<td>
+
+Enables the pick_bug_walk_video command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-pick-bug-walk-video`
+
+</td>
+<td>
+
+Denies the pick_bug_walk_video command without any pre-configured scope.
 
 </td>
 </tr>
@@ -388,6 +471,58 @@ Enables the set_voice command without any pre-configured scope.
 <td>
 
 Denies the set_voice command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-start-bug-walk-recording`
+
+</td>
+<td>
+
+Enables the start_bug_walk_recording command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-start-bug-walk-recording`
+
+</td>
+<td>
+
+Denies the start_bug_walk_recording command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:allow-stop-bug-walk-recording`
+
+</td>
+<td>
+
+Enables the stop_bug_walk_recording command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-shell:deny-stop-bug-walk-recording`
+
+</td>
+<td>
+
+Denies the stop_bug_walk_recording command without any pre-configured scope.
 
 </td>
 </tr>

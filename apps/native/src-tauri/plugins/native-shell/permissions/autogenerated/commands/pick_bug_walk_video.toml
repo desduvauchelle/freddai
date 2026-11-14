@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pick-bug-walk-video"
+description = "Enables the pick_bug_walk_video command without any pre-configured scope."
+commands.allow = ["pick_bug_walk_video"]
+
+[[permission]]
+identifier = "deny-pick-bug-walk-video"
+description = "Denies the pick_bug_walk_video command without any pre-configured scope."
+commands.deny = ["pick_bug_walk_video"]
