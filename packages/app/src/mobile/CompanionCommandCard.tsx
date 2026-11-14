@@ -1,8 +1,8 @@
+import { CommandReview } from '../conversation/CommandReview';
 import { formatProjectName } from "../projectName";
 import { ComposerAgentPicker } from '../desktop/ComposerAgentPicker';
 import { useCallback } from 'react';
 import type { AgentSelection } from '../desktop/agent-selection';
-import { X } from 'lucide-react';
 import type { CommandReviewProps } from '../desktop/DashboardCall';
 import type { CompanionProject, CompanionClient } from './companion';
 import { assistantLabel } from './native-home';
@@ -18,15 +18,8 @@ export function CompanionCommandCard({ draft, projects, assistant, onAssistant, 
   const provider = project?.assistants?.find(a => a.id === assistant)?.provider || project?.provider;
   const loadModels = useCallback(() => client.models!({ project: draft.projectId, assistant: assistant || undefined }), [client, draft.projectId, assistant]);
   const ready = !!project?.canStart && (!project.assistants || project.assistants.some(a => a.id === assistant));
-  return <section className="command-card" aria-label="Command review">
-    <div className="command-card-head"><span className="command-card-dot" style={{ background: project?.color }} aria-hidden />
-      <span>{formatProjectName(project?.name, projectNameUppercase)}</span><button type="button" aria-label="Cancel command" onClick={onDismiss} disabled={sending}><X size={14}/></button></div>
-    <textarea aria-label="Instruction" value={draft.instruction} onChange={e => onChangeInstruction(e.target.value)} disabled={sending}/>
-    <ComposerAgentPicker options={(project?.assistants || []).map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color }))} agent={assistant} onAgentChange={onAssistant} provider={provider} modelConfiguration={modelConfiguration} native={!!client.models} loadModels={client.models ? loadModels : undefined} value={selection} onChange={onSelection} disabled={sending}/>
-
-    {!ready && <p role="status">Choose a project agent that is ready on your Mac.</p>}
-    {error && <p role="alert" className="command-card-error">{error}</p>}
-    <div className="command-card-actions"><button type="button" disabled={sending || !ready || !draft.instruction.trim()} onClick={onSend}>{sending ? 'Sending…' : 'Send'}</button>
-      <p className="command-card-hint">Say "go" to send, "cancel" to dismiss</p></div>
-  </section>;
+  return <CommandReview title={formatProjectName(project?.name, projectNameUppercase)} color={project?.color} instruction={draft.instruction} onChange={onChangeInstruction}
+    onSend={onSend} onDismiss={onDismiss} sending={!!sending} ready={ready} error={error}
+    notice={!ready && <p role="status">Choose a project agent that is ready on your Mac.</p>}
+    controls={<ComposerAgentPicker options={(project?.assistants || []).map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color }))} agent={assistant} onAgentChange={onAssistant} provider={provider} modelConfiguration={modelConfiguration} native={!!client.models} loadModels={client.models ? loadModels : undefined} value={selection} onChange={onSelection} disabled={sending}/>} />;
 }

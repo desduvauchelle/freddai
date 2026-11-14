@@ -1,3 +1,4 @@
+import { MessageInput } from "../conversation/MessageComposer";
 import { useEffect, useRef, useState } from "react";
 import { stripVoiceCall } from "../conversation/voiceCallMarkup";
 import "./MessageQueue.css";
@@ -78,7 +79,7 @@ export function MessageQueue({ queue, active, disabled, canSteer, pendingIds, on
       <CornerDownRight className="message-queue-icon" aria-hidden="true"/>
       <div className="message-queue-preview" title={stripVoiceCall(message.prompt).text}>
         {editing === message.id ? <form onSubmit={async e => { e.preventDefault(); if (await onAction("edit", message.id, draft)) setEditing(null); }}>
-          <textarea autoFocus aria-label="Edit queued message" value={draft} onChange={e => setDraft(e.target.value)} disabled={disabled}/>
+          <MessageInput autoFocus aria-label="Edit queued message" value={draft} onValueChange={setDraft} disabled={disabled}/>
           <button type="submit" aria-label="Save queued message" disabled={disabled || !draft.trim()}>Save</button>
           <button type="button" disabled={disabled} onClick={() => setEditing(null)}>Cancel</button>
         </form> : <p>{(() => { const { text, voice } = stripVoiceCall(message.prompt); return <>{voice && <span className="message-queue-badge">voice</span>}{text.trim() || "(empty)"}</>; })()}</p>}

@@ -23,5 +23,10 @@ describe('sendDisposition', () => {
   it('repeated identical prompts need one transcript echo per ordinal', () => {
     expect(countUnreflected([{ thread: 't', prompt: 'a', ordinal: 2 }], 't', [{ role: 'user', text: 'a' }])).toBe(1);
   });
+  it('uses delivery receipts when the sent message is outside the loaded page', () => {
+    const local = [{ id: 'sent', thread: 't', prompt: 'repeat', ordinal: 3 }];
+    expect(countUnreflected(local, 't', [], ['phone:sent'])).toBe(0);
+    expect(countUnreflected(local, 't', [{ role: 'user', text: 'repeat' }], [])).toBe(1);
+  });
   it('a new thread is always a bubble', () => expect(sendDisposition({ isNewThread: true, status: 'running', queued: 3 })).toBe('bubble'));
 });

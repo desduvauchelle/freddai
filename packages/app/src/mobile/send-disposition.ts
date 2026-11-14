@@ -33,12 +33,13 @@ export function sendDisposition(input: DispositionInput): SendDisposition {
  * Acknowledged messages count: the host accepted them but the snapshot may not show the turn yet.
  */
 export function countUnreflected(
-  local: { thread: string; prompt: string; ordinal: number }[],
+  local: { id?: string; thread: string; prompt: string; ordinal: number }[],
   thread: string,
   messages: { role: string; text: string }[] = [],
+  deliveredRequests?: string[],
 ): number {
   return local.filter(m => m.thread === thread &&
-    messages.filter(x => x.role === 'user' && x.text === m.prompt).length < m.ordinal).length;
+    (deliveredRequests ? !deliveredRequests.includes(`phone:${m.id}`) : messages.filter(x => x.role === 'user' && x.text === m.prompt).length < m.ordinal)).length;
 }
 
 /** Structured diagnostic line; every send site logs one per classification. */

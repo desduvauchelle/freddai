@@ -1,0 +1,25 @@
+/* Lightbox sizing for inline images (local and hosted); fills the screen on phones. */
+.generated-lightbox .generated-lightbox-stage img{max-width:100vw;max-height:85vh;object-fit:contain}
+.generated-lightbox .generated-file-actions{flex:0 0 auto;max-height:20vh;overflow:auto}
+.generated-thumb-error a{overflow-wrap:anywhere}
+.generated-lightbox .generated-file-actions{justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
+.generated-lightbox .generated-file-actions button{color:#eee;background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.3);min-height:36px}
+/* Inline video/audio card, player and lightbox sizing. */
+.generated-media{max-width:100%}
+.generated-media-card{display:flex;align-items:center;gap:10px;max-width:min(100%,420px);width:100%;padding:10px 12px;font:inherit;color:inherit;text-align:left;background:var(--muted,#303138);border:1px solid var(--border,#454650);border-radius:8px;cursor:pointer}
+.generated-media-card:disabled{cursor:progress;opacity:.9}
+.generated-media-icon{flex:0 0 36px;height:36px;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.14)}
+.generated-media-text{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.generated-media-text strong{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.generated-media-text small{font-size:12px;opacity:.75;overflow-wrap:anywhere}
+.generated-media-text progress{width:100%;height:4px}
+.generated-media-player{position:relative;display:inline-block;max-width:100%;line-height:0;border:1px solid var(--border,#454650);border-radius:8px;overflow:hidden;background:#000}
+.generated-media-player audio{display:block;max-width:100%}
+.generated-video{display:block;max-width:100%;max-height:60vh;border-radius:8px;background:#000}
+.generated-media-expand{position:absolute;top:6px;right:6px;display:grid;place-items:center;width:30px;height:30px;padding:0;color:#fff;background:rgba(0,0,0,.55);border:0;border-radius:6px;cursor:pointer}
+.generated-media-title{display:block;margin-top:4px;padding:0;font:inherit;font-size:12px;color:inherit;opacity:.75;background:none;border:0;cursor:pointer;text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.generated-lightbox .generated-lightbox-stage video{max-width:100vw;max-height:85vh;border-radius:0}
+@media (pointer: coarse){
+  .generated-media-expand{top:0;right:0;width:44px;height:44px;border-radius:0 0 0 8px;background:rgba(0,0,0,.55)}
+  .generated-media-title{min-height:44px;padding:12px 0;box-sizing:border-box;display:flex;align-items:center}
+}

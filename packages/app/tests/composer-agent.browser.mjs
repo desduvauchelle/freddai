@@ -14,12 +14,22 @@ try {
   assert.equal(await dialog.getByRole('combobox').count(),0);
   const box=await dialog.boundingBox(); assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= 850);
   await page.screenshot({path:`/tmp/freddai-assistant-${width}.png`});
+  if (width >= 720) {
+   await dialog.getByRole('button',{name:'Claude · Preview connection',exact:true}).click();
+   await dialog.getByRole('button',{name:/Custom/}).click();
+   await dialog.getByRole('heading',{name:'Choose assistant, model and thinking'}).waitFor();
+   await dialog.getByRole('group',{name:'Thinking'}).waitFor();
+   const cbox=await dialog.boundingBox(); assert.ok(cbox.x >= 0 && cbox.x + cbox.width <= width && cbox.y >= 0 && cbox.y + cbox.height <= 850);
+   if (width === 1024 || width === 1440) await page.screenshot({path:`/tmp/freddai-custom-${width}.png`});
+   await dialog.getByRole('button',{name:'← Levels'}).click();
+   await dialog.getByRole('group',{name:'Thinking'}).waitFor({state:'hidden'});
+  }
   await dialog.getByRole('button',{name:'Codex · Preview connection',exact:true}).click();
   if (width >= 720) {
-   // Wide: one dialog, three columns (Assistant / Model / Thinking); stays open until Done.
-   await dialog.getByRole('heading',{name:'Choose assistant, model and thinking'}).waitFor();
+   // Wide: two columns (Assistant / Level); Custom flips Level to Model and adds Thinking; stays open until Done.
+   await dialog.getByRole('heading',{name:'Choose assistant and level'}).waitFor();
    await page.screenshot({path:`/tmp/freddai-difficulty-${width}.png`});
-   await dialog.getByRole('group',{name:'Model'}).getByRole('button',{name:'Fast',exact:true}).click();
+   await dialog.getByRole('group',{name:'Difficulty'}).getByRole('button',{name:'Fast',exact:true}).click();
    await dialog.getByRole('button',{name:'Done',exact:true}).click();
   } else {
    await dialog.getByRole('heading',{name:'Choose difficulty'}).waitFor();

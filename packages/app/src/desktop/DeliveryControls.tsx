@@ -1,7 +1,7 @@
+import { MessageInput } from "../conversation/MessageComposer";
 import type { ReactNode } from "react";
 import { Switch } from "@freddai/ui/components/switch";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@freddai/ui/components/select";
-import { Textarea } from "@freddai/ui/components/textarea";
 import { agentDisplayName } from "./types";
 import type { Schedule, Session } from "./types";
 
@@ -48,7 +48,7 @@ export function DeliveryRouting<T extends DeliveryFields>({ form, update, db, su
 export function DeliveryTask<T extends DeliveryFields>({ form, update, subject = "Schedule" }: Pick<Props<T>, "form" | "update" | "subject">) {
   const id = subject.toLowerCase();
   return <>
-    <label>Task<Textarea required value={form.prompt} onChange={e => update({ prompt: e.target.value } as Partial<T>)} /></label>
+    <label>Task<MessageInput required value={form.prompt} onValueChange={prompt => update({ prompt } as Partial<T>)} /></label>
     {form.new_chat !== false && <div className="schedule-switch-row"><label htmlFor={`${id}-worktree`}>Separate worktree</label><Switch id={`${id}-worktree`} checked={!!form.options.worktree} onCheckedChange={checked => update({ options: { ...form.options, worktree: checked } } as Partial<T>)} /></div>}
   </>;
 }
