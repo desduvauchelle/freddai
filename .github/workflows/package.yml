@@ -94,7 +94,19 @@ jobs:
         env:
           FREDDAI_COMPUTER_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: bash scripts/build-computer-use.sh && bash scripts/build-bug-walk.sh
-      - run: cargo test --workspace
+      - name: Build workspace tests
+        shell: bash
+        run: |
+          ( while true; do echo "MEM $(date -u +%T) $(free -m 2>/dev/null | awk '/Mem/{print $3"/"$2" MB"}' || vm_stat | awk '/Pages (free|active|wired)/{print}' | tr '\n' ' ')"; sleep 20; done ) &
+          timeout 25m cargo build --workspace --tests
+      - name: Test core crates
+        shell: bash
+        run: timeout 15m cargo test -p freddai-core -p scout-core -p tauri-plugin-native-shell
+      - name: Test native crate
+        shell: bash
+        run: |
+          ( while true; do echo "MEM $(date -u +%T) $(free -m 2>/dev/null | awk '/Mem/{print $3"/"$2" MB"}' || vm_stat | awk '/Pages (free|active|wired)/{print}' | tr '\n' ' ')"; sleep 20; done ) &
+          timeout 15m cargo test -p freddai-native -- --test-threads=1
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
