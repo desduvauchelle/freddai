@@ -1,0 +1,41 @@
+/* Office v7 "Campus" shell. Reuses --o-* variables and .office-btn from ../office/office.css. */
+.office7-mini, .office7-overlay {
+  --o-bg: #1b1a24; --o-panel: #26232f; --o-ink: #ece8f4; --o-muted: #a39db3; --o-line: #4a4560; --o-focus: #9ab6ff;
+  color: var(--o-ink); font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.office7-mini { position: relative; flex-shrink: 0; display: flex; flex-direction: column; width: 100%; border: 1px solid var(--border, #303137); border-radius: 8px; background: #1b1a24; overflow: hidden; }
+.office7-stage { position: relative; width: 100%; flex: none; overflow: hidden; background: #cdeef7; }
+.office7-mini > .office7-stage { cursor: pointer; }
+.office7-canvas { display: block; touch-action: none; }
+.office7-stage-full { position: absolute; inset: 0; height: 100%; cursor: default; }
+
+/* Full view: no top bar any more, so only the safe-area inset pads the top. */
+.office7-overlay { position: fixed; inset: 0; height: 100dvh; box-sizing: border-box; z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: #cdeef7; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.office7-main { position: relative; flex: 1 1 0; min-height: 0; }
+
+.office7-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; list-style: none; }
+
+/* The one bottom control row (mini and full): legend, filters, mute, zoom, style picker, expand / close. */
+.office7-bar { flex-wrap: wrap; row-gap: 4px; background: #1b1a24; padding-top: 3px; padding-bottom: 3px; }
+.office7-bar > .office-btn, .office7-bar > .office-version-picker { margin-left: 0; }
+.office7-bar-full { z-index: 2; }
+.office7-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin: 0 auto 0 0; padding: 0; list-style: none; min-width: 0; }
+.office7-legend li { display: flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px; }
+.office7-legend i { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 50%; font: 800 9px/1 ui-sans-serif, system-ui, sans-serif; color: #231a05; font-style: normal; box-shadow: 0 0 0 1.5px #fff3; }
+.office7-legend .office7-summary { color: var(--o-muted); }
+
+.office7-tooltip { position: absolute; z-index: 4; pointer-events: none; display: flex; flex-direction: column; gap: 1px; max-width: 240px; padding: 6px 10px; background: #26232f; border: 1px solid var(--o-line); border-radius: 8px; color: var(--o-ink); font-size: 12px; box-shadow: 0 6px 18px #0006; }
+.office7-tooltip span { display: flex; align-items: center; gap: 5px; color: var(--o-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.office7-tooltip i { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+
+.office7-order { display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--o-panel); border: 1px solid var(--o-line); border-radius: 8px; }
+.office7-mini > .office7-order { margin: 6px 8px; }
+.office7-order-float { position: absolute; left: 8px; right: 8px; bottom: 8px; max-width: 520px; z-index: 3; box-shadow: 0 6px 18px #0006; }
+.office7-order strong { font-size: 13px; }
+
+@media (max-width: 600px), (orientation: portrait) {
+  .office7-legend { gap: 2px 8px; }
+  .office7-legend li:not(.office7-summary) { font-size: 10px; }
+}
+@media (max-width: 480px) { .office7-legend .office7-summary { display: none; } }
+@media (max-height: 520px) { .office7-legend .office7-summary { display: none; } }

@@ -1,0 +1,5 @@
+/* Shared office version picker. */
+/* Shared office-style dropdown; sits in each office's bottom control row, sized like the neighbouring .office-btn. Variants override for alignment. */
+.office-version-picker { flex: none; width: auto; max-width: 9em; height: 24px; margin-left: 4px; padding: 0 2px; font: inherit; font-size: 12px; line-height: 1; color: #ece8f4; background: #1b1a24; border: 2px solid #4a4560; border-radius: 0; cursor: pointer; color-scheme: dark; }
+.office-version-picker:hover { background: #33303f; }
+.office-version-picker:focus-visible { outline: 2px solid #9ab6ff; outline-offset: 1px; }

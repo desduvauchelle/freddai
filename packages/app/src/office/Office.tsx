@@ -1,5 +1,6 @@
 import { formatProjectName } from "../projectName";
 import { createPortal } from "react-dom";
+import { OfficeVersionPicker } from "../officeShared/OfficeVersionPicker";
 import { Eye, EyeOff, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Project, Session } from "../desktop/types";
@@ -451,7 +452,7 @@ function Overlay({ recent, model, plan, now, onOpen, onClose, renderTaskControls
   };
   return createPortal(<div ref={root} className="office-overlay" role="dialog" aria-modal="true" aria-label="Office" onKeyDown={onKeyDown}>
     <Scene overview={overview} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander ? () => { onClose(); onOpenCommander(); } : undefined} initialProject={initialProject} renderTaskControls={renderTaskControls} model={model} layout={layout} variant="full" now={now} onOpen={onOpen} />
-    <Legend model={model}><RecentToggle recentOnly={recent.recentOnly} hidden={recent.hidden} onToggle={recent.onToggleRecent} /><ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} /></Legend>
+    <Legend model={model}><RecentToggle recentOnly={recent.recentOnly} hidden={recent.hidden} onToggle={recent.onToggleRecent} /><ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} /><OfficeVersionPicker /></Legend>
       <button ref={close} type="button" className="office-btn" aria-label="Close office" title="Close (Esc)" onClick={onClose}><X size={14} aria-hidden="true" /></button>
   </div>, document.body);
 }
@@ -507,6 +508,7 @@ export function Office({ sessions, projects: sourceProjects, projectNameUppercas
     <Legend model={model} showStates={false}>
       <RecentToggle recentOnly={recentOnly} hidden={hiddenCount} onToggle={toggleRecent} />
       <ZoomControl overview={overview} onToggle={() => setOverview(v => !v)} />
+      <OfficeVersionPicker />
       <button type="button" className="office-btn" aria-label="Expand office" title="Expand office" onClick={expand}><Maximize2 size={13} aria-hidden="true" /></button>
     </Legend>
     {expanded && <Overlay recent={recent} onProposalRespond={onProposalRespond} onOpenCommander={onOpenCommander} initialProject={selectedProject} renderTaskControls={renderTaskControls} model={model} plan={plan} now={clock} onOpen={openFromFull} onClose={closeFull} />}
