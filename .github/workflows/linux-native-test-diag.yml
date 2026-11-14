@@ -24,6 +24,25 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
       - run: pnpm install --frozen-lockfile
       - run: cargo build -p freddai-native --tests
+      - name: Probe kill parsing of negative pids
+        shell: bash
+        run: |
+          dpkg -S "$(readlink -f "$(command -v kill)")" || true
+          kill --version 2>&1 | head -1 || true
+          set +e
+          setsid bash -c '
+            setsid -f sleep 300; sleep 0.3; P=$(pgrep -n -x sleep); echo "sleeper=$P pgid=$(ps -o pgid= -p $P | tr -d " ") my_pgid=$(ps -o pgid= -p $$ | tr -d " ")"
+            command kill -9 -$P; echo "kill_rc=$?"; sleep 0.2
+            ps -p $P >/dev/null && echo "A: kill -9 -PID  -> SLEEPER_ALIVE" || echo "A: kill -9 -PID  -> SLEEPER_DEAD"
+            echo "A: subshell survived"
+          '; echo "A outer_rc=$?"
+          setsid bash -c '
+            setsid -f sleep 300; sleep 0.3; P=$(pgrep -n -x sleep); echo "sleeper=$P"
+            command kill -9 -- -$P; echo "kill_rc=$?"; sleep 0.2
+            ps -p $P >/dev/null && echo "B: kill -9 -- -PID -> SLEEPER_ALIVE" || echo "B: kill -9 -- -PID -> SLEEPER_DEAD"
+            echo "B: subshell survived"
+          '; echo "B outer_rc=$?"
+          pkill -x sleep || true
       - name: Run test with tracing
         shell: bash
         run: |
