@@ -98,14 +98,18 @@ jobs:
         shell: bash
         run: |
           ( while true; do echo "MEM $(date -u +%T) $(free -m 2>/dev/null | awk '/Mem/{print $3"/"$2" MB"}' || vm_stat | awk '/Pages (free|active|wired)/{print}' | tr '\n' ' ')"; sleep 20; done ) &
+          command -v timeout >/dev/null 2>&1 || timeout() { shift; "$@"; }
           timeout 25m cargo build --workspace --tests
       - name: Test core crates
         shell: bash
-        run: timeout 15m cargo test -p freddai-core -p scout-core -p tauri-plugin-native-shell
+        run: |
+          command -v timeout >/dev/null 2>&1 || timeout() { shift; "$@"; }
+          timeout 15m cargo test -p freddai-core -p scout-core -p tauri-plugin-native-shell
       - name: Test native crate
         shell: bash
         run: |
           ( while true; do echo "MEM $(date -u +%T) $(free -m 2>/dev/null | awk '/Mem/{print $3"/"$2" MB"}' || vm_stat | awk '/Pages (free|active|wired)/{print}' | tr '\n' ' ')"; sleep 20; done ) &
+          command -v timeout >/dev/null 2>&1 || timeout() { shift; "$@"; }
           timeout 15m cargo test -p freddai-native -- --test-threads=1
       - uses: tauri-apps/tauri-action@v1
         env:
