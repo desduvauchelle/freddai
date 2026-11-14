@@ -1792,7 +1792,12 @@ mod preview_open_tests {
         let registry = std::fs::read_to_string(r.join("companion/preview-servers.json")).unwrap_or_default();
         let entries: Value = serde_json::from_str(&registry).unwrap_or(Value::Null);
         for pid in entries.as_array().into_iter().flatten().filter_map(|e| e["pid"].as_u64()).filter(|p| *p > 1) {
-            let _ = std::process::Command::new("kill").arg("-9").arg(format!("-{pid}")).status();
+            // Not the `kill` binary: procps mis-parses `-<pgid>` and killed the harness's own group on Linux CI.
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
         }
         let _ = std::fs::remove_dir_all(&r);
         assert_eq!(status, "listening", "registry: {registry}");
