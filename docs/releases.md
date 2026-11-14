@@ -169,7 +169,7 @@ Earlier satellite builds lack the updater runtime. On those Macs, use the existi
 
 ## Freddai 1.0.2 — dashboard, Scout, conversation polish (November 14, 2026)
 
-Source/tag: pending `v1.0.2`.
+Source/tag: `b59c201`, `v1.0.2` (tag moved twice during the day while CI fixes landed; the final tag points at b59c201). Package workflow: https://github.com/desduvauchelle/freddai/actions/runs/43637444902 passed on every job (validate, macOS, Linux, Windows validation, draft-release).
 
 - Dashboard: command center with wake-word voice commands, project and new-thread sheets, "Sending…" thread rows, project thread ordering and companion paging across platforms.
 - Core and desktop: Copilot harness, model levels and agent handoff, auth-expired detection with Reconnect, account picker and reorder, model-level settings.
@@ -179,4 +179,12 @@ Source/tag: pending `v1.0.2`.
 - Reliability: Commander auto-wake throttling, queue delete and voice-call fixes, a nil webview URL panic fix, and a Windows CI fix that extends the login test's sign-in URL polling from 2 s to 10 s (the PowerShell login command was slow to start on the runner).
 - Also added: virtual office version switcher and campus view, mobile and native shell updates, and TestFlight preparation for universal iOS releases.
 
-Build, draft and publication verification: recorded below once the tag workflow completes.
+### Release pipeline fixes found while cutting 1.0.2
+
+- The website serves GitHub's latest published release. No tag had been pushed after v1.0.1 (Nov 10) although 22 commits landed, so downloads stayed at 1.0.1. 1.0.2 is the first tag since.
+- Windows validation: `login::tests::captures_sign_in_url_and_restart_replaces_pending_login` polled 2 s for the sign-in URL; PowerShell startup on the runner exceeded that. Poll is now 10 s (same as the module's `wait()` helper).
+- macOS package job: `preview_grants::tests::stale_alive_entry_respawns_without_killing_old_pid` and `changed_command_replaces_the_running_server` failed deterministically on macos-latest with `Starting` after 20 s. A diagnostic dump (preview log, `ps`, `lsof`) showed the spawned `python3 -m http.server` alive with the port bound but the socket in CLOSED state, never LISTEN: `HTTPServer.server_bind` calls `socket.getfqdn()` between `bind()` and `listen()`, and that reverse lookup of 127.0.0.1 hangs on the runner. Test servers (core and native) are now a raw-socket Python listener with no DNS. The tests keep an `expect_listening` helper that dumps that evidence on failure.
+- Linux package job: `cargo test --workspace` died twice with "The hosted runner lost communication with the server" and no log. Splitting the step into bounded per-crate steps (`cargo build --workspace --tests`, core tests, native tests under `timeout`) localised it to `desktop::preview_open_tests::shared_command_is_started_then_listening` exiting 137 within seconds with no OOM in dmesg. Its cleanup ran the system `kill -9 -<pid>` binary on the server's process group; on the Linux runner the server survived and the caller's own process group was SIGKILLed instead. Run directly under the runner's step shell that group was the runner's (PGID 1795), which killed the runner. The test now calls `libc::kill` on the group and pid, as the core tests do. The split steps and memory trace remain in `package.yml`.
+- A one-off dispatchable diagnostic workflow (`linux-native-test-diag.yml`) was used to trace the single test on a Linux runner and then removed.
+
+Publication: pending.
