@@ -337,6 +337,33 @@ mod tests {
     #[cfg(unix)]
     fn http_cmd(port: u16, extra: &str) -> String { format!("exec python3 -m http.server {port} --bind 127.0.0.1 {extra}") }
     #[cfg(unix)]
+    fn expect_listening(root: &Path, port: u16) {
+        let state = ensure_running(root, port, Duration::from_secs(20));
+        if state == ServerState::Listening { return; }
+        let sh = |script: &str| -> String {
+            std::process::Command::new("sh").args(["-c", script]).output()
+                .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+                .unwrap_or_else(|e| format!("<failed: {e}>"))
+        };
+        let log = match &state {
+            ServerState::Starting { log, .. } => log.clone(),
+            ServerState::Failed { log: Some(log), .. } => log.clone(),
+            _ => log_path(root, port),
+        };
+        let log_text = fs::read_to_string(&log).unwrap_or_else(|e| format!("<read error: {e}>"));
+        let mut d = format!("expected Listening, got {state:?}\n");
+        d += &format!("--- log {} ---\n{log_text}\n", log.display());
+        d += &format!("--- SHELL = {:?} ---\n", std::env::var("SHELL"));
+        d += &format!("--- python3 ---\n{}\n", sh("which python3; python3 --version 2>&1"));
+        if let ServerState::Starting { pid, .. } = &state {
+            d += &format!("--- ps ---\n{}\n", sh(&format!("ps -o pid,ppid,pgid,stat,etime,command -p {pid} 2>&1")));
+            d += &format!("--- pgrep http.server ---\n{}\n", sh("pgrep -fl 'http.server' 2>&1"));
+        }
+        d += &format!("--- lsof port {port} ---\n{}\n", sh(&format!("lsof -nP -iTCP:{port} 2>&1")));
+        d += &format!("--- servers file ---\n{:?}\n", read_servers(root));
+        panic!("{d}");
+    }
+
     fn write_entry(root: &Path, port: u16, pid: u32, started: u64) {
         fs::create_dir_all(root.join("companion")).unwrap();
         write_servers(root, &[json!({"port": port, "pid": pid, "command": "x", "cwd": "/tmp", "started": started})]).unwrap();
@@ -351,7 +378,7 @@ mod tests {
         dead.wait().unwrap();
         write_entry(&root, port, dead_pid, now());
         record_share(&root, port, Some(&http_cmd(port, "")), Some(&cwd)).unwrap();
-        assert_eq!(ensure_running(&root, port, Duration::from_secs(20)), ServerState::Listening);
+        expect_listening(&root, port);
         let servers = read_servers(&root);
         let pid = entry_pid(&servers[0]).unwrap();
         assert_ne!(pid, dead_pid);
@@ -367,7 +394,7 @@ mod tests {
         let mut sleeper = std::process::Command::new("sleep").arg("300").spawn().unwrap();
         write_entry(&root, port, sleeper.id(), now() - 300);
         record_share(&root, port, Some(&http_cmd(port, "")), Some(&cwd)).unwrap();
-        assert_eq!(ensure_running(&root, port, Duration::from_secs(20)), ServerState::Listening);
+        expect_listening(&root, port);
         let pid = entry_pid(&read_servers(&root)[0]).unwrap();
         assert_ne!(pid, sleeper.id());
         assert!(alive(sleeper.id()), "stale pid must not be killed");
@@ -383,10 +410,10 @@ mod tests {
     fn changed_command_replaces_the_running_server() {
         let (root, cwd, port) = setup();
         record_share(&root, port, Some(&http_cmd(port, "")), Some(&cwd)).unwrap();
-        assert_eq!(ensure_running(&root, port, Duration::from_secs(20)), ServerState::Listening);
+        expect_listening(&root, port);
         let old = entry_pid(&read_servers(&root)[0]).unwrap();
         record_share(&root, port, Some(&http_cmd(port, &format!("--directory {}", cwd.display()))), Some(&cwd)).unwrap();
-        assert_eq!(ensure_running(&root, port, Duration::from_secs(20)), ServerState::Listening);
+        expect_listening(&root, port);
         let new = entry_pid(&read_servers(&root)[0]).unwrap();
         assert_ne!(old, new);
         for _ in 0..30 { if !alive(old) { break; } std::thread::sleep(Duration::from_millis(100)); }
