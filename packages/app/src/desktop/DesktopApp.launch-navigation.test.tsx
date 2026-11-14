@@ -169,12 +169,13 @@ it('starts a call from the empty composer and keeps the draft when speech create
   fireEvent.click(screen.getByRole('button', { name: 'End call' }));
 });
 
- it('opens the full project composer from the dashboard plus without launching a thread', async () => {
+ it('opens the project composer panel from the dashboard plus without leaving the dashboard or launching a thread', async () => {
   render(<DesktopApp />);
   fireEvent.click(await screen.findByRole('button', { name: 'Dashboard' }));
   fireEvent.click(await screen.findByRole('button', { name: 'New thread in Unit project' }));
   expect(await screen.findByRole('textbox', { name: 'Task prompt' })).toBeTruthy();
-  expect(screen.queryByLabelText('Prompt for Unit project')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Attach files' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Separate worktree' })).toBeTruthy();
   expect(bridge.invoke.mock.calls.some(([command]) => command === 'launch')).toBe(false);
 });
 

@@ -107,3 +107,15 @@ it("explains the missing project after typing a new-thread draft", async () => {
   fireEvent.change(prompt, { target: { value: '  ' } });
   expect(screen.queryByText('Choose a project above to send your message.')).toBeNull();
 });
+
+it("unpins a pinned thread from its row pin button without selecting the row", async () => {
+  localStorage.setItem("freddai.threadPins", '{"t17":true}');
+  render(<DesktopApp />);
+  const list = await screen.findByLabelText("Thread list");
+  await within(list).findByText("Thread 17");
+  const row = within(list).getByText("Thread 17").closest(".task-row")!;
+  fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Unpin thread" }));
+  expect(JSON.parse(localStorage.getItem("freddai.threadPins")!)).toEqual({ t17: false });
+  expect(within(row as HTMLElement).queryByRole("button", { name: "Unpin thread" })).toBeNull();
+  expect(row.getAttribute("aria-current")).toBeNull();
+});

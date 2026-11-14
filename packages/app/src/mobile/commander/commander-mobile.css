@@ -6,8 +6,6 @@
 .companion-commander-mic > div > button { width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; font-size: 0; gap: 0; background: var(--primary); color: var(--primary-foreground); border: 1px solid transparent; box-shadow: 0 3px 10px color-mix(in oklab, var(--foreground) 14%, transparent); }
 .companion-commander-mic > div > button svg { width: 18px; height: 18px; }
 .companion-commander-mic > div > p { position: absolute; top: 48px; left: 0; width: 180px; font-size: 11px; color: var(--destructive, #e5484d); }
-.companion-commander-composer { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 420px; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); }
-.companion-commander-composer textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit; font-size: 16px; }
 
 /* Floating header shared by every conversation screen (Commander + native regular threads).
    The native bar (menu left, actions right) is transparent and draws on the same row. env(safe-area-inset-top) already includes that bar

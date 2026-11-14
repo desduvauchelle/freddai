@@ -1,4 +1,4 @@
-import { resetDrafts } from "./drafts";
+import { resetDrafts, getDraft, setDraft, newThreadDraftKey } from "./drafts";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HomeView, homeProjects } from "./HomeView";
@@ -26,12 +26,13 @@ afterEach(() => { cleanup(); resetDrafts(); mic.ready = false; localStorage.remo
 const db = (over: Record<string, unknown> = {}) => ({ accounts: [account], projects: [project("alpha", "Alpha"), project("beta", "Beta")], sessions: [], preferences: { fallback: "a" }, ...over }) as never;
 const props = (sessions: Session[], projects = [project("alpha", "Alpha"), project("beta", "Beta")]) => ({
   sessions, projects, accounts: [account], now: NOW, canCreate: true,
-  onOpenThread: vi.fn(), resolveLaunch: vi.fn((id: string): HomeLaunchPlan => resolveHomeLaunch(db(), id, "bypass")), onAddProject: vi.fn(), onCreateThread: vi.fn(async () => {}), onRespond: vi.fn(async () => {}),
+  onNewThread: vi.fn(), onOpenThread: vi.fn(), resolveLaunch: vi.fn((id: string): HomeLaunchPlan => resolveHomeLaunch(db(), id, "bypass")), onAddProject: vi.fn(), onCreateThread: vi.fn(async () => {}), onRespond: vi.fn(async () => {}),
 });
 
 HTMLElement.prototype.scrollIntoView ??= () => {};
 function chooseDashboard(label: string, option: string) {
   if (!screen.queryByRole('dialog')) fireEvent.click(screen.getByRole('button', { name: 'Assistant and difficulty' }));
+  screen.queryByRole('button', { name: '← Levels' }) && fireEvent.click(screen.getByRole('button', { name: '← Levels' }));
   if (label === 'Difficulty') fireEvent.click(screen.getByRole('button', { name: 'Project defaults' }));
   else if (screen.queryByRole('button', { name: /Back to assistants/ })) fireEvent.click(screen.getByRole('button', { name: /Back to assistants/ }));
   fireEvent.click(screen.getByRole('button', { name: option }));
@@ -54,13 +55,11 @@ it("keeps project controls and a draft in place across activity updates and midn
   const beta = screen.getByRole("article", { name: "Project Beta" });
   const tiles = alpha.parentElement!.parentElement!;
   fireEvent.click(within(alpha).getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "My draft" } });
-  const input = screen.getByLabelText("Prompt for Alpha");
+  setDraft(newThreadDraftKey("alpha"), "My draft");
   for (const now of [NOW + 2000, MIDNIGHT + 86_400_000]) {
     rerender(<HomeView {...p} now={now} sessions={[...p.sessions, thread("3", { project: "beta", status: "running", updated: now })]} />);
     expect(Array.from(tiles.children).map(card => card.querySelector("article"))).toEqual([alpha, beta]);
-    expect(screen.getByLabelText("Prompt for Alpha")).toBe(input);
-    expect((input as HTMLInputElement).value).toBe("My draft");
+    expect(getDraft(newThreadDraftKey("alpha"))).toBe("My draft");
     expect(within(beta).queryByLabelText("1 working")).toBeNull();
   }
 });
@@ -92,16 +91,7 @@ it("renders a needs-you card for any project, even without activity today, and o
   expect(p.onOpenThread).toHaveBeenCalledWith("9");
 });
 
-it("submits the inline prompt to the create-thread callback with the tile's project", async () => {
-  const p = props([thread("1", { project: "alpha" }), thread("2", { project: "beta" })]);
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Beta"), { target: { value: "Do the thing" } });
-  fireEvent.click(screen.getByRole("button", { name: "Start" }));
-  await screen.findByRole("button", { name: "New thread in Beta" });
-  expect(p.onCreateThread).toHaveBeenCalledTimes(1);
-  expect(p.onCreateThread).toHaveBeenCalledWith("beta", "Do the thing");
-});
+
 
 it("renders the three daily summary sections without generating", async () => {
   render(<HomeView {...props([])} />);
@@ -133,12 +123,7 @@ it("shows a visible error when creating the dictated thread fails", async () => 
   expect((await screen.findByRole("alert")).textContent).toContain("no account");
 });
 
-it("shows the resolved agent chip as soon as + is pressed", () => {
-  render(<HomeView {...props([thread("1")])} />);
-  expect(screen.queryByLabelText(/^Agent:/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  expect(screen.getByLabelText("Agent: Claude · Main · default model · default effort")).toBeTruthy();
-});
+
 
 it("shows the chip when the mic is pressed", () => {
   mic.ready = true;
@@ -147,28 +132,9 @@ it("shows the chip when the mic is pressed", () => {
   expect(screen.getByLabelText(/^Agent: Claude · Main/)).toBeTruthy();
 });
 
-it("disables submit and shows an error when no account resolves", () => {
-  const p = props([thread("1")]);
-  p.resolveLaunch.mockReturnValue(resolveHomeLaunch(db({ preferences: {} }), "alpha", "bypass"));
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "x" } });
-  expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByRole("alert").textContent).toContain("No default account");
-});
 
-it("creating from a tile keeps Home, confirms inline and does not open the thread", async () => {
-  const p = props([thread("1")]);
-  p.onCreateThread.mockResolvedValueOnce("Ship the thing" as never);
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Ship the thing now" } });
-  fireEvent.click(screen.getByRole("button", { name: "Start" }));
-  await waitFor(() => expect(screen.getByText("Started · Ship the thing")).toBeTruthy());
-  expect(screen.queryByLabelText("Prompt for Alpha")).toBeNull();
-  expect(screen.getByRole("region", { name: "Home" })).toBeTruthy();
-  expect(p.onOpenThread).not.toHaveBeenCalled();
-});
+
+
 
 it("resolveHomeLaunch picks the project's fixed account and reports missing ones", () => {
   const other: Account = { id: "b", name: "Work", provider: "codex", color: "#000" };
@@ -188,45 +154,11 @@ it("changes the single shared Home model under Projects", () => {
   expect(onHomeSelection).toHaveBeenCalledWith("a", { model: "freddai-level:fast", effort: "default" });
 });
 
-it("opens the first-thread prompt for an empty project without opening a missing thread", () => {
-  const p = props([]);
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
-  expect(screen.getByLabelText("Prompt for Beta")).toBeTruthy();
-  expect(p.onOpenThread).not.toHaveBeenCalled();
-});
 
-it("restores a project's unsent prompt after leaving Home and returning", () => {
-  const p = props([]);
-  const first = render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Keep Alpha" } });
-  first.unmount();
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
-  expect((screen.getByLabelText("Prompt for Beta") as HTMLInputElement).value).toBe("");
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Keep Alpha");
-});
 
-it("clears only the submitted project draft and retains text after failure", async () => {
-  const p = props([]);
-  render(<HomeView {...p} />);
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Beta"), { target: { value: "Keep Beta" } });
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Send Alpha" } });
-  p.onCreateThread.mockRejectedValueOnce(new Error("Not delivered"));
-  fireEvent.click(screen.getByRole("button", { name: "Start" }));
-  await screen.findByText("Not delivered");
-  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Send Alpha");
-  fireEvent.click(screen.getByRole("button", { name: "Start" }));
-  await waitFor(() => expect(screen.queryByLabelText("Prompt for Alpha")).toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("");
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Beta" }));
-  expect((screen.getByLabelText("Prompt for Beta") as HTMLInputElement).value).toBe("Keep Beta");
-});
+
+
+
 
 it('keeps Commander out of ordinary project cards', () => {
   const p = props([]), open = vi.fn();
@@ -260,12 +192,12 @@ it("reorders dashboard projects with the shared move callback and preserves draf
   const p = props([]), onMoveProject = vi.fn();
   const { rerender } = render(<HomeView {...p} onMoveProject={onMoveProject} />);
   fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha"), { target: { value: "Keep this draft" } });
+  setDraft(newThreadDraftKey("alpha"), "Keep this draft");
   fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Alpha" }), { altKey: true, key: "ArrowDown" });
   expect(onMoveProject).toHaveBeenCalledWith("alpha", "beta", true);
   rerender(<HomeView {...p} projects={[p.projects[1], p.projects[0]]} onMoveProject={onMoveProject} />);
   expect(screen.getAllByRole("article").map(node => node.getAttribute("aria-label"))).toEqual(["Project Beta", "Project Alpha"]);
-  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("Keep this draft");
+  expect(getDraft(newThreadDraftKey("alpha"))).toBe("Keep this draft");
 });
 
 it("renders one sortable group per workspace with a handle per card", () => {
@@ -358,8 +290,6 @@ it("opens a project sheet from the name, shows threads latest first, a thread in
   render(<HomeView {...p} renderThread={renderThread} />);
   const home = screen.getByRole("region", { name: "Home" });
   const tile = screen.getByRole("article", { name: "Project Alpha" });
-  fireEvent.click(screen.getByRole("button", { name: "New thread in Alpha" }));
-  fireEvent.change(screen.getByLabelText("Prompt for Alpha") as HTMLElement, { target: { value: "keep me" } });
   fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
   const list = within(screen.getByRole("dialog")).getByRole("list", { name: "Threads in Alpha" });
   expect(within(list).getAllByRole("button").map(b => b.textContent)).toEqual([expect.stringContaining("New one"), expect.stringContaining("Old one")]);
@@ -374,7 +304,62 @@ it("opens a project sheet from the name, shows threads latest first, a thread in
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("region", { name: "Home" })).toBe(home);
   expect(screen.getByRole("article", { name: "Project Alpha" })).toBe(tile);
-  expect((screen.getByLabelText("Prompt for Alpha") as HTMLInputElement).value).toBe("keep me");
+});
+
+describe("project panel", () => {
+  const setup = (extra: object = {}) => {
+    const p = props([thread("a", { title: "Alpha thread", updated: NOW - 1000 })]);
+    const renderThread = (id: string) => <div data-testid="convo">conversation {id}<textarea aria-label="Reply" /></div>;
+    const onNewThread = vi.fn();
+    const utils = render(<HomeView {...p} renderThread={renderThread} onNewThread={onNewThread} {...extra} />);
+    return { p, onNewThread, ...utils, home: screen.getByRole("region", { name: "Home" }) };
+  };
+  const esc = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+
+  it("opens the sheet from a tile click with sidebar-style thread rows", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
+    const row = within(screen.getByRole("list", { name: "Threads in Alpha" })).getByRole("button", { name: /Alpha thread/ });
+    expect(row.className).toContain("task-row");
+    expect(row.className).toContain("compact-session");
+    expect(row.querySelector(".session-title")?.textContent).toBe("Alpha thread");
+  });
+
+  it("opens a thread in the panel without leaving the dashboard, with a full-page action", () => {
+    const { p, home } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: /Alpha thread/ }));
+    expect(screen.getByTestId("convo").textContent).toContain("conversation a");
+    expect(p.onOpenThread).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Home" })).toBe(home);
+    fireEvent.click(screen.getByRole("button", { name: /Open full page/ }));
+    expect(p.onOpenThread).toHaveBeenCalledWith("a");
+  });
+
+
+
+  it("Escape steps back from thread to list, then closes, leaving the dashboard mounted", () => {
+    const { home } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: /Alpha thread/ }));
+    esc();
+    expect(screen.queryByTestId("convo")).toBeNull();
+    expect(screen.getByRole("list", { name: "Threads in Alpha" })).toBeTruthy();
+    esc();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "Home" })).toBe(home);
+  });
+
+
+
+  it("does not close the panel while an inner listbox popup is open", () => {
+    setup({ renderThread: () => <div><ul role="listbox" aria-label="Slash commands"><li role="option" aria-selected>/x</li></ul></div> });
+    fireEvent.click(screen.getByRole("button", { name: "Show threads in Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: /Alpha thread/ }));
+    esc();
+    expect(screen.getByRole("listbox", { name: "Slash commands" })).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
 });
 
 it("shows an empty project sheet with a New thread action", () => {
@@ -383,8 +368,8 @@ it("shows an empty project sheet with a New thread action", () => {
   fireEvent.click(screen.getByRole("button", { name: "Show threads in Beta" }));
   expect(screen.getByText("No threads yet")).toBeTruthy();
   fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "New thread" }));
+  expect(screen.queryByRole("textbox")).toBeNull();
   expect(onNewThread).toHaveBeenCalledWith("beta");
-  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 describe("old projects filter", () => {
@@ -448,4 +433,13 @@ describe("needs you section", () => {
     const projects = screen.getByRole("region", { name: "Projects" });
     expect(needs.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+});
+
+it('routes every project plus to the host composer without adding a local message form', () => {
+  const p = props([]);
+  render(<HomeView {...p} renderThread={() => null} />);
+  for (const name of ['Alpha', 'Beta']) fireEvent.click(screen.getByRole('button', { name: 'New thread in ' + name }));
+  expect(p.onNewThread.mock.calls).toEqual([['alpha'], ['beta']]);
+  expect(p.onCreateThread).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox')).toBeNull();
 });

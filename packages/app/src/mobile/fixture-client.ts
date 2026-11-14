@@ -12,6 +12,7 @@ import { createMockGoogleHost, mockAccounts, mockTriggers } from '../desktop/goo
 const now = Date.now();
 const min = 60_000, hour = 3_600_000, day = 24 * hour;
 let seq = 0;
+const walks = new Map<string, number>();
 const msg = (role: string, text: string): Message => ({ id: `fx-${++seq}`, role, text });
 
 const assistants = [{ id: 'claude-personal', name: 'Personal', provider: 'claude' }, { id: 'codex-work', name: 'Work', provider: 'codex' }];
@@ -190,6 +191,17 @@ export function createFixtureClient(options: { many?: boolean; stallReplies?: bo
     },
     // Pretend the Mac accepted the upload; the file never leaves the simulator.
     attachPath: async file => ({ id: `fx-att-${++seq}`, name: file.name, bytes: 0, mime: file.mime, sha256: '' }),
+    bugWalkSend: async (video, _device, _opts, onProgress) => {
+      for (let i = 1; i <= 4; i++) { await new Promise(r => setTimeout(r, 150)); onProgress?.(Math.round(video.bytes * i / 4), video.bytes); }
+      const id = `fx-walk-${++seq}`; walks.set(id, Date.now());
+      return { id };
+    },
+    bugWalkStatus: async id => {
+      const phases = ['transcribing', 'analyzing', 'framing', 'launching'] as const;
+      const age = Date.now() - (walks.get(id) ?? 0);
+      if (!walks.has(id)) return { id, phase: 'missing' };
+      return age >= 3000 ? { id, phase: 'done', sessions: [state.threads[0]?.id ?? ''] } : { id, phase: phases[Math.min(3, Math.floor(age / 750))] };
+    },
     voice: async () => ({ enabled: true, ready: true }),
     transcribe: async () => ({ text: 'This is a dictated fixture sentence.', durationMs: 2000, model: 'fixture' }),
     start: async ({ project, prompt, assistant, options }) => {

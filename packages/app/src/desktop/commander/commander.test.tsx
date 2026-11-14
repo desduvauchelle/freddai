@@ -55,9 +55,8 @@ it("cluster renders avatar, mic and plus controls, and the avatar opens the view
   fireEvent.click(screen.getByRole("button", { name: "Dictate to Commander" }));
   await waitFor(() => expect(onSend).toHaveBeenCalledWith("spoken words"));
   fireEvent.click(plus);
-  fireEvent.change(screen.getByLabelText("Message to Commander"), { target: { value: "hi there" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
-  await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi there"));
+  expect(onOpen).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole('textbox')).toBeNull();
 });
 
 it("cluster shows send failures loudly", async () => {
@@ -115,7 +114,7 @@ it("away block shows at most 3 cards and only after a >10 minute gap", async () 
   const props = [proposal({ id: "a" }), proposal({ id: "b" })];
   expect(awayCards(many, props, projects, Date.now() - 3600_000).length).toBeLessThanOrEqual(3);
   api.state.mockResolvedValue(state({ thread_id: null })); api.todos.mockResolvedValue(many); api.proposals.mockResolvedValue(props);
-  const view = () => render(<CommanderView projects={projects} renderConversation={() => null} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onCreateThread={vi.fn(async () => {})} />);
+  const view = () => render(<CommanderView projects={projects} renderConversation={() => null} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onNewThread={vi.fn(async () => {})} />);
   localStorage.setItem(LAST_VISIT_KEY, String(Date.now() - 30 * 60_000));
   view();
   const away = await screen.findByRole("complementary", { name: "While you were away" });
@@ -129,7 +128,7 @@ it("away block shows at most 3 cards and only after a >10 minute gap", async () 
 
 it("view pins pending proposals, offers Commander settings, and surfaces refresh errors", async () => {
   api.proposals.mockResolvedValue([proposal()]);
-  render(<CommanderView projects={projects} renderConversation={() => null} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onCreateThread={vi.fn(async () => {})} />);
+  render(<CommanderView projects={projects} renderConversation={() => null} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onNewThread={vi.fn(async () => {})} />);
   expect(await screen.findByRole("article", { name: "Proposal: Start the pricing page" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
   api.state.mockRejectedValue(new Error("host down"));
@@ -164,7 +163,7 @@ it("approved JSON results read as a human line, never raw JSON", async () => {
 it("view hands proposal cards to the conversation to render inline after the messages", async () => {
   api.state.mockResolvedValue({ ...state(), thread_id: "t1" });
   api.proposals.mockResolvedValue([proposal()]);
-  render(<CommanderView projects={projects} renderConversation={() => <div data-testid="conv"><CommanderTrailingContext.Consumer>{t => t}</CommanderTrailingContext.Consumer></div>} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onCreateThread={vi.fn(async () => {})} />);
+  render(<CommanderView projects={projects} renderConversation={() => <div data-testid="conv"><CommanderTrailingContext.Consumer>{t => t}</CommanderTrailingContext.Consumer></div>} onSelectThread={vi.fn()} onOpenThread={vi.fn()} onNewThread={vi.fn(async () => {})} />);
   const card = await screen.findByRole("article", { name: "Proposal: Start the pricing page" });
   expect(within(screen.getByTestId("conv")).getByRole("article", { name: "Proposal: Start the pricing page" })).toBe(card);
 });

@@ -1,5 +1,6 @@
 export const shortcuts = [
   { id: "schedules", keys: "⌘ ⇧ S", name: "Schedules", key: "s", shift: true },
+  { id: "scout", keys: "⌘ ⇧ O", name: "Open Scout", key: "o", shift: true },
   { id: "fork", keys: "⌘ ⇧ F", name: "Fork selected conversation", key: "f", shift: true },
   {
     id: "new",

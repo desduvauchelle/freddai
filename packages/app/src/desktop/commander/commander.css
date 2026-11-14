@@ -27,9 +27,7 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-pill[data-needs="true"] [data-kind="needs"] { color: var(--foreground); font-weight: 600; }
 .commander-note { margin: 0; display: inline-flex; gap: 5px; align-items: center; font-size: 11px; color: var(--muted-foreground); }
 .commander-error { margin: 0; display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--destructive, #e5484d); }
-.commander-popover { position: absolute; top: calc(100% - 6px); z-index: 20; width: min(360px, 92%); display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px;
-  background: var(--popover, var(--card)); border: 1px solid var(--border); box-shadow: 0 12px 32px color-mix(in oklab, var(--foreground) 22%, transparent); }
-.commander-popover textarea, .commander-fallback-composer textarea, .commander-card-prompt, .commander-editor textarea, .project-objective textarea {
+.commander-card-prompt, .commander-editor textarea, .project-objective textarea {
   width: 100%; resize: vertical; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit; font-size: 13px; }
 .project-objective { display: grid; gap: 6px; }
 .project-objective label { display: grid; gap: 4px; }
@@ -70,7 +68,6 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-conversation .pane-title { display: none; }
 .commander-conversation .chat-transcript { padding-top: var(--commander-header-h); }
 .commander-empty-chat { flex: 1; display: grid; place-items: center; padding: var(--commander-header-h) 24px 24px; color: var(--muted-foreground); text-align: center; }
-.commander-fallback-composer { display: flex; flex-direction: column; gap: 6px; margin: 0 20px 18px; padding: 10px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); }
 /* Proposals flow inline in the transcript column, after the latest messages. */
 .commander-approvals { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .commander-conversation .commander-approvals, .commander-empty-chat .commander-approvals { width: 100%; max-width: 800px; margin-inline: auto; }
@@ -93,8 +90,7 @@ button.commander-circle-button:disabled { opacity: .5; cursor: not-allowed; }
 .commander-away-card[data-kind="waiting"] { border-color: color-mix(in oklab, var(--primary) 60%, var(--border)); }
 .commander-away-dismiss { margin-left: auto; width: 28px; height: 28px; min-width: 28px; }
 /* Everything shares one centered column: welcome card, transcript, proposals, queue and composer. */
-.commander-view .commander-conversation :is(.chat-composer, .message-queue, .conversation-usage), .commander-view .commander-fallback-composer { box-sizing: border-box; width: var(--commander-col); max-width: 800px; margin-inline: auto; }
-.commander-view .commander-conversation :is(.chat-surface, .thread-detail, .chat-transcript-viewport) { background: transparent; }
+.commander-view .commander-conversation :is(.chat-composer, .message-queue, .conversation-usage), .commander-view .commander-view .commander-conversation :is(.chat-surface, .thread-detail, .chat-transcript-viewport) { background: transparent; }
 .commander-away ~ .commander-conversation .chat-transcript { padding-top: 12px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px); mask-image: linear-gradient(to bottom, transparent 0, #000 18px); }
 /* The composer already has Stop; the duplicate square button on the Working row looked like a stray checkbox. */
 .commander-conversation .activity-stop { display: none; }

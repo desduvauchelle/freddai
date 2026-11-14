@@ -3,6 +3,8 @@
 @custom-variant dark (&:is(.dark *));
 @source "../../app/src";
 @source "./";
+@source "../../shared/src";
+@source "../../scout/src";
 
 :root {
   --background: oklch(0.985 0 0);
@@ -79,4 +81,32 @@
   --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
   --sidebar-border: hsl(240 3.7% 15.9%);
   --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+/* Explicit motion for Radix surfaces: these must not depend on optional
+   Tailwind animation plugins. Animate only compositor-friendly properties. */
+:root {
+  --surface-enter: 380ms;
+  --surface-exit: 260ms;
+  --surface-ease: cubic-bezier(.22, .68, .18, 1);
+}
+[data-slot="sheet-content"] { --sheet-x: 0; --sheet-y: 0; }
+[data-slot="sheet-content"][data-side="right"] { --sheet-x: 100%; }
+[data-slot="sheet-content"][data-side="left"] { --sheet-x: -100%; }
+[data-slot="sheet-content"][data-side="top"] { --sheet-y: -100%; }
+[data-slot="sheet-content"][data-side="bottom"] { --sheet-y: 100%; }
+[data-slot="sheet-content"][data-state="open"] { animation: surface-sheet-in var(--surface-enter) var(--surface-ease) both; }
+[data-slot="sheet-content"][data-state="closed"] { animation: surface-sheet-out var(--surface-exit) cubic-bezier(.4, 0, .65, 1) both; pointer-events: none; }
+:is([data-slot="sheet-overlay"], [data-slot="dialog-overlay"])[data-state="open"] { animation: surface-fade-in var(--surface-enter) ease both; }
+:is([data-slot="sheet-overlay"], [data-slot="dialog-overlay"])[data-state="closed"] { animation: surface-fade-out var(--surface-exit) ease both; }
+[data-slot="dialog-content"][data-state="open"] { animation: surface-dialog-in 300ms var(--surface-ease) both; }
+[data-slot="dialog-content"][data-state="closed"] { animation: surface-dialog-out 220ms ease-in both; }
+@keyframes surface-sheet-in { from { transform: translate3d(var(--sheet-x), var(--sheet-y), 0); } to { transform: translate3d(0, 0, 0); } }
+@keyframes surface-sheet-out { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(var(--sheet-x), var(--sheet-y), 0); } }
+@keyframes surface-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes surface-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes surface-dialog-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes surface-dialog-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(4px) scale(.99); } }
+@media (prefers-reduced-motion: reduce) {
+  :is([data-slot="sheet-content"], [data-slot="sheet-overlay"], [data-slot="dialog-content"], [data-slot="dialog-overlay"])[data-state] { animation: none; }
 }

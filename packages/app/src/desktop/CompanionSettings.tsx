@@ -5,10 +5,10 @@ import { Input } from '@freddai/ui/components/input';
 import { Badge } from '@freddai/ui/components/badge';
 import { Field, FieldLabel, FieldDescription } from '@freddai/ui/components/field';
 import { Smartphone, Globe, ShieldCheck } from 'lucide-react';
+import { useSatelliteMode } from './satellite';
 type Devices = { setup?: string | null; code: string | null; expires: number | null; pending: { id: string; name: string } | null; devices: { id: string; name: string; pairedAt: number }[]; relay: string | null };
 export function CompanionSettings({ native }: { native: boolean }) {
-  const [mac, setMac] = useState(false);
-  useEffect(() => { if (native) void invoke<boolean>('satellite_mode').then(() => setMac(true)).catch(() => {}); }, [native]);
+  const satellite = useSatelliteMode();
   const [state, setState] = useState<Devices>(), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [relay, setRelay] = useState(''), [loaded, setLoaded] = useState(false), [tick, setTick] = useState(Date.now());
   useEffect(() => {
@@ -26,11 +26,19 @@ export function CompanionSettings({ native }: { native: boolean }) {
   }
   const seconds = Math.max(0, (state?.expires || 0) - Math.floor(tick / 1000));
   return <section aria-label="Devices & satellite settings">
-    {mac && <section className="rounded-xl border p-5 space-y-3" aria-label="Mac satellite setup">
+    {native && satellite === false && <section className="rounded-xl border p-5 space-y-3" aria-label="Mac satellite setup">
       <h2>Use this Mac as a satellite</h2>
       <p>Connect to Freddai on another Mac. Its projects, accounts, and coding agents stay there. The host Mac must remain awake and online. This Mac’s existing local work is preserved; background agents keep running.</p>
       <p>The app restarts into satellite setup. Pair using the host Mac’s Devices & satellite settings. You can return to local mode from the satellite Settings.</p>
       <Button disabled={busy} onClick={async () => { setBusy(true); setError(''); try { await invoke('satellite_set_mode', { enabled: true }); } catch (e) { setError(String(e)); setBusy(false); } }}>Set up Mac satellite (restarts app)</Button>
+    </section>}
+    {native && satellite === true && <section className="rounded-xl border p-5 space-y-3" aria-label="Mac satellite">
+      <h2>This Mac is a satellite</h2>
+      <p>This Mac is a satellite. Work runs on your original Mac.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={busy} onClick={() => window.dispatchEvent(new Event('freddai:satellite-pair'))}>Connect to another Mac</Button>
+        <Button variant="outline" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { await invoke('satellite_set_mode', { enabled: false }); } catch (e) { setError(String(e)); setBusy(false); } }}>Use this Mac locally (restarts app)</Button>
+      </div>
     </section>}
     {!native && <p className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">Phone pairing is available in the Mac app.</p>}
     <section aria-labelledby="companion-settings-heading" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm">

@@ -14,7 +14,7 @@ export function effortChoices(provider: string, model: string, models: Model[]):
 export const effortLabel = (effort: string) => (effort === "ultracode" ? "Ultracode (Extra high + workflows)" : effort === "xhigh" ? "Extra high" : effort[0].toUpperCase() + effort.slice(1));
 /** Model choices shown for a provider: the catalog when loaded, else Claude's aliases. Shared by the desktop and iPhone pickers. */
 export function advancedModelChoices(provider: string | undefined, models: Model[]): { value: string; label: string }[] {
-  const aliases = provider === "claude" ? ["sonnet", "opus", "haiku", "fable"] : [];
+  const aliases = provider === "claude" ? ["fable", "opus", "sonnet", "haiku"] : [];
   return models.length ? models.map(m => ({ value: m.model, label: m.displayName || m.model })) : aliases.map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
 }
 

@@ -3,24 +3,22 @@ import { ProjectTile } from "./ProjectTile";
 import { formatProjectName } from "../projectName";
 import { dashboardProjectGroups } from "../mobile/dashboard-projects";
 import { Dot, labelStatus } from "./ThreadStatus";
-import { newThreadDraftKey, useDraft, setDraft } from "./drafts";
 import { agentDisplayName } from "./types";
 import { BugWalkButton } from "./bug-walk/BugWalkButton";
 import { defaultSelection, type AgentSelection } from "./agent-selection";
 import { Activity, ArrowUpRight, Check, CircleAlert, Eye, EyeOff, FolderPlus, GripVertical, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@freddai/ui/components/button";
-import { Input } from "@freddai/ui/components/input";
 import { Permission } from "./AgentRequest";
 import { DaySummaries } from "./DaySummaries";
 import { mascotState } from "./mascot-state";
 import { MicButton, VoiceNotice } from "./VoiceControls";
 import { ThreadList } from "./ThreadList";
-import { joinDictation } from "./voice";
 import { threadListStatus, compareThreadRecency, type Account, type Project, type Session, type Workspace } from "./types";
 import type { HomeLaunchPlan } from "./home-launch";
 import { homeRunState } from "./home-state";
-import { Office, type OfficeProposal, type OfficeSchedule } from "../office/index";
+import { OfficeSwitch } from "../officeShared";
+import { type OfficeProposal, type OfficeSchedule } from "../office/index";
 import { CommanderCluster } from "./commander/CommanderCluster";
 import { ProjectSheet } from "./ProjectSheet";
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCorners, pointerWithin, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent, type CollisionDetection, type DragStartEvent } from "@dnd-kit/core";
@@ -80,6 +78,7 @@ export type HomeViewProps = {
   homeSelections?: Record<string, AgentSelection>;
   onHomeSelection?: (account: string, selection: AgentSelection) => void;
   sessions: Session[];
+  queuedThreadIds?: ReadonlySet<string>;
   read?: Record<string, number>;
   projects: Project[];
   workspaces?: Workspace[];
@@ -98,7 +97,7 @@ export type HomeViewProps = {
   /** Opens the full project-scoped composer without starting a thread. */
   onNewThread?: (projectId: string) => void;
   /** Creates and starts a thread through the same launch path as the New thread composer. */
-  onCreateThread: (projectId: string, prompt: string) => Promise<string | void>;
+  onCreateThread: (projectId: string, prompt: string, agent?: string) => Promise<string | void>;
   /** Resolves the agent a new thread in this project will use (shared with the launch itself). */
   resolveLaunch: (projectId: string) => HomeLaunchPlan;
   onRespond: (thread: Session, allow: boolean, answers: Record<string, unknown>) => Promise<unknown>;
@@ -106,32 +105,18 @@ export type HomeViewProps = {
   schedules?: OfficeSchedule[];
   /** Commander-in-Chief presence above the project list; omitted when unavailable. */
   /** Renders one thread live inside the project sheet; without it a row click opens the thread in the main view. */
-  renderThread?: (id: string) => ReactNode;
+  renderThread?: (id: string, navigation: { onClose: () => void; onOpenThread: (id: string) => void }) => ReactNode;
   /** Called while a thread is visible in the project sheet so the host can mark it read. */
   onThreadViewed?: (thread: Session) => void;
   commander?: { onOpen: () => void; onSend: (text: string) => Promise<void>; proposals?: readonly OfficeProposal[]; onProposalRespond?: (id: string, approve: boolean) => Promise<unknown> };
 };
 
-function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpenThread, read, uppercase }: {
+function Tile({ entry, canCreate, plan, onToggle, onCreate, onOpen, onOpenThread, read, uppercase }: {
   uppercase?: boolean;
-  read: Record<string, number>; entry: HomeProject; open: boolean; canCreate: boolean; plan: HomeLaunchPlan; onToggle: () => void; onCreate: (prompt: string) => Promise<string | void>; onOpen: () => void; onOpenThread: (id: string) => void;
+  read: Record<string, number>; entry: HomeProject; canCreate: boolean; plan: HomeLaunchPlan; onToggle: () => void; onCreate: (prompt: string) => Promise<string | void>; onOpen: () => void; onOpenThread: (id: string) => void;
 }) {
   const { project } = entry;
-  const [started, setStarted] = useState("");
-  useEffect(() => { if (!started) return; const t = setTimeout(() => setStarted(""), 4000); return () => clearTimeout(t); }, [started]);
-  const confirm = (prompt: string, title: string | void) => setStarted(`Started · ${(title || prompt).trim().split(/\s+/).slice(0, 8).join(" ")}`);
-  const draftKey = newThreadDraftKey(project.id);
-  const text = useDraft(draftKey);
-  const setText = (value: string | ((previous: string) => string)) => setDraft(draftKey, typeof value === "function" ? value(text) : value);
-  const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!text.trim() || busy || !plan.ok) return;
-    setBusy(true); setError("");
-    try { const prompt = text.trim(), title = await onCreate(prompt); setText(""); setArmed(false); confirm(prompt, title); onToggle(); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
-  }
+  const [error, setError] = useState("");
   // Voice: the transcript becomes the first message of a new thread in this project (same path as the typed prompt).
   const [micUsed, setMicUsed] = useState(false), [dictating, setDictating] = useState(false), [armed, setArmed] = useState(false);
   async function dictate(transcript: string) {
@@ -146,23 +131,15 @@ function Tile({ entry, open, canCreate, plan, onToggle, onCreate, onOpen, onOpen
     recent={[...entry.pending, ...entry.recent.map(thread => ({ id: thread.id, title: thread.title, status: threadListStatus(thread, read) }))].slice(0, 3)}
     onOpen={onOpen} onOpenThread={id => { if (!id.startsWith("pending:")) onOpenThread(id); }} actions={      <div className="home-tile-actions" onPointerDownCapture={() => { setMicUsed(true); setArmed(true); }}>
         <Button type="button" variant="outline" size="icon" className="home-tile-add" aria-label={`New thread in ${project.name}`}
-          title="New thread" aria-expanded={open} disabled={!canCreate} onClick={onToggle}>
-          {open ? <X size={14} /> : <Plus size={14} />}
+          title="New thread" disabled={!canCreate} onClick={onToggle}>
+          <Plus size={14} />
         </Button>
         <MicButton target={false} onText={t => void dictate(t)} />
       </div>}>
     {micUsed && <VoiceNotice target />}
-    {(open || armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
+    {(armed || dictating) && <p className="home-agent-chip" data-state={plan.ok ? "ok" : "error"} role={plan.ok ? undefined : "alert"} aria-label={plan.ok ? `Agent: ${plan.label}` : undefined} title={plan.ok ? `Agent for new threads: ${plan.label}` : plan.reason}>
       {plan.ok ? plan.label : plan.reason}</p>}
-    {started && <p className="home-started" role="status">{started}</p>}
-    {!open && error && <p role="alert" className="inline-error home-tile-error">{error}</p>}
-    {open && <form className="home-prompt" onSubmit={e => void submit(e)}>
-      <Input autoFocus aria-label={`Prompt for ${project.name}`} placeholder="What should we work on?" value={text} disabled={busy}
-        onChange={e => setText(e.target.value)} />
-      <MicButton target={false} onText={t => setText(previous => joinDictation(previous, t))} />
-      <Button type="submit" size="sm" disabled={!canCreate || busy || !text.trim() || !plan.ok}>{busy ? "Starting…" : "Start"}</Button>
-      {error && <p role="alert" className="inline-error">{error}</p>}
-    </form>}
+    {error && <p role="alert" className="inline-error home-tile-error">{error}</p>}
   </ProjectTile>;
 }
 
@@ -197,7 +174,7 @@ function DropGroup({ groupId, name, ids, over, children }: { groupId: string; na
   </section>;
 }
 
-export function HomeView({ sessions, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, onMoveProjectToWorkspace, homeAccount = "", onHomeAccount, projectNameUppercase = false, modelConfiguration }: HomeViewProps) {
+export function HomeView({ sessions, queuedThreadIds, read = {}, projects, workspaces, accounts, now, canCreate, onOpenThread, pendingLaunches, onAddProject, onNewThread, onCreateThread, resolveLaunch, onRespond, schedules, native = false, homeSelections = {}, onHomeSelection, commander, renderThread, onThreadViewed, onMoveProject, onMoveProjectToWorkspace, homeAccount = "", onHomeAccount, projectNameUppercase = false, modelConfiguration }: HomeViewProps) {
   const [items, setItems] = useState<Record<string, string[]> | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const origin = useRef("");
@@ -269,7 +246,6 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
   const selectedAccount = accounts.find(account => account.id === homeAccount);
   const modelAccounts = selectedAccount ? [selectedAccount] : launchAccounts.slice(0, 1);
   const waiting = useMemo(() => needsYou(sessions), [sessions]);
-  const [openProject, setOpenProject] = useState<string | null>(null);
   // Project sheet state is local so the dashboard behind it stays mounted and untouched.
   const [sheet, setSheet] = useState<{ project: string; thread: string | null } | null>(null);
   const sheetThread = sheet?.thread ? sessions.find(t => t.id === sheet.thread) : undefined;
@@ -282,8 +258,8 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? id;
   const summary = [working ? `${working} working` : "", waiting.length ? `${waiting.length} need${waiting.length === 1 ? "s" : ""} you` : ""].filter(Boolean).join(" · ") || "All quiet";
 
-  const renderTile = (entry: HomeProject) => <Tile uppercase={projectNameUppercase} read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)} open={openProject === entry.project.id}
-    onToggle={() => onNewThread ? onNewThread(entry.project.id) : setOpenProject(current => current === entry.project.id ? null : entry.project.id)}
+  const renderTile = (entry: HomeProject) => <Tile uppercase={projectNameUppercase} read={read} entry={entry} canCreate={canCreate} plan={resolveLaunch(entry.project.id)}
+    onToggle={() => onNewThread?.(entry.project.id)}
     onOpenThread={onOpenThread} onCreate={prompt => onCreateThread(entry.project.id, prompt)} onOpen={() => setSheet({ project: entry.project.id, thread: null })} />;
 
   return <section className="home-view" aria-label="Home">
@@ -312,7 +288,7 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
       </div>
     </section>}
 
-    <Office projectNameUppercase={projectNameUppercase} proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
+    <OfficeSwitch projectNameUppercase={projectNameUppercase} proposals={commander?.proposals} onProposalRespond={commander?.onProposalRespond} onOpenCommander={commander?.onOpen} renderTaskControls={(project, onListening) => <OfficeOrder key={project} disabled={!canCreate || !resolveLaunch(project).ok}
       onSend={text => onCreateThread(project, text)} renderMic={(onText, disabled) => <><MicButton target={false} disabled={disabled} onListening={onListening} label={`Give an order to ${projectName(project)}`} onText={onText} /><VoiceNotice target /></>} />} variant="mini" sessions={sessions} projects={projects} schedules={schedules} now={now} onOpenThread={onOpenThread} />
 
     <section className="home-section" aria-label="Projects">
@@ -346,12 +322,12 @@ export function HomeView({ sessions, read = {}, projects, workspaces, accounts, 
       <DaySummaries now={now === undefined ? undefined : new Date(now)} />
     </section>
 
-    {sheet && sheetEntry && <ProjectSheet uppercase={projectNameUppercase} project={sheetEntry.project} sessions={sheetSessions} pending={sheetEntry.pending} read={read} now={clock}
+    {sheet && sheetEntry && <ProjectSheet uppercase={projectNameUppercase} project={sheetEntry.project} accounts={accounts} sessions={sheetSessions} queuedThreadIds={queuedThreadIds} pending={sheetEntry.pending} read={read} now={clock}
       threadId={sheet.thread}
       onSelectThread={id => renderThread ? setSheet({ project: sheet.project, thread: id }) : (setSheet(null), onOpenThread(id))}
       onBack={() => setSheet({ project: sheet.project, thread: null })} onClose={() => setSheet(null)}
-      onNewThread={() => { const id = sheet.project; setSheet(null); if (onNewThread) onNewThread(id); else setOpenProject(id); }}
+      onNewThread={() => { const project = sheet.project; setSheet(null); onNewThread?.(project); }}
       onOpenInMain={id => { setSheet(null); onOpenThread(id); }}
-      renderThread={id => renderThread?.(id) ?? null} />}
+      renderThread={id => renderThread?.(id, { onClose: () => setSheet(null), onOpenThread: next => setSheet({ project: sessions.find(t => t.id === next)?.project ?? sheet.project, thread: next }) }) ?? null} />}
   </section>;
 }

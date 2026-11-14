@@ -217,7 +217,8 @@
   background: var(--muted, rgb(127 127 127 / .16));
   border-radius: 0;
 }
-.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot) {
+.companion-pin { display: inline-flex; flex: 0 0 auto; align-items: center; cursor: pointer; color: inherit; line-height: 0; }
+.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot):not(.companion-pin) {
   flex: 1;
   min-width: 0;
 }
@@ -309,7 +310,7 @@
   width: 100%;
   min-width: 0;
 }
-.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot) {
+.companion-row > span:not(.companion-state):not(.companion-project-dot):not(.companion-unread-dot):not(.companion-pin) {
   overflow: hidden;
 }
 .companion-row small {
@@ -1084,7 +1085,7 @@
 /* Browser companion uses the same bottom-sheet entry and dismissal affordance. */
 .companion .companion-sheet-handle { flex: 0 0 24px; width: 100%; display: grid; place-items: center; border: 0; background: transparent; touch-action: none; cursor: pointer; }
 .companion-sheet-handle span { width: 36px; height: 5px; border-radius: 3px; background: currentColor; opacity: .3; }
-.companion:has(> .companion-sheet-handle) { border-radius: 24px 24px 0 0; padding-top: env(safe-area-inset-top); animation: companion-sheet-up 260ms ease-out; }
+.companion:has(> .companion-sheet-handle) { border-radius: 24px 24px 0 0; padding-top: env(safe-area-inset-top); animation: companion-sheet-up var(--surface-enter, 380ms) var(--surface-ease, ease-out); }
 @keyframes companion-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .companion:has(> .companion-sheet-handle) { animation: none; } }
 
@@ -1219,3 +1220,13 @@
   .companion-settings-group .workspace-settings > form > button { min-height: 44px; }
 }
 .companion-settings-group .workspace-card[aria-label="No workspace"]:has(> div:empty) { display: none; }
+.companion-bug-walk .bug-walk-step { display: grid; gap: 12px; padding: 16px; }
+.companion-bug-walk .bug-walk-hint { color: var(--muted-foreground); font-size: 13px; }
+.companion-bug-walk .bug-walk-error { color: var(--destructive); font-size: 14px; }
+.companion-bug-walk .bug-walk-toggle { display: flex; gap: 8px; align-items: center; }
+.companion-bug-walk label { display: grid; gap: 6px; }
+.companion-bug-walk select { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; }
+.companion-bug-walk progress { width: 100%; }
+.companion-bug-walk .bug-walk-split { display: flex; gap: 8px; }
+.companion-bug-walk .bug-walk-split button { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.companion-bug-walk .bug-walk-split button[data-active] { background: var(--accent); }

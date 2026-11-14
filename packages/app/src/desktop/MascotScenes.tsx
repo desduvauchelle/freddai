@@ -1,11 +1,13 @@
+import { Pin, PinOff } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Button } from "@freddai/ui/components/button";
 import { ActivityControls } from "../conversation/ActivityControls";
 import { Dormouse } from "./Dormouse";
 import { MASCOT_PRIORITY, MASCOT_SIZES, mascotState, moodChip } from "./mascot-state";
 import type { Session } from "./types";
 
 /** Live activity at the end of this pane's transcript, including the first launch. */
-export function ConversationActivity({ thread, onStop, onResume, disabled }: { thread: Session; onStop?: () => void; onResume?: () => void; disabled?: boolean }) {
+export function ConversationActivity({ thread, onStop, onResume, onTogglePin, disabled }: { thread: Session; onStop?: () => void; onResume?: () => void; onTogglePin?: (pinned: boolean) => void; disabled?: boolean }) {
   const { mood, label } = mascotState(thread, []);
   const active = ["starting", "running", "waiting"].includes(thread.status);
   const [now, setNow] = useState(Date.now);
@@ -32,6 +34,9 @@ export function ConversationActivity({ thread, onStop, onResume, disabled }: { t
       {thread.turn_started_at != null && <span title="Elapsed since this turn started, including tools and waiting for input">{elapsed} elapsed</span>}
       {typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 && <span title="Last provider-reported context usage; may update only after a response">{tokens.toLocaleString()} context tokens</span>}
     </small>}
+    {onTogglePin && <Button type="button" size="icon" variant="ghost" className="activity-control activity-pin" aria-pressed={!!thread.pinned} aria-label={thread.pinned ? "Unpin thread" : "Pin thread"} title={thread.pinned ? "Unpin thread" : "Pin thread"} onClick={() => onTogglePin(!thread.pinned)}>
+      {thread.pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
+    </Button>}
     {thread.status !== "interrupted" && controls}
   </aside>;
 }

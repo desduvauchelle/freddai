@@ -1,3 +1,5 @@
+import { ProjectThreadList } from './ProjectThreadList';
+import { orderProjectThreads } from '../projectThreads';
 import { ComposerAgentPicker } from '../desktop/ComposerAgentPicker';
 import { ProjectTile } from "../desktop/ProjectTile";
 import { dashboardAssistantFor, dashboardControlKey } from './native-dashboard';
@@ -5,7 +7,7 @@ import { dashboardProjectGroups } from './dashboard-projects';
 import { companionStatusRead } from "./companion";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OfficeOrder } from '../office/OfficeOrder';
-import { Office } from '../office/index';
+import { OfficeSwitch } from '../officeShared';
 import { DaySummaries } from '../desktop/DaySummaries';
 import { defaultSelection, type AgentSelection } from '../desktop/agent-selection';
 import { DashboardMic } from './DashboardMic';
@@ -67,13 +69,9 @@ function ProjectActions({ project, connected, client, onNew, onDictation,
 }
 
 function ProjectPanel(props: Props & { project: CompanionProject }) {
-  const { project, snapshot, onOpen, read = {} } = props;
-  const threads = snapshot.threads.filter(t => t.project === project.id).sort(compareThreadRecency);
-  return <>
-    <ProjectActions {...props} />
-    {threads.length ? threads.map(thread => <button key={thread.id} className="companion-row" data-faded={companionThreadFaded(thread, companionStatusRead(snapshot, read))} onClick={() => onOpen(thread.id)}>
-      <span><strong>{thread.title}</strong><small>{nativeRunState(thread)}</small></span>
-    </button>) : <p>No threads yet.</p>}
+  const { project, snapshot, onOpen, read = {}, connected, onNew, now } = props;
+  return <><ProjectActions {...props} />
+    <ProjectThreadList project={project.id} snapshot={snapshot} read={read} connected={connected} now={now} onOpen={onOpen} onNew={() => onNew(project.id)} />
   </>;
 }
 
@@ -116,7 +114,7 @@ export function CompanionDashboard(props: Props) {
     {!props.nativeCards && !!attention.length && <section aria-label="Needs you"><h3>Needs you · {attention.length}</h3>
       {attention.map(t => <button key={t.id} className="companion-row" onClick={() => onOpen(t.id)}><span><strong>{t.title}</strong><small>{formatProjectName(snapshot.projects.find(p => p.id === t.project)?.name, snapshot.threadList?.projectNameUppercase)} · Review decision</small></span></button>)}
     </section>}
-    <Office projectNameUppercase={snapshot.threadList?.projectNameUppercase} proposals={showCommander ? commander.proposals : undefined} onProposalRespond={showCommander && client?.commander ? async (id, approve) => { await client.commander!.respond({ id, approve }); await commander.refresh(); } : undefined} onOpenCommander={props.onOpenCommander} renderTaskControls={client ? (projectId, onListening) => {
+    <OfficeSwitch projectNameUppercase={snapshot.threadList?.projectNameUppercase} proposals={showCommander ? commander.proposals : undefined} onProposalRespond={showCommander && client?.commander ? async (id, approve) => { await client.commander!.respond({ id, approve }); await commander.refresh(); } : undefined} onOpenCommander={props.onOpenCommander} renderTaskControls={client ? (projectId, onListening) => {
       const project = snapshot.projects.find(p => p.id === projectId)!;
       const assistant = project.assistants?.find(a => a.id === selections[projectId]) ?? project.assistants?.[0];
       const controlKey = `new:${projectId}:${assistant?.id || ''}:${assistant?.provider || project.provider || ''}`;

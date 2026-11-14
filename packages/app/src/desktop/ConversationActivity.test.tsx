@@ -70,3 +70,21 @@ it("keeps Stop and Resume scoped to their own conversation panes", () => {
   fireEvent.click(screen.getByRole("button", { name: "Resume" }));
   expect(resumeRight).toHaveBeenCalledOnce();
 });
+
+it("shows a pin toggle on every activity line, independent of Stop and Resume", () => {
+  const toggle = vi.fn();
+  const view = render(<ConversationActivity thread={{ ...thread, status: "running" }} onTogglePin={toggle} />);
+  const pin = screen.getByRole("button", { name: "Pin thread" });
+  expect(pin.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(pin);
+  expect(toggle).toHaveBeenLastCalledWith(true);
+  view.rerender(<ConversationActivity thread={{ ...thread, status: "running", pinned: true }} onTogglePin={toggle} />);
+  const unpin = screen.getByRole("button", { name: "Unpin thread" });
+  expect(unpin.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(unpin);
+  expect(toggle).toHaveBeenLastCalledWith(false);
+  view.rerender(<ConversationActivity thread={{ ...thread, status: "interrupted" }} onTogglePin={toggle} />);
+  expect(screen.getByRole("button", { name: "Pin thread" })).toBeTruthy();
+  view.rerender(<ConversationActivity thread={{ ...thread, status: "running" }} />);
+  expect(screen.queryByRole("button", { name: /pin thread/i })).toBeNull();
+});

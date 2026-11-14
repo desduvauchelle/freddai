@@ -1,3 +1,5 @@
+import { useThreadHistory } from "./use-thread-history";
+import { FailedTurnRecovery } from "../conversation/FailedTurnRecovery";
 import { SubThreads } from "../desktop/commander/SubThreads";
 import { selectionLevel } from '../desktop/model-levels';
 import { chooseAssistantSettings } from './native-home';
@@ -22,6 +24,7 @@ import { useNativeSummaries } from './native-summaries';
 import { buildDashboardModel, dashboardAssistantFor, dashboardControlKey, type DashboardAction } from './native-dashboard';
 import { setDashboard as setNativeDashboard, onDashboardAction } from './native-shell';
 import { SchedulesScreen } from "./SchedulesScreen";
+import { BugWalkScreen } from "./BugWalkScreen";
 import { ConnectedAccounts } from "./ConnectedAccounts";
 import { CompanionDashboard } from './CompanionDashboard';
 import { ConnectionLoading } from './ConnectionLoading';
@@ -36,7 +39,7 @@ import { Button } from '@freddai/ui/components/button';
 import { RecentThreadsFooter } from '../RecentThreadsControls';
 import { COMPANION_RECENT_PAGING, asThreadNavView, selectRecentThreads, type ThreadNavView } from '../recentThreads';
 import { Input } from '@freddai/ui/components/input';
-import { Textarea } from '@freddai/ui/components/textarea';
+import { MessageComposer } from '../conversation/MessageComposer';
 import { ScrollArea } from '@freddai/ui/components/scroll-area';
 import { ConnectionBanner } from './ConnectionBanner';
 import { ProjectReorderHandle } from './ProjectReorderHandle';
@@ -78,6 +81,7 @@ function Pill({ icon, label, value, onClick, disabled }: { icon: ReactNode; labe
   </button>;
 }
 const initial: CompanionSnapshot = { projects: [], threads: [] };
+const emptyPendingMessages: CompanionThread['messages'] = [];
 
 export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = false, deviceSettings }: { client?: CompanionClient; onPairAgain?: () => void; desktop?: boolean; deviceSettings?: ReactNode }) {
   useSystemAppearance();
@@ -99,7 +103,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   }
   useEffect(() => { if (loaded && workspace && !data.workspaces?.some(w => w.id === workspace)) chooseWorkspace(''); }, [loaded, workspace, data.workspaces]);
   const navigationRevision = useRef(0);
-  const [screen, setScreenState] = useNavigationState<'threads' | 'conversation' | 'new' | 'dashboard' | 'project' | 'schedules'>(desktop ? 'dashboard' : 'threads', navigationRevision), [selected, setSelected] = useNavigationState('', navigationRevision);
+  const [screen, setScreenState] = useNavigationState<'threads' | 'conversation' | 'new' | 'dashboard' | 'project' | 'schedules' | 'bugwalk'>(desktop ? 'dashboard' : 'threads', navigationRevision), [selected, setSelected] = useNavigationState('', navigationRevision);
   const snapshotThread = screen === 'conversation' ? selected : undefined;
   const [drafts, setDrafts] = useState<Record<string, string>>(savedDrafts), [newProject, setNewProject] = useState(''), [working, setWorking] = useState(false), [retry, setRetry] = useState(0);
   // Presentation belongs to the entry point, never to the conversation screen itself.
@@ -199,6 +203,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     try { localStorage.setItem('freddai.companion.threadNavView', view); } catch { /* Optional local preference. */ }
   }
   const schedulesFrom = useRef<'threads' | 'dashboard'>('threads');
+  const bugWalkFrom = useRef<'threads' | 'dashboard'>('threads');
+  const openBugWalk = () => { bugWalkFrom.current = screen === 'dashboard' ? 'dashboard' : 'threads'; setScreen('bugwalk'); };
   const openSchedules = () => { schedulesFrom.current = screen === 'dashboard' ? 'dashboard' : 'threads'; setScreen('schedules'); };
   const [googleOpen,setGoogleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -241,12 +247,12 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const pendingMessages = outgoing.filter(m => m.thread === selected);
   const snapshotTask = data.threads.find(t => t.id === selected) || (pendingMessages.length ? {
     id: selected, project: pendingMessages[0].project, title: pendingMessages[0].prompt,
-    status: 'starting', updated: 0, messages: [], canReply: false, queued: 0, error: null,
+    status: 'starting', updated: 0, messages: emptyPendingMessages, canReply: false, queued: 0, error: null,
   } : undefined);
   // A persisted FIFO item is an implementation detail when it is starting an idle turn.
   // Keep that intent visible until the host echoes the user message, instead of flashing Completed/Up next.
   const startingMessages = pendingMessages.filter(m => !m.blocked && m.startsTurn &&
-    (snapshotTask?.messages.filter(item => item.role === 'user' && item.text === m.prompt).length || 0) < m.ordinal);
+    (snapshotTask?.deliveredRequests ? !snapshotTask.deliveredRequests.includes(`phone:${m.id}`) : (snapshotTask?.messages.filter(item => item.role === 'user' && item.text === m.prompt).length || 0) < m.ordinal));
   const task = snapshotTask && startingMessages.length && !snapshotTask.pending &&
     !snapshotTask.queuePaused && !snapshotTask.queueError &&
     (startingMessages.some(m => !m.acknowledged) || !['failed', 'interrupted'].includes(snapshotTask.status))
@@ -371,6 +377,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     return () => { window.removeEventListener('focus', markRead); document.removeEventListener('visibilitychange', markRead); };
   }, [screen, task?.id, task?.status, task?.updated, task?.messagesLoaded, actualRead[task?.id ?? ''], client]);
   useEffect(() => { try { localStorage.setItem('freddai.companion.drafts', JSON.stringify(drafts)); } catch { /* Keep drafts in memory if storage is full. */ } }, [drafts]);
+  const history = useThreadHistory(screen === 'conversation' ? task : undefined, client, viewport);
+  const historyScrollTop = useRef(0);
   const lastCount = useRef(0);
   useEffect(() => {
     if (screen === 'conversation' && viewport.current) {
@@ -387,7 +395,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       if (appended > 0 && appended < 4 && typeof el.scrollTo === "function") el.scrollTo({ top: el.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
       else el.scrollTop = el.scrollHeight;
     }
-  }, [task?.updated, task?.messages.length, outgoing, screen]);
+  }, [task?.updated, task?.messages.length, history.messages.length, outgoing, screen]);
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -405,7 +413,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           const queueIndex = t?.queue?.findIndex(item => item.id === `phone:${id}`) ?? -1;
           if (t && queueIndex >= 0 && !misclassWarned.current.has(id)) {
             misclassWarned.current.add(id);
-            logMisclassified({ env: 'mobile', thread: c.thread, id, disposition: 'bubble', status: t.status, queued: t.queued, queuePaused: !!t.queuePaused, queueIndex, queueLength: t.queue?.length ?? 0, unreflectedLocal: countUnreflected(live.current.outgoing.filter(m => m.id !== id), c.thread, t.messages), snapshotAgeMs: 0 });
+            logMisclassified({ env: 'mobile', thread: c.thread, id, disposition: 'bubble', status: t.status, queued: t.queued, queuePaused: !!t.queuePaused, queueIndex, queueLength: t.queue?.length ?? 0, unreflectedLocal: countUnreflected(live.current.outgoing.filter(m => m.id !== id), c.thread, t.messages, t.deliveredRequests), snapshotAgeMs: 0 });
           } else if (Date.now() - c.at > 120_000 && !live.current.outgoing.some(m => m.id === id)) classifiedBubbles.current.delete(id);
         }
         setOutgoing(old => old.filter(message => {
@@ -413,7 +421,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
           const thread = next.threads.find(t => t.id === message.thread);
           // Once a real queue owns the message, clearing/deleting it must not revive a chat bubble.
           if ((!message.startsTurn || thread?.queuePaused || thread?.queueError) && thread?.queue?.some(item => item.id === `phone:${message.id}`)) return false;
-          return (thread?.messages.filter(m => m.role === 'user' && m.text === message.prompt).length || 0) < message.ordinal;
+          return thread?.deliveredRequests ? !thread.deliveredRequests.includes(`phone:${message.id}`) : (thread?.messages.filter(m => m.role === 'user' && m.text === message.prompt).length || 0) < message.ordinal;
         }));
       } catch (e) {
         if (controller.signal.aborted) return;
@@ -592,7 +600,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   function classifySend(thread: string, id: string, opts: { isNew?: boolean; extraInFlight?: number } = {}): boolean {
     const { task: liveTask, outgoing: liveOutgoing, threads, selected: liveSelected } = live.current;
     const target = thread ? (thread === liveSelected ? liveTask : threads.find(t => t.id === thread)) : undefined;
-    const unreflectedLocal = (opts.isNew ? 0 : countUnreflected(liveOutgoing, thread, target?.messages)) + (opts.extraInFlight ?? 0);
+    const unreflectedLocal = (opts.isNew ? 0 : countUnreflected(liveOutgoing, thread, target?.messages, target?.deliveredRequests)) + (opts.extraInFlight ?? 0);
     const queued = Math.max(target?.queued ?? 0, target?.queue?.length ?? 0);
     const disposition = sendDisposition({ isNewThread: opts.isNew, status: target?.status, queued, queuePaused: target?.queuePaused, queueError: target?.queueError, unreflectedLocal });
     logClassified({ env: 'mobile', thread, id, disposition, status: target?.status, queued, queuePaused: !!target?.queuePaused, unreflectedLocal, ...(snapshotAt.current ? { snapshotAgeMs: Date.now() - snapshotAt.current } : {}) });
@@ -665,7 +673,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
   const projectSheetName = projectName(data.projects.find(p => p.id === projectSheet?.project)?.name) || 'Project';
   useEffect(() => {
     if (!nativeShell) return;
-    void (dashboardReviewing ? setNativeMode('callReview', { title: 'Review command', threadSheet: true }) : projectBrowserOpen || workspacesOpen || screen === 'schedules' || officeExpanded && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
+    void (dashboardReviewing ? setNativeMode('callReview', { title: 'Review command', threadSheet: true }) : projectBrowserOpen || workspacesOpen || screen === 'schedules' || screen === 'bugwalk' || officeExpanded && screen === 'dashboard' ? setNativeMode('other') : screen === 'conversation'
       ? setNativeMode(isCommander ? 'commander' : 'conversation', { title: isCommander ? commanderProject!.name : nativeTitle, placeholder: busyThread ? 'Draft your next message…' : 'Message', threadSheet, ...(projectSheet?.thread ? { back: true } : {}) })
       : screen === 'project' ? setNativeMode('project', { title: projectSheetName, threadSheet: true })
       : screen === 'new' ? setNativeMode('new', { title: 'New thread', placeholder: 'What should we work on?', threadSheet })
@@ -807,6 +815,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     }
     if (event.action === 'organization') { setWorkspacesOpen(true); return; }
     if (event.action === 'schedules') { openSchedules(); return; }
+    if (event.action === 'bugwalk') { openBugWalk(); return; }
     if (event.action === 'commander') { openCommander(); return; }
     let pickedDashboard: { agent: string; model: string } | null = null;
     if ((event.action === 'agent' || event.action === 'dashboard-model' || event.action === 'dashboard-effort') && connected) {
@@ -914,7 +923,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     .map(([id, project]): Outgoing => ({ id, thread: '', project, prompt: 'Transcribing…', ordinal: 1, startsTurn: true, acknowledged: false, attachments: [] }))];
   const dashboardModel = nativeShell ? buildDashboardModel(data, connected, dashboardAssistant, controls, dashboardBusy, Date.now(), officeExpanded, actualRead, pendingItems) : null;
   if (dashboardModel?.commander && commanderData.state) { const st = commanderData.state.status; dashboardModel.commander = { ...dashboardModel.commander, needsYou: st.needs_you ?? dashboardModel.commander.needsYou, running: st.running ?? dashboardModel.commander.running, doneToday: st.done_today ?? dashboardModel.commander.doneToday }; }
-  if (dashboardModel) { dashboardModel.workspaceHeight = officeHeight; dashboardModel.workspace = null; dashboardModel.message = error || (commanderOnDashboard ? commanderData.error : ''); dashboardModel.summaries = nativeSummaries.summaries; dashboardModel.schedules = !!client.scheduleCommand; }
+  if (dashboardModel) { dashboardModel.workspaceHeight = officeHeight; dashboardModel.workspace = null; dashboardModel.message = error || (commanderOnDashboard ? commanderData.error : ''); dashboardModel.summaries = nativeSummaries.summaries; dashboardModel.schedules = !!client.scheduleCommand; dashboardModel.bugWalk = !!client.bugWalkSend; }
   const sendDashboard = useRef(createChangeSender(setNativeDashboard));
   useEffect(() => {
     if (dashboardModel) void sendDashboard.current(dashboardModel).catch(e => setError(`Native dashboard: ${String(e)}`));
@@ -1020,6 +1029,13 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setWorking(false); }
   }
+  async function unpinThread(id: string) {
+    if (!connected || working || !client.action) return;
+    setError(''); setWorking(true);
+    try { await client.action({ thread: id, action: 'unpin' }); setRetry(value => value + 1); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setWorking(false); }
+  }
   async function resumeInterruptedThread() {
     if (!connected || working || !task?.canReply || task.status !== 'interrupted' || !client.resume) return;
     setError(''); setWorking(true);
@@ -1095,7 +1111,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     const status = threadListStatus(t, read);
     const label = ({unread:'Unread reply',done:'Completed',waiting:'Needs you',running:'Running',starting:'Starting',failed:'Failed',interrupted:'Interrupted'} as Record<string,string>)[status] || status;
     const sent = t.last_user_message_at ?? t.updated;
-    return <button className="companion-row" aria-current={selected === t.id ? "page" : undefined} data-faded={companionThreadFaded(t, read)} key={t.id} onClick={() => { if (t.id.startsWith('outbox:')) { setScreen('new'); return; } setSelected(t.id); setScreen('conversation'); }}><span className="companion-state" data-status={status}/><span><strong title={t.title}>{t.title}</strong><small>{owner && <span className="companion-project-chip" title={projectName(owner.name)} style={{color: owner.color}}>{projectName(owner.name)}</span>}{label}{t.queued > 0 ? ` · ${t.queued} queued` : ''}</small></span>{t.pinned && <Pin size={14} aria-label="Pinned" style={{ flexShrink: 0 }} />}{t.scheduled && <CalendarClock size={14} aria-label="Scheduled task" style={{ flexShrink: 0 }} />}<time dateTime={new Date(sent).toISOString()}>{new Date(sent).toLocaleDateString(undefined, {month:'short',day:'numeric'})}</time></button>;
+    return <button className="companion-row" aria-current={selected === t.id ? "page" : undefined} data-faded={companionThreadFaded(t, read)} key={t.id} onClick={() => { if (t.id.startsWith('outbox:')) { setScreen('new'); return; } setSelected(t.id); setScreen('conversation'); }}><span className="companion-state" data-status={status}/><span><strong title={t.title}>{t.title}</strong><small>{owner && <span className="companion-project-chip" title={projectName(owner.name)} style={{color: owner.color}}>{projectName(owner.name)}</span>}{label}{t.queued > 0 ? ` · ${t.queued} queued` : ''}</small></span>{t.pinned && <span role="button" tabIndex={0} className="companion-pin" aria-label="Unpin thread" title="Unpin thread" onClick={e => { e.stopPropagation(); e.preventDefault(); void unpinThread(t.id); }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); void unpinThread(t.id); } }}><Pin size={14} aria-hidden="true" /></span>}{t.scheduled && <CalendarClock size={14} aria-label="Scheduled task" style={{ flexShrink: 0 }} />}<time dateTime={new Date(sent).toISOString()}>{new Date(sent).toLocaleDateString(undefined, {month:'short',day:'numeric'})}</time></button>;
   }
   function older(group: typeof groups[number]) {
     return <div className="companion-history">
@@ -1168,6 +1184,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       {navigation}
       <ScrollArea className="companion-desktop-threads">{threadListing}</ScrollArea>
       {client.scheduleCommand && <Button variant="ghost" onClick={openSchedules}>Schedules</Button>}
+      {client.bugWalkSend && <Button variant="ghost" onClick={openBugWalk}>Bug walk</Button>}
     </aside>}
     <main className="companion" data-screen={screen} data-commander={isCommander || undefined} data-floating-header={floatingHeader || undefined} data-native-dashboard={nativeDashboardContent && screen === 'dashboard' || undefined}
     onTouchStart={event => {
@@ -1229,6 +1246,7 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
     </header>}
     {showBanner && !(nativeDashboardContent && screen === 'dashboard') && <ConnectionBanner status={connection} client={client} onTryAgain={tryAgain} onPairAgain={onPairAgain} onDismiss={() => { setBannerDismissed(true); setDetailsOpen(false); setRecovered(false); }} onAwake={tryAgain}/>}
     {!desktop && client.scheduleCommand && (screen === 'threads' || (screen === 'dashboard' && !nativeDashboardContent)) && <Button variant="ghost" onClick={openSchedules}>Schedules</Button>}
+    {!desktop && client.bugWalkSend && (screen === 'threads' || (screen === 'dashboard' && !nativeDashboardContent)) && <Button variant="ghost" onClick={openBugWalk}>Bug walk</Button>}
     <Sheet open={workspacesOpen} onOpenChange={setWorkspacesOpen}><SheetContent side="bottom" className="companion-settings-sheet"><div className="companion-settings-grabber" aria-hidden="true" /><SheetHeader><SheetTitle>Settings</SheetTitle><SheetDescription>Organize your projects and customize Freddai.</SheetDescription></SheetHeader><div className="companion-workspaces">{deviceSettings && <details className="companion-settings-group"><summary>This device<span>Connection and device preferences</span></summary><div>{deviceSettings}</div></details>}
 
 
@@ -1294,6 +1312,8 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       defaultAccount={data.projects[0]?.defaultAssistant} connected={connected} command={client.scheduleCommand}
       onRefresh={async () => { setData(await client.snapshot(new AbortController().signal, snapshotThread)); }}
       onOpenThread={id => { setSelected(id); setScreen('conversation'); }} onBack={() => setScreen(schedulesFrom.current)} />}
+    {screen === 'bugwalk' && <BugWalkScreen desktop={desktop} client={client} projects={data.projects} defaultProject={data.projects.find(p => p.kind !== 'commander')?.id}
+      onOpenThread={id => { setSelected(id); setScreen('conversation'); }} onBack={() => setScreen(bugWalkFrom.current)} />}
     <div className="companion-body-wrap">{floatingHeader && (() => { const act = companionActivity(task, connection.state), waiting = isCommander ? waitingCount(commanderData) : 0;
       return <ThreadHeader title={isCommander ? commanderProject!.name : nativeTitle} mood={isCommander ? ((commanderData.state?.status.running ?? 0) > 0 ? 2 : waiting ? 4 : 0) : act.mood} mascotLabel={act.label}
         badge={waiting} avatarLabel={isCommander ? `${commanderProject!.name}: open To-dos, Notes, Waiting and Sub-threads${waiting ? ` (${waiting} need you)` : ''}` : commanderProject ? `Open ${commanderProject.name}` : undefined}
@@ -1301,13 +1321,31 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
         error={isCommander ? commanderData.error : undefined} callAction={!nativeShell} onBack={isCommander && !nativeShell ? () => setScreen('threads') : undefined} />; })()}
     {nativeNew && !launchingNew.length ? home : <ScrollArea className="companion-body" viewportRef={viewport} viewportProps={{ onScroll: () => {
       const el = viewport.current;
-      if (el) { const gap = el.scrollHeight - el.scrollTop - el.clientHeight; nearBottom.current = gap < 80; setShowLatest(gap > 200); }
+      if (el) {
+        const upward = el.scrollTop < historyScrollTop.current;
+        historyScrollTop.current = el.scrollTop;
+        const gap = el.scrollHeight - el.scrollTop - el.clientHeight; nearBottom.current = gap < 80; setShowLatest(gap > 200);
+        if (screen === 'conversation' && upward && el.scrollTop < 160 && !history.error) void history.loadOlder();
+      }
     } }}>
       {floatingHeader && <div className="companion-fh-spacer" aria-hidden="true" />}
       {dashboardRetained && <div hidden={screen !== 'dashboard'} className="companion-dashboard-preserved"><CompanionDashboard outbox={pendingItems} onOfficeHeightChange={setOfficeHeight} onOfficeExpandedChange={setOfficeExpanded} nativeCards={nativeShell} nativeContent={nativeDashboardContent} read={read} globalAssistant={dashboardAssistant} onGlobalAssistantChange={setDashboardAssistant} client={client} assistantSelections={newAssistants} onAssistantChange={(project, assistant) => setNewAssistants(old => ({ ...old, [project]: assistant }))}
         controls={controls} onSelectionChange={(key, selection) => setControls(old => ({ ...old, [key]: { selection, permission: old[key]?.permission || 'bypass' } }))}
         onDictation={(project, text, assistant) => { setDrafts(old => ({ ...old, new: [old.new, text].filter(Boolean).join('\n') })); startDashboard(project, assistant); void setNativeComposerText([drafts.new, text].filter(Boolean).join('\n')); }} onOpenCommander={commanderProject ? openCommander : undefined} onSendCommander={commanderProject ? sendToCommander : undefined} snapshot={data} connected={connected} onOpen={id => { if (id.startsWith('outbox:')) { const item = pendingItems.find(m => `outbox:${m.id}` === id); if (item) startDashboard(item.project); return; } openThreadSheet(id); }} onProject={desktop ? undefined : openProjectSheet} onNew={startDashboard} /></div>}
-      {screen === 'dashboard' ? null : screen === 'project' ? (projectSheet && <ProjectThreadList key={projectSheet.project} project={projectSheet.project} snapshot={scopedData} outbox={pendingItems} read={read} connected={connected} onOpen={openProjectSheetThread} onNew={() => startDashboard(projectSheet.project)} />) : screen === 'threads' ? threadListing : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{scopedData.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{projectName(p.name)}</option>)}</select></label>{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadLinksProvider threads={data.threads} projects={data.projects} onOpen={openLinkedThread}><PreviewContext.Provider value={task ? (url, opts) => previewOpen(task.id, url, opts?.start) : null}><ThreadTranscript readGeneratedFile={task && client.generatedFile ? (href, offset) => client.generatedFile!(task.id, href, offset) : undefined} key={task?.id} density="compact" messages={task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript></PreviewContext.Provider></ThreadLinksProvider>}
+      {screen === 'conversation' && history.hasOlder && <div className="companion-history-pages">
+        <button type="button" disabled={history.loading} onClick={() => { nearBottom.current = false; void history.loadOlder(); }}>{history.loading ? 'Loading older messages…' : 'Load older messages'}</button>
+        {history.error && <p role="alert">{history.error}</p>}
+      </div>}
+      {screen === 'dashboard' ? null : screen === 'project' ? (projectSheet && <ProjectThreadList key={projectSheet.project} project={projectSheet.project} snapshot={scopedData} outbox={pendingItems} read={read} connected={connected} onOpen={openProjectSheetThread} onNew={() => startDashboard(projectSheet.project)} />) : screen === 'threads' ? threadListing : screen === 'new' ? (nativeNew ? null : <div className="companion-new"><h2>What would you like to work on?</h2><p>Choose a coding assistant configured on your Mac.</p><label>Project<select aria-label="New thread project" value={newProject} disabled={working} onChange={e => { setNewProject(e.target.value); delete requestIds.current.new; }}><option value="">Choose a project</option>{scopedData.projects.map(p => <option key={p.id} value={p.id} disabled={!p.canStart}>{projectName(p.name)}</option>)}</select></label>{!data.projects.some(p => p.canStart) && <p>Projects must be ready to run on your Mac.</p>}</div>) : task?.messagesLoaded === false ? <p className="companion-transcript-loading" role="status">Loading conversation…</p> : <ThreadLinksProvider threads={data.threads} projects={data.projects} onOpen={openLinkedThread}><PreviewContext.Provider value={task ? (url, opts) => previewOpen(task.id, url, opts?.start) : null}><ThreadTranscript readToolText={task && client.toolText ? (message, offset, hash) => client.toolText!(task.id, message, offset, hash) : undefined} readGeneratedFile={task && client.generatedFile ? (href, offset, length) => client.generatedFile!(task.id, href, offset, length) : undefined} key={task?.id} density="compact" messages={screen === 'conversation' ? history.messages : task?.messages || []} tasks={task?.tasks} active={!!task && ['starting', 'running', 'waiting'].includes(task.status)} pending={outgoingPreview(pendingMessages)}>{task?.error && <p role="alert">{task.error}</p>}{task?.status === 'failed' && <FailedTurnRecovery key={task.id} messages={history.messages}
+        options={conversationProject?.assistants?.map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color })) || []}
+        initialAgent={conversationAgent} initialSelection={selection} native={!!client.models} disabled={!connected || working}
+        modelConfiguration={data.modelConfiguration} loadModels={client.models ? agent => client.models!({ project: task.project, assistant: agent }) : undefined}
+        onResend={async (message, choice, requestId) => {
+          const id = await client.start({ project: task.project, assistant: choice.agent, prompt: message.text, requestId,
+            options: { model: choice.model || null, effort: choice.effort === 'default' ? null : choice.effort, speed: choice.speed || null,
+              permission_mode: permission, attachments: (message.attachments || []).map(file => file.id) } });
+          openThreadSheet(id); setRetry(value => value + 1);
+        }}/>}{task?.pending && <fieldset disabled={!connected || working} key={JSON.stringify(task.pending.request_id ?? task.pending.id)}><Permission pending={task.pending} provider={task.provider || ''} onReply={respond} /></fieldset>}{task?.queueError && !task.queue?.length && <p role="alert">{task.queueError}</p>}{task && task.status !== 'failed' && !task.canReply && !task.pending && !busyThread && !pendingMessages.length && <p>This thread cannot take replies. Start a new thread to continue.</p>}</ThreadTranscript></PreviewContext.Provider></ThreadLinksProvider>}
       {isCommander && <SubThreads hideEmpty threads={data.threads.filter(t => t.origin?.kind === 'commander' && t.origin.thread === task?.id)} projects={data.projects} onOpenThread={openLinkedThread} />}
       {screen === 'conversation' && <ThreadActivity thread={task} connection={connection.state}
         onStop={client.action ? () => void threadAction('stop') : undefined}
@@ -1371,27 +1409,24 @@ export function MobileApp({ client = disconnectedClient, onPairAgain, desktop = 
       {screen === 'conversation' && !nativeShell && <ConversationUsage usage={task?.usage}/>}
 
       {screen === 'conversation' && task && !!queueMessages.length && <MessageQueue key={task.id} messages={queueMessages} pendingIds={pendingQueueIds} active={busyThread} paused={task.queuePaused} error={task.queueError} disabled={!connected || working || !client.queue} onAction={queueAction} />}
-      {!nativeBar && <form className="companion-composer" onSubmit={e => void send(e)}>
+      {!nativeBar && <MessageComposer className="companion-composer" toolsClassName="companion-composer-tools" onSend={() => { if (canSend) void send(); }}
+        beforeInput={<>
         {screen === 'new' && !!draft.trim() && !newProjectData && <p className="new-thread-project-required" role="status">Choose a project above to send your message.</p>}
         <input ref={fileInput} type="file" multiple hidden aria-label="Choose attachments" onChange={e => void attachFiles(e.target.files)}/>
         {!!files.length && <div className="companion-attachments">{files.map(file => <span key={file.id}><Paperclip size={13}/><span>{file.name}</span><Button type="button" variant="ghost" size="icon" aria-label={`Remove attachment ${file.name}`} onClick={() => setAttachments(old => ({ ...old, [key]: (old[key] || []).filter(item => item.id !== file.id) }))}><X size={14}/></Button></span>)}</div>}
-        <Textarea ref={textarea} rows={2} aria-describedby="companion-composer-help" aria-label={screen === 'new' ? 'New thread prompt' : 'Reply'} placeholder={screen === 'new' ? 'Describe the task…' : busyThread ? 'Draft your next message…' : 'Message your agent…'} value={draft} onKeyDown={e => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
-            // The software Return key writes a newline. Hardware Enter and Cmd/Ctrl+Enter send.
-            if (e.metaKey || e.ctrlKey || !window.matchMedia('(pointer: coarse)').matches) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); }
-          }
-        }} onChange={e => { const value = e.target.value; setDrafts(old => ({ ...old, [key]: value })); delete requestIds.current[key]; }} />
-        <div className="companion-composer-tools">
+</>}
+        input={{ inputRef: textarea, rows: 2, "aria-describedby": "companion-composer-help", "aria-label": screen === 'new' ? 'New thread prompt' : 'Reply', placeholder: screen === 'new' ? 'Describe the task…' : busyThread ? 'Draft your next message…' : 'Message your agent…', value: draft, keyboard: 'adaptive', onValueChange: value => { setDrafts(old => ({ ...old, [key]: value })); delete requestIds.current[key]; } }}
+        tools={<>
           <Button type="button" variant="ghost" size="icon" className="companion-attach" aria-label="Attach files" disabled={!connected || working || staging || !client.attach} onClick={() => fileInput.current?.click()}><Plus size={20}/></Button>
           {provider && <PermissionSelect provider={provider} value={permission} onChange={value => setControls(old => ({ ...old, [controlKey]: { selection, permission: value } }))} disabled={!connected || working}/>}
           <span className="companion-composer-spacer"/>
           <ComposerAgentPicker options={(screen === 'new' ? newProjectData : conversationProject)?.assistants?.map(a => ({ id: a.id, label: assistantLabel(a), provider: a.provider, color: a.color })) || []} agent={screen === 'new' ? assistant : conversationAgent} onAgentChange={id => { if (screen === 'new') { rememberAssistant(newProject, id); delete requestIds.current.new; } else setControls(old => ({ ...old, [controlKey]: { permission, selection: { agent: id, model: 'freddai-level:normal', effort: 'default' } } })); }} native={!!client.models} provider={provider} modelConfiguration={data.modelConfiguration} loadModels={client.models ? loadModels : undefined} value={selection} onChange={value => setControls(old => ({ ...old, [controlKey]: { selection: value, permission } }))} disabled={!connected || working}/>
           {screen === 'conversation' && busyThread && <Button type="button" variant="ghost" size="icon" aria-label="Stop current turn and pause queue" disabled={actionsDisabled} onClick={() => void threadAction('stop')}><Square size={16}/></Button>}
-          <Button type="submit" size="icon" className="companion-send" aria-label={screen === 'new' ? 'Start thread' : busyThread || !!task?.queued ? 'Queue message' : 'Send reply'} disabled={!canSend}><ArrowUp size={20}/></Button>
-        </div>
+          <Button type="submit" size="icon" className="companion-send" aria-label={screen === 'new' ? 'Start thread' : busyThread || !!task?.queued ? 'Queue message' : 'Send reply'} disabled={!canSend}><ArrowUp size={20}/></Button></>}
+        afterTools={<>
         {staging && <p className="companion-attachment-status" role="status">Copying attachments to your Mac…</p>}
-        <p id="companion-composer-help" className="sr-only">Return inserts a new line on iPhone. Command or Control Enter sends. Messages sent during a turn join the queue. Stop pauses pending messages.</p>
-      </form>}
+        <p id="companion-composer-help" className="sr-only">Return inserts a new line on iPhone. Command or Control Enter sends. Messages sent during a turn join the queue. Stop pauses pending messages.</p></>}
+      />}
     </div>}
     <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}><DialogContent><DialogHeader><DialogTitle>Delete thread?</DialogTitle><DialogDescription>Move “{task?.title}” to Deleted on your Mac. Deleting an active thread also stops its work. You can restore it from Deleted on your Mac.</DialogDescription></DialogHeader><DialogFooter><Button variant="ghost" disabled={working} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="destructive" disabled={actionsDisabled} onClick={() => void threadAction('delete')}>Move to Deleted</Button></DialogFooter></DialogContent></Dialog>
   </main></div>;

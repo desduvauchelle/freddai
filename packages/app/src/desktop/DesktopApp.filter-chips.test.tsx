@@ -36,7 +36,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 async function choose(filter: string, option: string) {
   await userEvent.click(screen.getByRole("combobox", { name: filter }));
   fireEvent.keyDown(await screen.findByRole("option", { name: option }), { key: "Enter" });
-  await waitFor(() => expect(screen.queryAllByRole("option")).toHaveLength(0));
+  await waitFor(() => expect(screen.queryAllByRole("listbox")).toHaveLength(0));
 }
 const chipKinds = () => within(screen.getByRole("list", { name: "Active filters" })).getAllByRole("listitem").map(li => li.getAttribute("data-kind"));
 const projectHeadings = () => within(screen.getByRole("region", { name: "Home" })).queryAllByRole("button", { name: /^Reorder (Alpha|Beta) project$/ }).map(e => e.getAttribute("aria-label"));

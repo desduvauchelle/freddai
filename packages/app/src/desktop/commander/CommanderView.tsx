@@ -1,8 +1,8 @@
 import { SubThreads } from "./SubThreads";
 import { isCommanderThread } from "../../commanderThreads";
 import type { Session } from "../types";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, CircleAlert, Phone, Send, Settings, Wrench, X } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ArrowLeft, CircleAlert, Phone, Settings, Wrench, X } from "lucide-react";
 import { Dormouse } from "../Dormouse";
 import { MASCOT_PRIORITY } from "../mascot-state";
 import type { Project, Schedule } from "../types";
@@ -15,8 +15,7 @@ import { CommanderTrailingContext } from "./TrailingContext";
 import { useCommander } from "./useCommander";
 import "./commander.css";
 
-export function CommanderView({ projects, schedules = [], threads = [], renderConversation, onSelectThread, onOpenThread, onCreateThread, onManageSchedules, onBack, fallbackControls }: {
-  fallbackControls?: ReactNode;
+export function CommanderView({ projects, schedules = [], threads = [], renderConversation, onSelectThread, onOpenThread, onNewThread, onManageSchedules, onBack }: {
   projects: Project[]; schedules?: Schedule[]; threads?: Session[];
   /** Existing conversation (transcript + composer) for the commander thread; null when it is not ready/selected. */
   renderConversation: (threadId: string) => ReactNode;
@@ -24,7 +23,7 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
   onSelectThread: (threadId: string) => void;
   onOpenThread: (id: string) => void;
   /** Existing new-thread launch path. */
-  onCreateThread: (projectId: string, prompt: string) => Promise<string | void>;
+  onNewThread: (projectId: string) => void;
   onManageSchedules?: () => void;
   onBack?: () => void;
 }) {
@@ -34,7 +33,7 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
   const threadId = state?.thread_id ?? null;
   const [tools, setTools] = useState<{ open: boolean; tab: ToolsTab }>({ open: false, tab: "waiting" });
   const [decided, setDecided] = useState<Record<string, Proposal>>({});
-  const [text, setText] = useState(""), [busy, setBusy] = useState(false), [sendError, setSendError] = useState("");
+
   const [away, setAway] = useState<{ gap: number; since: number } | null>(null), [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -54,14 +53,6 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
       onDecided={r => { setDecided(d => ({ ...d, [r.id]: r })); void data.refresh(); }} onOpenThread={onOpenThread} />)}
   </div> : null}</>;
 
-  async function send(e: FormEvent) {
-    e.preventDefault();
-    if (!text.trim() || busy || !state) return;
-    setBusy(true); setSendError("");
-    try { await onCreateThread(state.project.id, text.trim()); setText(""); await data.refresh(); }
-    catch (err) { setSendError(err instanceof Error ? err.message : String(err)); }
-    finally { setBusy(false); }
-  }
   function followCard(card: AwayCard) {
     setDismissed(true);
     if (card.thread) onOpenThread(card.thread); else setTools({ open: true, tab: card.tab ?? "waiting" });
@@ -103,13 +94,8 @@ export function CommanderView({ projects, schedules = [], threads = [], renderCo
         ? <div className="commander-conversation"><CommanderTrailingContext.Provider value={tray}>{renderConversation(threadId)}</CommanderTrailingContext.Provider></div>
         : <div className="commander-empty-chat"><p>{state ? `Say hello to ${name}. Your first message starts the conversation.` : "Loading…"}</p>{tray}</div>}
 
-      {!threadId && state && <form className="commander-fallback-composer" onSubmit={e => void send(e)}>
-        {fallbackControls}
-        <textarea aria-label={`Message to ${name}`} placeholder={`Message ${name}`} rows={2} value={text} disabled={busy} onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-        <button type="submit" className="commander-send" disabled={busy || !text.trim()} aria-label="Send"><Send size={14} aria-hidden="true" />{busy ? "Starting…" : "Send"}</button>
-        {sendError && <p className="commander-error" role="alert">{sendError}</p>}
-      </form>}
+      {!threadId && state && <button type="button" className="commander-send" onClick={() => onNewThread(state.project.id)}>Start conversation</button>}
+
     </div>
   </section>;
 }

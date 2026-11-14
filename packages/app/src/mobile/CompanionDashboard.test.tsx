@@ -57,7 +57,7 @@ it('applies the global agent across projects and keeps thread navigation in the 
     expect(onNew).toHaveBeenLastCalledWith(name, 'b');
   }
   fireEvent.click(screen.getByRole('button', { name: 'Open project Two' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Existing task' }));
+  fireEvent.click(screen.getByRole('button', { name: /Existing task/ }));
   expect(onOpen).toHaveBeenCalledWith('t');
   expect(screen.queryByRole('dialog')).toBeNull();
 });
@@ -95,6 +95,7 @@ it('leaves only Office in the web surface when native dashboard content is suppo
 });
 
 it.each([false, true])('routes an office recording to the selected project with native cards=%s', async nativeCards => {
+  localStorage.setItem('freddai.office.version.v1', 'v1');
   const { waitFor } = await import('@testing-library/react');
   class Recorder {
     static isTypeSupported() { return true; }

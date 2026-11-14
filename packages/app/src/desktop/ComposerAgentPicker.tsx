@@ -17,13 +17,14 @@ const cap = (text: string) => text ? text[0].toUpperCase() + text.slice(1) : tex
 const shortProvider = (provider?: string) => provider === 'claude' ? 'Claude' : providerName(provider || '');
 type Step = 'assistants' | 'difficulty' | 'model' | 'thinking' | 'speed';
 
-/** A modal keeps the picker clear of clipped toolbars and mobile keyboards. Wide: three columns at once. Narrow: one tap-only step at a time. */
+/** A modal keeps the picker clear of clipped toolbars and mobile keyboards. Wide: assistant + level columns; Custom flips the level column to models and adds a thinking column. Narrow: one tap-only step at a time. */
 export function ComposerAgentPicker({ options, agent, onAgentChange, account, provider = account?.provider, native, value, onChange, disabled = false, loadModels, displayLabel, modelConfiguration }: {
   displayLabel?: string; options: AssistantOption[]; agent: string; onAgentChange: (id: string) => void;
   account?: Account; provider?: string; native: boolean; value: AgentSelection;
   onChange: (value: AgentSelection) => void; disabled?: boolean; loadModels?: () => Promise<Model[]>; modelConfiguration?: ModelConfiguration;
 }) {
   const [open, setOpen] = useState(false), [step, setStep] = useState<Step>('assistants');
+  const [column, setColumn] = useState<'levels' | 'models'>('levels');
   const wide = useMediaQuery('(min-width: 720px)');
   const viewOf = useAccountUsageView();
   const { models } = useModelCatalog({ enabled: open, native, provider, accountId: account?.id, loadModels });
@@ -61,7 +62,7 @@ export function ComposerAgentPicker({ options, agent, onAgentChange, account, pr
     {options.filter(o => (o.account?.provider || o.provider || '') === group).sort((a, b) => a.label.localeCompare(b.label)).map(option => {
       const usage = option.account ? viewOf(option.account) : undefined;
       return <button type="button" key={option.id} aria-label={option.label} aria-pressed={option.id === agent} disabled={disabled} onClick={() => { pickAssistant(option.id); if (!wide) setStep('difficulty'); }}>
-        {usage && <UsageRing remaining={usage.remaining} color={option.account!.color} stale={usage.stale} size={18}/>}
+        {usage && <UsageRing remaining={usage.remaining} color={option.account!.color} stale={usage.stale} size={28}/>}
         <span className="composer-agent-label"><strong style={{ color: option.account?.color || option.color || assistantColor(group) }}>{option.label}</strong>{usage && <small className={usage.isError ? 'is-error' : undefined}>{usage.text}</small>}</span>{option.id === agent && <Check size={16}/>}
       </button>;
     })}
@@ -86,7 +87,10 @@ export function ComposerAgentPicker({ options, agent, onAgentChange, account, pr
   const total = customPath ? 3 + (hasThinking ? 1 : 0) + (hasSpeed ? 1 : 0) : 2;
   const titles: Record<Step, string> = { assistants: 'Choose assistant', difficulty: 'Choose difficulty', model: 'Choose model', thinking: 'Choose thinking', speed: 'Choose speed' };
   const stepNumber = { assistants: 1, difficulty: 2, model: 3, thinking: 4, speed: hasThinking ? 5 : 4 }[step];
-  const description = wide ? `${selected?.label || 'Project defaults'} · Choose assistant, model and thinking.`
+  const customizing = wide && column === 'models' && !!choices.length;
+  const columnCount = (options.length ? 1 : 0) + 1 + (customizing ? 1 : 0);
+  const wideTitle = customizing ? 'Choose assistant, model and thinking' : 'Choose assistant and level';
+  const description = wide ? `${selected?.label || 'Project defaults'} · ${customizing ? 'Pick a model, then its thinking.' : 'Pick a level, or choose Custom.'}`
     : step === 'assistants' ? 'Step 1 of 2 · Choose a connection, then its difficulty.' : `Step ${stepNumber} of ${total} · ${selected?.label || 'Project defaults'}`;
   const back = (to: Step, label: string) => <button type="button" onClick={() => setStep(to)}>{label}</button>;
 
@@ -103,22 +107,25 @@ export function ComposerAgentPicker({ options, agent, onAgentChange, account, pr
     {back(hasThinking ? 'thinking' : 'model', '← Back')}
     <div role="group" aria-label="Speed">{speedButtons(speed => { pickSpeed(speed); setOpen(false); })}</div></>;
 
-  return <Dialog open={open} onOpenChange={next => { setOpen(next); if (next) setStep(!wide && options.length ? 'assistants' : 'difficulty'); }}>
+  return <Dialog open={open} onOpenChange={next => { setOpen(next); if (next) { setStep(!wide && options.length ? 'assistants' : 'difficulty'); setColumn(!preset ? 'models' : 'levels'); } }}>
     <DialogTrigger asChild><button type="button" className="composer-agent-trigger" aria-label="Assistant and difficulty" disabled={disabled}>
       <span className="composer-agent-trigger-label"><strong style={{ color }}>{displayLabel || selected?.label || 'Project defaults'}</strong>{" "}<span className="composer-agent-trigger-level">· {triggerLevel}</span></span><ChevronDown size={12}/>
     </button></DialogTrigger>
-    <DialogContent className={`composer-agent-modal${wide ? ' is-wide' : ''}`}>
-      <DialogTitle>{wide ? 'Choose assistant, model and thinking' : titles[step]}</DialogTitle>
+    <DialogContent className={`composer-agent-modal${wide ? ' is-wide' : ''}`} data-columns={wide ? columnCount : undefined}>
+      <DialogTitle>{wide ? wideTitle : titles[step]}</DialogTitle>
       <DialogDescription>{description}</DialogDescription>
       {wide ? <>
-        <div className="composer-agent-columns" data-columns={options.length ? 3 : 2}>
+        <div className="composer-agent-columns" data-columns={columnCount}>
           {!!options.length && <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Assistant"><h2>Assistant</h2>{assistantList}</div>}
-          <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Model"><h2>Model</h2>
+          {customizing ? <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Model">
+            <button type="button" className="composer-agent-back" onClick={() => setColumn('levels')}>← Levels</button>
+            <h2>Model</h2>{modelButtons(preset ? undefined : value.model, pickModel)}
+          </div> : <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Difficulty"><h2>Level</h2>
             {levels.map(level => presetButton(level, preset && presetLevel === level, () => pickPreset(level)))}
-            {!!choices.length && <><hr/>{modelButtons(preset ? undefined : value.model, pickModel)}</>}
-          </div>
-          <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Thinking"><h2>Thinking</h2>{effortButtons(activeEffort, preset && !family, pickEffort)}
-            {!!speeds.length && <div role="group" aria-label="Speed"><h2>Speed</h2>{speedButtons(pickSpeed)}</div>}</div>
+            {!!choices.length && <button type="button" aria-pressed={!preset} disabled={disabled || !provider} onClick={() => setColumn('models')}><span className="composer-agent-label"><strong>Custom</strong><small>Pick a model and thinking</small></span></button>}
+          </div>}
+          {customizing && <div className="composer-agent-menu composer-agent-column" role="group" aria-label="Thinking"><h2>Thinking</h2>{effortButtons(activeEffort, preset && !family, pickEffort)}
+            {!!speeds.length && <div role="group" aria-label="Speed"><h2>Speed</h2>{speedButtons(pickSpeed)}</div>}</div>}
         </div>
         <div className="composer-agent-footer"><span data-testid="composer-agent-summary">{summary}</span><button type="button" className="composer-agent-done" onClick={() => setOpen(false)}>Done</button></div>
       </> : <div className="composer-agent-menu">{narrowBody}</div>}

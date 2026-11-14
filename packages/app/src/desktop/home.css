@@ -29,15 +29,12 @@
 .home-recent button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .home-recent button span:not(.state-dot) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-recent .state-dot { flex-shrink: 0; }
-.home-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; animation: motion-fade-in var(--motion-fast, 140ms) var(--motion-ease-out, ease-out) both; }
-.home-prompt input { flex: 1; min-width: 0; height: 28px; font-size: 12px; }
-.home-prompt .inline-error { flex-basis: 100%; margin: 0; }
 .home-queue { display: flex; flex-direction: column; gap: 8px; }
 .home-request-project { font: 10px ui-monospace, SFMono-Regular, monospace; color: var(--muted-foreground); flex-shrink: 0; }
 .home-request > header > button { height: 22px; font-size: 11px; gap: 3px; flex-shrink: 0; }
 .home-request .approval-card { margin-top: 6px; }
 .home-queue .thread-presence + .thread-presence { margin-top: 8px; }
-@media (prefers-reduced-motion: reduce) { .home-tile, .home-request, .home-prompt { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .home-tile, .home-request { animation: none; } }
 .home-tile-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; border-radius: 3px; }
 .home-tile-open:hover strong { text-decoration: underline; }
 .home-tile-open strong { display: block; }
@@ -88,3 +85,14 @@
 .home-section-title > button + button { margin-left: 0; }
 .home-empty-action { all: unset; cursor: pointer; text-decoration: underline; color: inherit; }
 .home-empty-action:focus-visible { outline: 2px solid var(--ring, currentColor); outline-offset: 2px; }
+
+/* Project panel (Radix portal, outside .native-workspace): thread rows match the sidebar's rows. */
+.project-sheet .project-sheet-row { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.project-sheet .project-sheet-row:hover { background: var(--accent); }
+.project-sheet .project-sheet-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+.project-sheet .project-sheet-row > :not(.session-title) { flex-shrink: 0; }
+.project-sheet .project-sheet-row .session-agent { display: inline-flex; align-items: center; justify-content: center; width: 14px; }
+.project-sheet .project-sheet-row .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--threads-font-size, 12px); font-weight: 500; color: var(--foreground); }
+.project-sheet .project-sheet-row:has(> .state-Done) { opacity: .82; }
+.project-sheet .project-sheet-row:has(> .state-Done):is(:hover, :focus-visible) { opacity: 1; }
+.project-sheet { --navigator-inset: 12px; --navigator-icon: 14px; --navigator-gap: 8px; }

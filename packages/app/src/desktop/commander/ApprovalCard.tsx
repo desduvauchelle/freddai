@@ -1,3 +1,4 @@
+import { MessageInput } from "../../conversation/MessageComposer";
 import { useState } from "react";
 import { ArrowUpRight, Check, CircleAlert, Pencil, X } from "lucide-react";
 import { commanderApi, type Proposal } from "./api";
@@ -34,7 +35,7 @@ export function ApprovalCard({ proposal, projectName, projectColor, onDecided, o
       <span className="commander-chip" data-muted>{shown.tool.replace(/^freddai_/, "").replace(/_/g, " ")}</span>
     </div>
     {hasPrompt && (editing
-      ? <textarea className="commander-card-prompt" aria-label="Task prompt" rows={4} value={prompt} disabled={busy} onChange={e => setPrompt(e.target.value)} />
+      ? <MessageInput className="commander-card-prompt" aria-label="Task prompt" rows={4} value={prompt} disabled={busy} onValueChange={setPrompt} />
       : <blockquote className="commander-card-quote">{prompt}</blockquote>)}
     {pending && <div className="commander-card-actions">
       <button type="button" className="commander-btn" data-variant="yes" disabled={busy} onClick={() => void respond(true)}><Check size={14} aria-hidden="true" />Yes</button>

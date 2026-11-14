@@ -42,18 +42,13 @@ it('renders the Commander cluster above the projects and opens the screen from t
   expect(onOpen).toHaveBeenCalledTimes(2);
 });
 
-it('sends the quick composer text to Commander and shows a loud error when it fails', async () => {
-  const client = createFixtureClient();
-  const snapshot = await client.snapshot(new AbortController().signal);
-  const send = vi.fn().mockRejectedValueOnce(new Error('Mac unreachable')).mockResolvedValueOnce(undefined);
-  render(<CompanionDashboard client={client} snapshot={snapshot} connected onOpen={vi.fn()} onNew={vi.fn()} onOpenCommander={vi.fn()} onSendCommander={send} />);
+it('opens the established Commander thread from plus without a separate composer', async () => {
+  const client = createFixtureClient(), snapshot = await client.snapshot(new AbortController().signal), onOpen = vi.fn(), onSend = vi.fn();
+  render(<CompanionDashboard client={client} snapshot={snapshot} connected onOpen={vi.fn()} onNew={vi.fn()} onOpenCommander={onOpen} onSendCommander={onSend} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Message Commander-in-Chief' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Message to Commander-in-Chief' }), { target: { value: 'Check the invoices' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Mac unreachable');
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => expect(screen.getByText('Sent to Commander-in-Chief')).toBeTruthy());
-  expect(send).toHaveBeenLastCalledWith('Check the invoices');
+  expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(onSend).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox', { name: 'Message to Commander-in-Chief' })).toBeNull();
 });
 
 it('hides the cluster without a commander project or client support', async () => {

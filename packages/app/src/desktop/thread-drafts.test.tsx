@@ -73,7 +73,7 @@ it("keeps new-thread text scoped to the selected project and global context", as
   expect(editor().value).toBe("Project One prompt");
   fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
   fireEvent.click(screen.getByRole("button", { name: "New thread in One" }));
-  expect(editor().value).toBe("Project One prompt");
+  expect((screen.getByRole("textbox", { name: "Task prompt" }) as HTMLTextAreaElement).value).toBe("Project One prompt");
 });
 
 it("accepts window-routed file drops into a running thread's next draft after the browser has been opened", async () => {

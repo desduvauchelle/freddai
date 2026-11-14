@@ -98,3 +98,11 @@ it("shows an alert when saving the account order fails", async () => {
   fireEvent.keyDown((await screen.findAllByRole("button", { name: /^Reorder / }))[0], { key: "ArrowDown", altKey: true });
   expect((await screen.findByText(/Could not save account order: .*disk full/)).getAttribute("role")).toBe("alert");
 });
+
+it("shows an inline Sign in button for an expired Claude account that launches login", async () => {
+  invoke.mockImplementation(async (command: string) => command === "auth_check" ? { state: "expired" } : command === "detect_agents" ? [{ provider: "claude", path: "/fixture/claude" }] : command === "detect_existing_sign_ins" ? [] : null);
+  render(<AccountSetup db={{ ...empty, accounts: [{ id: "luc", provider: "claude", name: "Luc", color: "#8ec6a2" }] }} native onRefresh={vi.fn().mockResolvedValue(undefined)} />);
+  const button = await screen.findByRole("button", { name: "Sign in" });
+  await userEvent.click(button);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("login", { account: "luc" }));
+});

@@ -18,7 +18,11 @@
 .composer-agent-menu select, .composer-agent-menu input { width: 100%; min-height: 44px; padding: 8px; color: inherit; background: var(--adaptive-surface, #25262c); border: 1px solid var(--adaptive-border, #55515f); border-radius: 6px; }
 .composer-agent-modal [data-slot=dialog-description] { color: inherit; opacity: .72; }
 .composer-agent-modal.is-wide { width: min(760px, calc(100vw - 24px)); max-width: min(760px, calc(100vw - 24px)); }
+.composer-agent-modal.is-wide[data-columns="2"] { width: min(540px, calc(100vw - 24px)); max-width: min(540px, calc(100vw - 24px)); }
+.composer-agent-modal.is-wide[data-columns="1"] { width: min(300px, calc(100vw - 24px)); max-width: min(300px, calc(100vw - 24px)); }
 .composer-agent-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.composer-agent-columns[data-columns="3"] { grid-template-columns: minmax(0, 1.5fr) minmax(0, .8fr) minmax(0, 1fr); }
+.composer-agent-columns[data-columns="1"] { grid-template-columns: minmax(0, 1fr); }
 .composer-agent-columns[data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .composer-agent-column { align-content: start; gap: 4px; max-height: min(60dvh, 440px); overflow-y: auto; padding-right: 2px; }
 .composer-agent-column h2 { margin: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; opacity: .65; }
@@ -32,3 +36,5 @@
 .composer-agent-footer > span { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
 .composer-agent-done { flex: 0 0 auto; padding: 7px 16px; border-radius: 9px; border: 1px solid var(--adaptive-border, #8886); background: #8882; color: inherit; cursor: pointer; font: inherit; }
 .composer-agent-done:focus-visible { outline: 2px solid var(--ring, #b59ae9); outline-offset: 2px; }
+.composer-agent-menu button > .usage-ring { flex: 0 0 auto; align-self: center; }
+.composer-agent-menu button.composer-agent-back { min-height: 28px; width: auto; justify-self: start; padding: 4px 8px; font-size: 12px; opacity: .8; }

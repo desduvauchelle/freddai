@@ -314,6 +314,7 @@ export function AccountSetup({
     const status = notes[a.id] || authLabel(auth, a.provider);
     // Inline Reconnect only when the sign-in is known-bad; a valid sign-in gets "Reconnect…" in the menu instead.
     const inlineReconnect = canReconnect(a.provider) && !isPending && needsReconnect(auth);
+    const inlineSignIn = !canReconnect(a.provider) && !a.config_home && !isPending && needsReconnect(auth);
     const showSignIn = !signed || canReconnect(a.provider);
     const busy = isPending || db.sessions.some(
       (s) => s.account === a.id && ["starting", "running", "waiting"].includes(s.status),
@@ -345,6 +346,8 @@ export function AccountSetup({
           {!db.preferences.prefer_last && db.preferences.fallback === a.id && <span className="setup-default-badge">Default</span>}
           {inlineReconnect && <ReconnectButton account={a.id} provider={a.provider} variant="default"
             onReconnected={() => { void onRefresh(); }} />}
+          {inlineSignIn && <Button type="button" size="sm" variant="default" disabled={pending || !native}
+            onClick={() => void run(() => login(a.id))}>Sign in</Button>}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="ghost" size="icon-sm"

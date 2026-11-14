@@ -1095,7 +1095,7 @@ it('Custom for claude lists the concrete models, never asks for a typed ID, and 
   expect(titles).toEqual(['Difficulty', 'Model', 'Thinking', 'Speed']);
   expect(labels.Speed).toEqual(['Standard', 'Fast mode']);
   expect(labels.Difficulty).toEqual(['Smart', 'Normal', 'Fast', 'Custom']);
-  expect(labels.Model).toEqual(['Sonnet', 'Opus', 'Haiku', 'Fable']);
+  expect(labels.Model).toEqual(['Fable', 'Opus', 'Sonnet', 'Haiku']);
   expect(labels.Model).not.toContain('Enter model ID…');
   expect(labels.Thinking).toEqual(['Default', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Ultracode (Extra high + workflows)']);
   expect(modelOptions('claude', []).map(o => o.detail)).toEqual(['Fable', 'Opus', 'Sonnet', undefined]);

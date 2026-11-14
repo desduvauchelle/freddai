@@ -11,28 +11,55 @@ function Harness({ initial, save = vi.fn(), start = 'a' }: { initial?: AgentSele
   return <ComposerAgentPicker options={options} agent={value.agent!} provider={options.find(o => o.id === value.agent)?.provider} native={false} value={value} onChange={v => { setValue(v); save(v); }} onAgentChange={agent => setValue({ agent, model: 'freddai-level:normal', effort: 'default' })}/>;
 }
 const open = () => { fireEvent.click(screen.getByLabelText('Assistant and difficulty')); return screen.getByRole('dialog'); };
+const custom = (dialog: HTMLElement) => fireEvent.click(within(dialog).getByRole('button', { name: /Custom/ }));
 const noTextInputs = (dialog: HTMLElement) => { expect(dialog.querySelector('input')).toBeNull(); expect(screen.queryByLabelText('Custom model ID')).toBeNull(); };
 
-it('wide: shows assistant, model and thinking at once; Fable then High yields a concrete selection and summary', () => {
+it('wide: defaults to two columns (Assistant, Difficulty); Custom flips to Model and adds Thinking; ← Levels flips back', () => {
   const save = vi.fn(); render(<Harness save={save}/>);
   const dialog = open();
+  expect(within(dialog).getByRole('heading', { name: 'Choose assistant and level' })).toBeTruthy();
+  expect(dialog.querySelector('.composer-agent-columns')!.getAttribute('data-columns')).toBe('2');
+  expect(dialog.getAttribute('data-columns')).toBe('2');
+  for (const name of ['Assistant', 'Difficulty']) expect(within(dialog).getByRole('group', { name })).toBeTruthy();
+  for (const name of ['Model', 'Thinking']) expect(within(dialog).queryByRole('group', { name })).toBeNull();
+  expect(within(dialog).queryByRole('button', { name: 'Opus' })).toBeNull();
+  custom(dialog);
+  expect(save).not.toHaveBeenCalled();
+  expect(within(dialog).getByRole('heading', { name: 'Choose assistant, model and thinking' })).toBeTruthy();
+  expect(dialog.querySelector('.composer-agent-columns')!.getAttribute('data-columns')).toBe('3');
   for (const name of ['Assistant', 'Model', 'Thinking']) expect(within(dialog).getByRole('group', { name })).toBeTruthy();
+  expect(within(within(dialog).getByRole('group', { name: 'Model' })).getAllByRole('button').map(b => b.textContent)).toEqual(['← Levels', 'Fable', 'Opus', 'Sonnet', 'Haiku']);
+  fireEvent.click(within(dialog).getByRole('button', { name: '← Levels' }));
+  expect(within(dialog).queryByRole('group', { name: 'Thinking' })).toBeNull();
+  expect(within(dialog).getByRole('button', { name: 'Normal' }).getAttribute('aria-pressed')).toBe('true');
+});
+it('wide: opens flipped to models with three columns when the selection is already custom', () => {
+  render(<Harness initial={{ agent: 'a', model: 'opus', effort: 'high' }}/>);
+  const dialog = open();
+  expect(dialog.querySelector('.composer-agent-columns')!.getAttribute('data-columns')).toBe('3');
+  expect(within(dialog).getByRole('group', { name: 'Thinking' })).toBeTruthy();
+  expect(within(dialog).getByRole('button', { name: 'Opus' }).getAttribute('aria-pressed')).toBe('true');
+});
+it('wide: Fable then High yields a concrete selection and summary', () => {
+  const save = vi.fn(); render(<Harness save={save}/>);
+  const dialog = open();
   expect(within(dialog).getByRole('button', { name: 'Smart' }).textContent).toContain('Fable');
   expect(within(dialog).getByRole('button', { name: 'Normal' }).getAttribute('aria-pressed')).toBe('true');
+  custom(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Fable' }));
   expect(save).toHaveBeenLastCalledWith({ agent: 'a', model: 'fable', effort: 'default' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'High' }));
   expect(save).toHaveBeenLastCalledWith({ agent: 'a', model: 'fable', effort: 'high' });
   expect(screen.getByTestId('composer-agent-summary').textContent).toBe('Claude · Fable · High thinking');
   expect(screen.getByLabelText('Assistant and difficulty').textContent).toContain('Fable · High');
-  expect(within(dialog).getAllByRole('button').filter(b => b.getAttribute('aria-pressed') === 'true' && ['Smart', 'Normal', 'Fast', 'Opus', 'Sonnet', 'Haiku', 'Fable'].includes(b.getAttribute('aria-label') || b.textContent || '')).length).toBe(1);
+  expect(within(dialog).getAllByRole('button').filter(b => b.getAttribute('aria-pressed') === 'true' && ['Smart', 'Normal', 'Fast', 'Custom', 'Opus', 'Sonnet', 'Haiku', 'Fable'].includes(b.getAttribute('aria-label') || b.textContent || '')).length).toBe(1);
   noTextInputs(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 it('wide: clicking High on the Normal preset converts it to the concrete family', () => {
   const save = vi.fn(); render(<Harness save={save}/>);
-  const dialog = open();
+  const dialog = open(); custom(dialog);
   expect(screen.getByTestId('composer-agent-summary').textContent).toBe('Claude · Opus (Normal) · Default thinking');
   fireEvent.click(within(dialog).getByRole('button', { name: 'High' }));
   expect(save).toHaveBeenCalledWith({ agent: 'a', model: 'opus', effort: 'high' });
@@ -48,9 +75,9 @@ it('wide: switching assistant stays on the same view and Codex presets show the 
 it('wide: a provider without models has no concrete models and no thinking buttons', () => {
   render(<Harness start="g"/>);
   const dialog = open();
-  expect(within(dialog).getByRole('group', { name: 'Model' }).querySelectorAll('button').length).toBe(3);
+  expect(within(dialog).getByRole('group', { name: 'Difficulty' }).querySelectorAll('button').length).toBe(3);
+  expect(within(dialog).queryByRole('button', { name: /Custom/ })).toBeNull();
   expect(within(dialog).queryByRole('button', { name: 'Opus' })).toBeNull();
-  expect(within(dialog).getByText(/Not configurable for Gemini/)).toBeTruthy();
   expect(within(dialog).getByRole('button', { name: 'Smart' }).textContent).toContain('Provider default');
 });
 it('narrow: groups assistants and advances to difficulty, saving the new assistant before closing', () => {
@@ -105,7 +132,7 @@ it('does not open while disabled', () => {
 const speedGroup = (dialog: HTMLElement) => within(dialog).queryByRole('group', { name: 'Speed' });
 it('wide: Fable shows a Speed group; Fast mode sets speed and extends the summary', () => {
   const save = vi.fn(); render(<Harness save={save}/>);
-  const dialog = open();
+  const dialog = open(); custom(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Fable' }));
   fireEvent.click(within(dialog).getByRole('button', { name: 'High' }));
   const group = speedGroup(dialog)!;
@@ -128,9 +155,10 @@ it('wide: choosing Sonnet hides Speed and drops a fast selection', () => {
 });
 it('wide: Speed on the Normal preset keeps the preset', () => {
   const save = vi.fn(); render(<Harness save={save}/>);
-  const dialog = open();
+  const dialog = open(); custom(dialog);
   fireEvent.click(within(speedGroup(dialog)!).getByRole('button', { name: /Fast mode/ }));
   expect(save).toHaveBeenLastCalledWith({ agent: 'a', model: 'freddai-level:normal', effort: 'default', speed: 'fast' });
+  fireEvent.click(within(dialog).getByRole('button', { name: '← Levels' }));
   expect(within(dialog).getByRole('button', { name: 'Normal' }).getAttribute('aria-pressed')).toBe('true');
 });
 it('wide: Codex shows Speed only when the catalog model has a priority service tier', async () => {
@@ -172,7 +200,7 @@ it('narrow: Sonnet skips the Speed step', () => {
 
 it('selects Ultracode from the Claude thinking column', () => {
   const save = vi.fn(); render(<Harness save={save}/>);
-  const dialog = open();
+  const dialog = open(); custom(dialog);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Ultracode (Extra high + workflows)' }));
   expect(save).toHaveBeenLastCalledWith({ agent: 'a', model: 'opus', effort: 'ultracode' });
 });
