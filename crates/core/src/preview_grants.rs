@@ -304,7 +304,7 @@ mod tests {
         let port = free_port();
         record(&root, port).unwrap();
         assert_eq!(ensure_running(&root, port, Duration::from_millis(200)), ServerState::NoCommand);
-        record_share(&root, port, Some(&format!("exec python3 -m http.server {port} --bind 127.0.0.1")), Some(&cwd)).unwrap();
+        record_share(&root, port, Some(&http_cmd(port, "")), Some(&cwd)).unwrap();
         assert_eq!(ensure_running(&root, port, Duration::from_secs(20)), ServerState::Listening);
         let servers = read_servers(&root);
         assert_eq!(servers.len(), 1);
@@ -335,7 +335,13 @@ mod tests {
         (root, cwd, free_port())
     }
     #[cfg(unix)]
-    fn http_cmd(port: u16, extra: &str) -> String { format!("exec python3 -m http.server {port} --bind 127.0.0.1 {extra}") }
+    // Raw-socket listener instead of `python3 -m http.server`: HTTPServer.server_bind calls
+    // socket.getfqdn() between bind() and listen(), and that reverse-DNS lookup of 127.0.0.1
+    // hangs for 20s+ on the macOS CI runner (socket bound but never listening). `extra` is
+    // just trailing argv that the script ignores; it only makes the command string differ.
+    fn http_cmd(port: u16, extra: &str) -> String {
+        format!("exec python3 -c 'import socket;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((\"127.0.0.1\",{port}));s.listen(8)\nwhile True: c,_=s.accept(); c.close()' {extra}")
+    }
     #[cfg(unix)]
     fn expect_listening(root: &Path, port: u16) {
         let state = ensure_running(root, port, Duration::from_secs(20));

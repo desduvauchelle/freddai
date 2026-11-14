@@ -1774,11 +1774,13 @@ mod preview_open_tests {
     fn shared_command_is_started_then_listening() {
         let r = root();
         let port = free_port();
-        freddai_core::preview_grants::record_share(&r, port, Some(&format!("python3 -m http.server {port} --bind 127.0.0.1")), Some(&r)).unwrap();
+        // Raw-socket listener: `http.server` does a getfqdn() reverse-DNS lookup before listen(), which hangs on macOS CI.
+        let cmd = format!("exec python3 -c 'import socket;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((\"127.0.0.1\",{port}));s.listen(8)\nwhile True: c,_=s.accept(); c.close()'");
+        freddai_core::preview_grants::record_share(&r, port, Some(&cmd), Some(&r)).unwrap();
         let url = format!("http://localhost:{port}/");
         let mut status = String::new();
         let confirm = preview_open_blocking(&r, &url, false, Duration::from_secs(1)).unwrap_err();
-        assert_eq!(confirm, format!("preview_server_confirm: python3 -m http.server {port} --bind 127.0.0.1 @ {}", r.display()));
+        assert_eq!(confirm, format!("preview_server_confirm: {cmd} @ {}", r.display()));
         assert!(!r.join("companion/preview-servers.json").exists(), "nothing may spawn without start");
         for _ in 0..20 {
             match preview_open_blocking(&r, &url, true, Duration::from_secs(1)) {
